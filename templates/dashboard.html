@@ -2,762 +2,896 @@
 
 {% block title %}Dashboard – Checkbook App{% endblock %}
 
+{#
+  ════════════════════════════════════════════════════════════════════════════
+  Dashboard — three layers, read top to bottom as one story.
+
+    Layer 1  Snapshot ....... How am I doing? What changed?
+    Layer 2  Copilot ........ Why, and what should I do about it?
+    Layer 3  Attention ...... What needs me right now?
+    Layer 4  Outlook ........ Where is this heading?
+    Layer 5  Analytics ...... Show me the detail (collapsed by default)
+
+  The old page put all of that on screen at once and let the reader sort it
+  out. Everything below the snapshot is now progressive: the numbers that
+  answer "am I okay" are unmissable, and the fourteen charts are one click
+  away instead of competing with them.
+  ════════════════════════════════════════════════════════════════════════════
+#}
+
 {% block content %}
 {% set income_delta = total_income - prev_income %}
 {% set outgo_delta  = total_outgo  - prev_outgo  %}
 {% set net_delta    = net_cashflow - prev_net    %}
-{% set savings_rate = ((net_cashflow / total_income * 100)|round(1)) if total_income > 0 else 0 %}
 
-<style>
-/* Mobile-only overrides — !important beats the inline styles below; no effect ≥768px */
-@media (max-width: 768px) {
-  .dash-cols { grid-template-columns: 1fr !important; }
-}
-.dash-vals-toggle.on {
-  opacity: 1 !important;
-  color: var(--red) !important;
-  border-color: var(--red) !important;
-  background: color-mix(in srgb, var(--red) 14%, transparent) !important;
-}
-@media (max-width: 640px) {
-  .dash-table-scroll { overflow-x: auto !important; }
-  .dash-table-scroll table { min-width: 560px; }
-  .dash-catbar { height: 190px !important; }
+{#- Reusable bits, so a card is described once and used many times -#}
 
-  /* KPI tiles: 2-up grid like banking-app stat cards */
-  .dash-kpis { grid-template-columns: repeat(2, 1fr) !important; gap: .625rem !important; }
-  .dash-kpis > div { padding: 12px 14px !important; }
-  .dash-kpis p[style*="1.55rem"] { font-size: 1.25rem !important; }
+{% macro delta(value, higher_is_better=True, suffix='') %}
+  {%- set good = (value >= 0) if higher_is_better else (value <= 0) -%}
+  {%- if value == 0 -%}
+    <span class="ds-delta ds-delta--flat"><span aria-hidden="true">—</span> No change</span>
+  {%- else -%}
+    <span class="ds-delta {{ 'ds-delta--up' if good else 'ds-delta--down' }}">
+      <span aria-hidden="true">{{ '▲' if value > 0 else '▼' }}</span>
+      <span class="ds-num">{{ value|abs|money }}{{ suffix }}</span>
+    </span>
+  {%- endif -%}
+{% endmacro %}
 
-  /* Filter bar: full-width date inputs / selects, comfy tap targets */
-  #dashFilterForm input[type="date"] { flex: 1 1 40%; min-height: 40px; }
-  #dashFilterForm select { flex: 1 1 100%; min-height: 40px; }
-  #dashFilterForm button[type="submit"], #dashFilterForm a { flex: 1 1 auto; text-align: center; padding-top: 9px !important; padding-bottom: 9px !important; }
-  #dashFilterForm button[type="button"] { padding-top: 6px !important; padding-bottom: 6px !important; }
+{% macro icon(name, size=16) %}
+{%- set paths = {
+  'alert':      '<path d="M12 9v4"/><path d="M12 17h.01"/><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>',
+  'trend-up':   '<polyline points="22 7 13.5 15.5 8.5 10.5 2 17"/><polyline points="16 7 22 7 22 13"/>',
+  'trend-down': '<polyline points="22 17 13.5 8.5 8.5 13.5 2 7"/><polyline points="16 17 22 17 22 11"/>',
+  'target':     '<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1.4" fill="currentColor" stroke="none"/>',
+  'calendar':   '<rect x="3" y="4.5" width="18" height="16" rx="2"/><path d="M3 9.5h18"/><path d="M8 2.5v4"/><path d="M16 2.5v4"/>',
+  'search':     '<circle cx="11" cy="11" r="7"/><path d="m20 20-3.6-3.6"/>',
+  'check':      '<path d="M20 6 9 17l-5-5"/>',
+  'sparkle':    '<path d="M12 2.6l1.9 5.3 5.3 1.9-5.3 1.9L12 17l-1.9-5.3L4.8 9.8l5.3-1.9z"/><path d="M18.6 15.4l.8 2.2 2.2.8-2.2.8-.8 2.2-.8-2.2-2.2-.8 2.2-.8z"/>',
+  'dot':        '<circle cx="12" cy="12" r="4"/>',
+  'wallet':     '<path d="M20 8.5V7a2 2 0 0 0-2-2H5.5A2.5 2.5 0 0 1 3 2.5v13A2.5 2.5 0 0 0 5.5 18H18a2 2 0 0 0 2-2v-1.5"/><path d="M21 8.5h-4a2.5 2.5 0 0 0 0 5h4z"/>',
+  'chart':      '<path d="M3 3v16.5A1.5 1.5 0 0 0 4.5 21H21"/><path d="m7 14 3.5-3.5 3 3L19 8"/>'
+} -%}
+<svg width="{{ size }}" height="{{ size }}" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+     stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"
+     focusable="false">{{ paths.get(name, paths['dot'])|safe }}</svg>
+{%- endmacro %}
 
-  /* Budget alert rows stack their text and link */
-  .dash-alert { flex-wrap: wrap; }
-}
-</style>
+{% macro chart_tools(chart_id, title) %}
+<button type="button" class="ds-btn ds-btn--icon" data-values="{{ chart_id }}"
+        aria-pressed="false" aria-label="Show values on {{ title }}" title="Show values">
+  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12.586 2.586A2 2 0 0 0 11.172 2H4a2 2 0 0 0-2 2v7.172a2 2 0 0 0 .586 1.414l8.704 8.704a2.426 2.426 0 0 0 3.42 0l6.58-6.58a2.426 2.426 0 0 0 0-3.42z"/><circle cx="7.5" cy="7.5" r="1.5" fill="currentColor" stroke="none"/></svg>
+</button>
+<button type="button" class="ds-btn ds-btn--icon" data-expand="{{ chart_id }}"
+        data-title="{{ title }}" aria-label="Expand {{ title }}" title="Expand">
+  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/></svg>
+</button>
+{% endmacro %}
 
-<div style="display:flex;flex-direction:column;gap:1rem;padding-bottom:2rem">
+{% macro panel_head(key, title, subtitle='', chart='') %}
+<div class="dash-panel__head" data-drag-handle>
+  <button type="button" class="dash-panel__toggle" data-toggle="{{ key }}"
+          aria-expanded="false" aria-controls="panel-body-{{ key }}">
+    <svg class="dash-panel__caret" width="14" height="14" viewBox="0 0 24 24" fill="none"
+         stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9 6 6 6-6 6"/></svg>
+    <span class="dash-panel__title">{{ title }}</span>
+    {% if subtitle %}<span class="dash-panel__sub">{{ subtitle }}</span>{% endif %}
+  </button>
+  <div class="dash-panel__tools">
+    {% if chart %}{{ chart_tools(chart, title) }}{% endif %}
+    <button type="button" class="ds-btn ds-btn--icon" data-pin="{{ key }}"
+            aria-pressed="false" aria-label="Pin {{ title }} open" title="Pin open">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 17v5"/><path d="M9 2h6l-1 6 3.5 3.5V14H6.5v-2.5L10 8z"/></svg>
+    </button>
+    <button type="button" class="ds-btn ds-btn--icon" data-hide="{{ key }}"
+            aria-label="Hide {{ title }}" title="Hide panel">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9.9 5.1A9.5 9.5 0 0 1 12 4.9c5 0 9 4.4 9 7.1a9.7 9.7 0 0 1-2.2 3.3M6.2 6.2A11.6 11.6 0 0 0 3 12c0 2.7 4 7.1 9 7.1a9.9 9.9 0 0 0 4.3-1M3 3l18 18"/></svg>
+    </button>
+    <span class="dash-panel__grip" aria-hidden="true" title="Drag to reorder">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="9" cy="6" r="1.5"/><circle cx="15" cy="6" r="1.5"/><circle cx="9" cy="12" r="1.5"/><circle cx="15" cy="12" r="1.5"/><circle cx="9" cy="18" r="1.5"/><circle cx="15" cy="18" r="1.5"/></svg>
+    </span>
+  </div>
+</div>
+{% endmacro %}
 
-  <!-- ── Filter bar ── -->
-  <div style="background:var(--panel);border-radius:8px;padding:10px 16px;border:1px solid var(--border)">
-    <form id="dashFilterForm" method="GET" style="display:flex;flex-wrap:wrap;gap:8px;align-items:center">
-      <span style="font-size:.72rem;font-weight:600;color:var(--fg);opacity:.5;white-space:nowrap">Quick:</span>
-      {% for lbl,ps in [('This Month','this_month'),('Last Month','last_month'),('Last 3 Mo','last_3mo'),('YTD','ytd'),('Last Year','last_year')] %}
-      <button type="button" onclick="applyDatePreset('{{ ps }}')"
-        style="padding:3px 10px;font-size:.72rem;border-radius:999px;border:1px solid var(--border);background:transparent;color:var(--fg);cursor:pointer">{{ lbl }}</button>
-      {% endfor %}
-      <span style="width:1px;height:18px;background:var(--border);flex-shrink:0"></span>
-      <label style="font-size:.72rem;color:var(--fg);opacity:.6">From</label>
-      <input type="date" name="start_date" id="start_date" value="{{ start_date }}"
-        style="font-size:.78rem;padding:4px 8px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--fg)">
-      <label style="font-size:.72rem;color:var(--fg);opacity:.6">To</label>
-      <input type="date" name="end_date" id="end_date" value="{{ end_date }}"
-        style="font-size:.78rem;padding:4px 8px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--fg)">
-      <select name="account" id="account"
-        style="font-size:.78rem;padding:4px 8px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--fg)">
-        <option value="both" {% if account_filter=='both' %}selected{% endif %}>Both Accounts</option>
-        <option value="Checking" {% if account_filter=='Checking' %}selected{% endif %}>Checking</option>
-        <option value="Savings"  {% if account_filter=='Savings'  %}selected{% endif %}>Savings</option>
-      </select>
-      {% for cat in category_filter %}<input type="hidden" name="category" value="{{ cat }}">{% endfor %}
-      <button type="submit"
-        style="padding:5px 14px;font-size:.78rem;font-weight:600;border-radius:6px;border:none;background:#6366f1;color:#fff;cursor:pointer">Apply</button>
-      <a href="{{ url_for('clear_filters', next=url_for('dashboard')) }}"
-        style="padding:5px 12px;font-size:.78rem;border-radius:6px;border:1px solid var(--border);color:var(--fg);opacity:.75;text-decoration:none">Clear</a>
-      {% for cat in category_filter %}
-      <a href="{{ url_for('dashboard', start_date=start_date, end_date=end_date, account=account_filter, category=category_filter|reject('equalto', cat)|list) }}"
-        title="Remove {{ cat }} from the filter"
-        style="display:inline-flex;align-items:center;gap:6px;padding:4px 12px;font-size:.75rem;font-weight:600;border-radius:999px;background:color-mix(in srgb,#6366f1 14%,var(--panel));border:1px solid #6366f1;color:#6366f1;text-decoration:none;white-space:nowrap">
-        Category: {{ cat }} <span style="font-weight:700">✕</span>
-      </a>
-      {% endfor %}
-      {% if category_filter|length > 1 %}
-      <a href="{{ url_for('dashboard', start_date=start_date, end_date=end_date, account=account_filter) }}"
-        title="Remove all category filters"
-        style="font-size:.72rem;color:var(--fg);opacity:.55;text-decoration:underline;white-space:nowrap">clear categories</a>
+<link rel="stylesheet" href="{{ url_for('static', filename='css/dashboard.css') }}">
+
+<div class="dash" id="dash">
+
+  {# ══════════════════════════════════════════════════════════════════════
+     Header — greeting, one contextual line, and the period control.
+     The filter is collapsed behind a button: it is a tool, not a headline,
+     and it used to be the first thing on the page.
+     ══════════════════════════════════════════════════════════════════════ #}
+  <header class="dash-header ds-rise">
+    <div class="dash-header__greet">
+      <p class="ds-meta dash-header__date">{{ greeting.date_label }}</p>
+      <h1 class="dash-header__title">
+        {{ greeting.salutation }}{% if greeting.name %}, {{ greeting.name }}{% endif %}.
+      </h1>
+      {% if greeting.tag %}
+      <p class="dash-header__tag">
+        <span class="dash-header__tag-icon">{{ icon(greeting.tag.icon, 14) }}</span>
+        {{ greeting.tag.text }}
+      </p>
       {% endif %}
+    </div>
+
+    <div class="dash-header__tools">
+      <span class="dash-period" id="dashPeriodLabel">{{ period_label }}</span>
+      <button type="button" class="ds-btn ds-btn--secondary ds-btn--sm" id="dashFilterToggle"
+              aria-expanded="false" aria-controls="dashFilterPanel">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+             stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M3 5h18"/><path d="M6.5 12h11"/><path d="M10 19h4"/></svg>
+        Filter
+        {% if category_filter %}<span class="ds-badge ds-badge--pill dash-filter-count">{{ category_filter|length }}</span>{% endif %}
+      </button>
+    </div>
+  </header>
+
+  {# ── Filter panel ──
+     Composable: nothing here reloads the page on its own. Pick a range, an
+     account and a category, then Apply once. The panel also stays open across
+     that reload — it used to shut on every change, so building a two-part
+     filter meant reopening it between each one. #}
+  <div class="dash-filter" id="dashFilterPanel" hidden>
+    <form id="dashFilterForm" method="GET" class="dash-filter__form">
+      <div class="dash-filter__row">
+        <span class="dash-filter__legend" id="rangeLegend">Range</span>
+        <div class="dash-filter__group" role="group" aria-labelledby="rangeLegend">
+          {% for lbl, ps in [('This Month','this_month'), ('Last Month','last_month'),
+                             ('Last 3 Mo','last_3mo'), ('Last 6 Mo','last_6mo'),
+                             ('YTD','ytd'), ('Last Year','last_year')] %}
+          <button type="button" class="ds-chip" data-preset="{{ ps }}" aria-pressed="false">{{ lbl }}</button>
+          {% endfor %}
+        </div>
+      </div>
+
+      <div class="dash-filter__row">
+        <span class="dash-filter__legend" id="datesLegend">Dates</span>
+        <div class="dash-filter__group dash-filter__group--fields" role="group" aria-labelledby="datesLegend">
+          <label class="dash-filter__label" for="start_date">From</label>
+          <input type="date" name="start_date" id="start_date" value="{{ start_date }}" class="dash-input">
+          <label class="dash-filter__label" for="end_date">To</label>
+          <input type="date" name="end_date" id="end_date" value="{{ end_date }}" class="dash-input">
+          <label class="dash-filter__label" for="account">Account</label>
+          <select name="account" id="account" class="dash-input">
+            <option value="both" {% if account_filter=='both' %}selected{% endif %}>Both accounts</option>
+            <option value="Checking" {% if account_filter=='Checking' %}selected{% endif %}>Checking</option>
+            <option value="Savings" {% if account_filter=='Savings' %}selected{% endif %}>Savings</option>
+          </select>
+        </div>
+      </div>
+
+      {# Categories live in the form as removable chips. Removing one used to
+         be a link that navigated immediately; it now just drops the hidden
+         input, so it composes with everything else above. #}
+      <div class="dash-filter__row" id="catRow" {% if not category_filter %}hidden{% endif %}>
+        <span class="dash-filter__legend" id="catLegend">Categories</span>
+        <div class="dash-filter__group" role="group" aria-labelledby="catLegend" id="catChips">
+          {% for cat in category_filter %}
+          <span class="ds-chip ds-chip--active dash-catchip" data-cat="{{ cat }}">
+            {{ cat }}
+            <button type="button" class="dash-catchip__x" data-remove-cat="{{ cat }}"
+                    aria-label="Remove the {{ cat }} category filter">✕</button>
+            <input type="hidden" name="category" value="{{ cat }}">
+          </span>
+          {% endfor %}
+        </div>
+      </div>
+
+      <div class="dash-filter__actions">
+        <button type="submit" class="ds-btn ds-btn--primary ds-btn--sm" id="filterApply">
+          Apply
+          <span class="dash-filter__dirty" id="filterDirty" hidden aria-hidden="true"></span>
+        </button>
+        <a href="{{ url_for('clear_filters', next=url_for('dashboard')) }}"
+           class="ds-btn ds-btn--ghost ds-btn--sm">Reset all</a>
+        <span class="dash-filter__hint" id="filterHint" role="status"></span>
+        <span class="dash-filter__spacer"></span>
+        <button type="button" class="ds-btn ds-btn--ghost ds-btn--sm" id="filterClose">Done</button>
+      </div>
     </form>
   </div>
 
-  <script>
-  function applyDatePreset(p){
-    var t=new Date(),y=t.getFullYear(),m=t.getMonth();
-    var f=function(d){return d.toISOString().split('T')[0];};
-    var s,e=new Date(t);
-    if(p==='this_month')  s=new Date(y,m,1);
-    else if(p==='last_month'){s=new Date(y,m-1,1);e=new Date(y,m,0);}
-    else if(p==='last_3mo') s=new Date(y,m-3,t.getDate());
-    else if(p==='ytd')      s=new Date(y,0,1);
-    else if(p==='last_year'){s=new Date(y-1,0,1);e=new Date(y-1,11,31);}
-    document.getElementById('start_date').value=f(s);
-    document.getElementById('end_date').value=f(e);
-    document.getElementById('dashFilterForm').submit();
-  }
-  </script>
-
-  <!-- ── KPI cards ── -->
-  <div class="dash-kpis" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:.875rem">
-
-    <!-- Net Cash Flow -->
-    <div style="background:var(--panel);border-radius:8px;border-left:4px solid {% if net_cashflow>=0 %}#22c55e{% else %}var(--red,#ef4444){% endif %};padding:14px 18px">
-      <p style="font-size:.68rem;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:var(--fg);opacity:.5;margin:0 0 5px">Net Cash Flow</p>
-      <p style="font-size:1.55rem;font-weight:700;margin:0;color:{% if net_cashflow>=0 %}#22c55e{% else %}var(--red,#ef4444){% endif %}">${{ "{:,.0f}".format(net_cashflow) }}</p>
-      <p style="font-size:.7rem;margin:5px 0 0;color:var(--fg);opacity:.45">vs prev:&nbsp;
-        <span style="font-weight:600;color:{% if net_delta>=0 %}#22c55e{% else %}var(--red,#ef4444){% endif %}">
-          {% if net_delta>=0 %}+${{ "{:,.0f}".format(net_delta) }}{% else %}-${{ "{:,.0f}".format(net_delta|abs) }}{% endif %}
-        </span>
+  {# A period with nothing in it should say so. Rendering six tiles of $0
+     looks like the app is broken rather than like the filter is empty. #}
+  {% if not has_data %}
+  <div class="ds-card dash-noresults ds-rise" role="status">
+    <span class="dash-noresults__icon">{{ icon('search', 20) }}</span>
+    <div>
+      <p class="dash-noresults__title">No transactions in {{ period_label }}</p>
+      <p class="dash-noresults__detail">
+        {% if category_filter %}
+          Nothing matched {{ category_filter|join(' or ') }} in this window. Try widening the dates or clearing the category filter.
+        {% else %}
+          Try a wider date range, or upload statements to fill this period.
+        {% endif %}
       </p>
     </div>
-
-    <!-- Total Income -->
-    <div style="background:var(--panel);border-radius:8px;border-left:4px solid #22c55e;padding:14px 18px">
-      <p style="font-size:.68rem;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:var(--fg);opacity:.5;margin:0 0 5px">Total Income</p>
-      <p style="font-size:1.55rem;font-weight:700;margin:0;color:#22c55e">${{ "{:,.0f}".format(total_income) }}</p>
-      <p style="font-size:.7rem;margin:5px 0 0;color:var(--fg);opacity:.45">vs prev:&nbsp;
-        <span style="font-weight:600;color:{% if income_delta>=0 %}#22c55e{% else %}var(--red,#ef4444){% endif %}">
-          {% if income_delta>=0 %}+${{ "{:,.0f}".format(income_delta) }}{% else %}-${{ "{:,.0f}".format(income_delta|abs) }}{% endif %}
-        </span>
-      </p>
+    <div class="dash-noresults__actions">
+      <a href="{{ url_for('clear_filters', next=url_for('dashboard')) }}" class="ds-btn ds-btn--secondary ds-btn--sm">Clear filters</a>
+      <a href="{{ url_for('upload') }}" class="ds-btn ds-btn--primary ds-btn--sm">Upload data</a>
     </div>
-
-    <!-- Total Outgo -->
-    <div style="background:var(--panel);border-radius:8px;border-left:4px solid var(--red,#ef4444);padding:14px 18px">
-      <p style="font-size:.68rem;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:var(--fg);opacity:.5;margin:0 0 5px">Total Outgo</p>
-      <p style="font-size:1.55rem;font-weight:700;margin:0;color:var(--red,#ef4444)">${{ "{:,.0f}".format(total_outgo) }}</p>
-      <p style="font-size:.7rem;margin:5px 0 0;color:var(--fg);opacity:.45">vs prev:&nbsp;
-        <span style="font-weight:600;color:{% if outgo_delta<=0 %}#22c55e{% else %}var(--red,#ef4444){% endif %}">
-          {% if outgo_delta>=0 %}+${{ "{:,.0f}".format(outgo_delta) }}{% else %}-${{ "{:,.0f}".format(outgo_delta|abs) }}{% endif %}
-        </span>
-      </p>
-    </div>
-
-    <!-- Savings Rate -->
-    <div style="background:var(--panel);border-radius:8px;border-left:4px solid #8b5cf6;padding:14px 18px">
-      <p style="font-size:.68rem;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:var(--fg);opacity:.5;margin:0 0 5px">Savings Rate</p>
-      <p style="font-size:1.55rem;font-weight:700;margin:0;color:#8b5cf6">{{ savings_rate }}%</p>
-      <p style="font-size:.7rem;margin:5px 0 0;color:var(--fg);opacity:.45">of income retained</p>
-    </div>
-
-    {% if nw.investments > 0 %}
-    <!-- Portfolio Value -->
-    <div style="background:var(--panel);border-radius:8px;border-left:4px solid #06b6d4;padding:14px 18px;display:flex;justify-content:space-between;align-items:flex-start">
-      <div>
-        <p style="font-size:.68rem;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:var(--fg);opacity:.5;margin:0 0 5px">Portfolio Value</p>
-        <p style="font-size:1.55rem;font-weight:700;margin:0;color:#06b6d4">${{ "{:,.0f}".format(nw.investments) }}</p>
-        <p style="font-size:.7rem;margin:5px 0 0;color:var(--fg);opacity:.45">manual holdings</p>
-      </div>
-      <a href="/investments" style="font-size:.72rem;color:#6366f1;font-weight:500;text-decoration:none;white-space:nowrap">Manage →</a>
-    </div>
-    {% endif %}
-
-  </div>
-  <p style="font-size:.68rem;color:var(--fg);opacity:.35;margin:-4px 0 0;text-align:right">vs. {{ prev_start }} – {{ prev_end }}</p>
-
-  <!-- ── Budget alerts (compact) ── -->
-  {% if budget_alerts %}
-  <div style="display:flex;flex-direction:column;gap:6px">
-    {% for alert in budget_alerts %}
-    <div class="dash-alert" style="display:flex;align-items:center;justify-content:space-between;padding:8px 14px;border-radius:8px;
-      border:1px solid {% if alert.level=='over' %}color-mix(in srgb,var(--red,#ef4444) 40%,var(--border)){% else %}color-mix(in srgb,#f59e0b 40%,var(--border)){% endif %};
-      background:{% if alert.level=='over' %}color-mix(in srgb,var(--red,#ef4444) 10%,var(--panel)){% else %}color-mix(in srgb,#f59e0b 10%,var(--panel)){% endif %}">
-      <span style="font-size:.8rem;font-weight:500;color:var(--fg)">
-        {% if alert.level=='over' %}🔴{% else %}🟡{% endif %}
-        &nbsp;<strong>{{ alert.category }}</strong>:
-        {% if alert.level=='over' %}over budget — ${{ "{:,.0f}".format(alert.monthly_avg) }}/mo avg / ${{ "{:,.0f}".format(alert.limit) }}/mo limit ({{ alert.pct }}%)
-        {% else %}{{ alert.pct }}% of monthly budget — ${{ "{:,.0f}".format(alert.monthly_avg) }}/mo avg / ${{ "{:,.0f}".format(alert.limit) }}/mo limit{% endif %}
-      </span>
-      <a href="{{ url_for('budgets') }}" style="font-size:.75rem;color:#6366f1;font-weight:500;text-decoration:none;white-space:nowrap;margin-left:12px">Manage →</a>
-    </div>
-    {% endfor %}
   </div>
   {% endif %}
 
-  <!-- ── AI Insight + Spending Insights row ── -->
-  <div id="ai-insight-card" style="display:none;background:var(--panel);border-radius:8px;border-left:4px solid #8b5cf6;padding:12px 18px;display:none">
-    <p style="font-size:.68rem;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:#8b5cf6;margin:0 0 5px">✦ AI Insight</p>
-    <p id="ai-insight-text" style="font-size:.82rem;color:var(--fg);line-height:1.55;margin:0"></p>
-  </div>
+  {# ══════════════════════════════════════════════════════════════════════
+     LAYER 1 — Financial snapshot
+     Net worth is the hero; everything else is a supporting tile. One glance
+     should answer "how am I doing" before any reading happens.
+     ══════════════════════════════════════════════════════════════════════ #}
+  <section class="dash-snapshot" aria-labelledby="snapshot-h">
+    <h2 id="snapshot-h" class="ds-sr">Financial snapshot</h2>
 
-  <!-- ── Main content: Category table + Insights ── -->
-  <div class="dash-cols" style="display:grid;grid-template-columns:1fr 320px;gap:1rem;align-items:start">
+    <!-- Hero: net worth + health -->
+    <article class="ds-card ds-card--hero ds-card--wash dash-hero ds-rise" style="--ds-delay:40ms">
+      <div class="dash-hero__main">
+        <p class="ds-eyebrow">Net worth</p>
+        <p class="dash-hero__value ds-num" data-countup="{{ nw.net_worth }}" data-format="usd">
+          {{ nw.net_worth|money }}
+        </p>
+        <div class="dash-hero__split">
+          <span><span class="dash-hero__dot dash-hero__dot--cash"></span>
+            Cash <b class="ds-num">{{ nw.cash|money }}</b></span>
+          {% if nw.investments > 0 %}
+          <span><span class="dash-hero__dot dash-hero__dot--inv"></span>
+            Investments <b class="ds-num">{{ nw.investments|money }}</b></span>
+          {% endif %}
+        </div>
+        <div class="dash-hero__bar" role="img"
+             aria-label="Net worth is {{ ((nw.cash / nw.net_worth * 100)|round|int) if nw.net_worth else 0 }} percent cash">
+          <div class="dash-hero__bar-cash"
+               style="width:{{ ((nw.cash / nw.net_worth * 100)|round(1)) if nw.net_worth > 0 else 100 }}%"></div>
+        </div>
+      </div>
 
-    <!-- Category Breakdown (scrollable) -->
-    <div style="background:var(--panel);border-radius:8px;overflow:hidden;border:1px solid var(--border)">
-      <div style="padding:12px 16px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center">
-        <h3 style="font-size:.75rem;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:var(--fg);margin:0">Category Breakdown
-          <span style="font-weight:400;text-transform:none;letter-spacing:0;opacity:.45">— click categories to filter the dashboard; click again to remove</span>
-        </h3>
-        <a href="{{ url_for('budgets') }}" style="font-size:.75rem;color:#6366f1;text-decoration:none">Manage Budgets →</a>
+      <!-- Health score ring -->
+      <div class="dash-health" data-health="{{ health.score }}">
+        <button type="button" class="dash-health__btn" id="healthToggle"
+                aria-expanded="false" aria-controls="healthDetail">
+          <svg class="dash-health__ring" viewBox="0 0 100 100" aria-hidden="true">
+            <circle class="dash-health__track" cx="50" cy="50" r="42"></circle>
+            <circle class="dash-health__value dash-health__value--{{ health.band }}"
+                    cx="50" cy="50" r="42"></circle>
+          </svg>
+          <span class="dash-health__num">
+            <b class="ds-num" data-countup="{{ health.score }}" data-format="int">{{ health.score }}</b>
+          </span>
+          <span class="dash-health__label">
+            Financial health
+            <em class="dash-health__band dash-health__band--{{ health.band }}">{{ health.label }}</em>
+          </span>
+        </button>
       </div>
-      <div class="dash-table-scroll" style="overflow-y:auto;max-height:360px">
-        <table style="width:100%;border-collapse:collapse;font-size:.8rem">
-          <thead>
-            <tr style="position:sticky;top:0;z-index:1;background:var(--panel)">
-              <th style="padding:8px 12px;text-align:left;font-size:.68rem;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--fg);opacity:.5;border-bottom:1px solid var(--border)">Category</th>
-              <th style="padding:8px 12px;text-align:right;font-size:.68rem;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--fg);opacity:.5;border-bottom:1px solid var(--border)">In</th>
-              <th style="padding:8px 12px;text-align:right;font-size:.68rem;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--fg);opacity:.5;border-bottom:1px solid var(--border)">Out</th>
-              <th style="padding:8px 12px;text-align:right;font-size:.68rem;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--fg);opacity:.5;border-bottom:1px solid var(--border)">Net</th>
-              <th style="padding:8px 12px;text-align:left;font-size:.68rem;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--fg);opacity:.5;border-bottom:1px solid var(--border)">Budget</th>
-            </tr>
-          </thead>
-          <tbody>
-            {% for category, stats in all_category_stats.items() %}
-            {% set is_active = category in category_filter %}
-            <tr style="border-bottom:1px solid var(--border);{% if is_active %}background:color-mix(in srgb,#6366f1 10%,var(--panel)){% endif %}">
-              <td style="padding:7px 12px;font-weight:500;color:var(--fg)">
-                {% if is_active %}
-                <a href="{{ url_for('dashboard', start_date=start_date, end_date=end_date, account=account_filter, category=category_filter|reject('equalto', category)|list) }}"
-                  title="Click to remove {{ category }} from the filter"
-                  style="color:#6366f1;font-weight:700;text-decoration:none">{{ category }} ✕</a>
-                {% else %}
-                <a href="{{ url_for('dashboard', start_date=start_date, end_date=end_date, account=account_filter, category=category_filter + [category]) }}"
-                  title="{% if category_filter %}Add {{ category }} to the dashboard filter{% else %}Filter the whole dashboard to {{ category }}{% endif %}"
-                  style="color:var(--fg);text-decoration:none;border-bottom:1px dashed color-mix(in srgb,var(--fg) 35%,transparent)">{{ category }}</a>
-                {% endif %}
-              </td>
-              <td style="padding:7px 12px;text-align:right">
-                <a href="{{ url_for('transactions',start_date=start_date,end_date=end_date,account=account_filter,category=category,type='inbound') }}"
-                  style="color:#22c55e;text-decoration:underline">${{ "{:,.0f}".format(stats.inbound) }}</a>
-              </td>
-              <td style="padding:7px 12px;text-align:right">
-                <a href="{{ url_for('transactions',start_date=start_date,end_date=end_date,account=account_filter,category=category,type='outgo') }}"
-                  style="color:var(--red,#ef4444);text-decoration:underline">${{ "{:,.0f}".format(stats.outbound) }}</a>
-              </td>
-              <td style="padding:7px 12px;text-align:right;font-weight:500;color:{% if stats.inbound-stats.outbound>=0 %}#22c55e{% else %}var(--red,#ef4444){% endif %}">
-                ${{ "{:,.0f}".format(stats.inbound-stats.outbound) }}
-              </td>
-              <td style="padding:7px 12px;min-width:130px">
-                {% if category in budget_map %}
-                  {% set lim=budget_map[category] %}
-                  {% set net_spent=([stats.outbound-stats.inbound,0]|max) %}
-                  {% set mo_avg=net_spent/period_months %}
-                  {% set pct=([((mo_avg/lim)*100)|round(0)|int,100]|min) %}
-                  {% set over=mo_avg>lim %}
-                  <div style="display:flex;align-items:center;gap:6px">
-                    <div style="flex:1;background:var(--border);border-radius:999px;height:5px;min-width:60px">
-                      <div style="width:{{ pct }}%;height:5px;border-radius:999px;background:{% if over %}var(--red,#ef4444){% elif pct>75 %}#f59e0b{% else %}#22c55e{% endif %}"></div>
-                    </div>
-                    <span style="font-size:.68rem;white-space:nowrap;color:{% if over %}var(--red,#ef4444){% else %}var(--fg){% endif %};opacity:.8">
-                      ${{ "{:,.0f}".format(mo_avg) }}/mo / ${{ "{:,.0f}".format(lim) }}/mo
-                    </span>
-                  </div>
-                {% else %}
-                  <a href="{{ url_for('budgets') }}" style="font-size:.7rem;color:var(--fg);opacity:.35;text-decoration:none">+ set budget</a>
-                {% endif %}
-              </td>
-            </tr>
-            {% endfor %}
-          </tbody>
-        </table>
-      </div>
+    </article>
+
+    <!-- Supporting tiles -->
+    <div class="dash-tiles">
+      {% set tiles = [
+        ('Cash available', nw.cash|money, nw.cash,
+         'Checking + savings + sweep', None, 'cash', None),
+        ('Income', total_income|money, total_income,
+         None, income_delta, 'income', url_for('transactions', start_date=start_date, end_date=end_date, account=account_filter, type='inbound')),
+        ('Spending', total_outgo|money, total_outgo,
+         None, outgo_delta, 'outgo', url_for('transactions', start_date=start_date, end_date=end_date, account=account_filter, type='outgo')),
+        ('Net cash flow', net_cashflow|money, net_cashflow,
+         None, net_delta, 'net', None)
+      ] %}
+
+      {% for label, display, raw, sub, d, kind, href in tiles %}
+      <article class="ds-card ds-card--compact dash-tile {{ 'dash-tile--link' if href }} ds-rise"
+               style="--ds-delay:{{ 80 + loop.index0 * 45 }}ms">
+        {% if href %}<a href="{{ href }}" class="dash-tile__hit"><span class="ds-sr">View {{ label|lower }} transactions</span></a>{% endif %}
+        <p class="ds-eyebrow">{{ label }}</p>
+        <p class="dash-tile__value ds-num dash-tile__value--{{ kind }}"
+           data-countup="{{ raw }}" data-format="usd">{{ display }}</p>
+        {% if d is not none %}
+          <p class="dash-tile__foot">
+            {{ delta(d, higher_is_better=(kind != 'outgo')) }}
+            <span class="dash-tile__vs">vs. prior</span>
+          </p>
+        {% elif sub %}
+          <p class="dash-tile__foot"><span class="dash-tile__vs">{{ sub }}</span></p>
+        {% endif %}
+      </article>
+      {% endfor %}
+
+      <!-- Savings rate -->
+      <article class="ds-card ds-card--compact dash-tile ds-rise" style="--ds-delay:260ms">
+        <p class="ds-eyebrow">Savings rate</p>
+        <p class="dash-tile__value ds-num dash-tile__value--rate"
+           data-countup="{{ savings_rate }}" data-format="pct">{{ savings_rate }}%</p>
+        <div class="ds-progress dash-tile__meter" role="img"
+             aria-label="Savings rate {{ savings_rate }} percent of a 20 percent target">
+          <div class="ds-progress__fill {{ 'ds-progress__fill--warn' if savings_rate < 10 else '' }}"
+               data-fill="{{ [savings_rate / 20 * 100, 100]|min if savings_rate > 0 else 0 }}"></div>
+        </div>
+        <p class="dash-tile__foot"><span class="dash-tile__vs">of income kept · 20% target</span></p>
+      </article>
+
+      <!-- Portfolio -->
+      {% if portfolio.value > 0 %}
+      <article class="ds-card ds-card--compact dash-tile dash-tile--link ds-rise" style="--ds-delay:305ms">
+        <a href="/investments" class="dash-tile__hit"><span class="ds-sr">Manage portfolio</span></a>
+        <p class="ds-eyebrow">Portfolio</p>
+        <p class="dash-tile__value ds-num dash-tile__value--inv"
+           data-countup="{{ portfolio.value }}" data-format="usd">{{ portfolio.value|money }}</p>
+        <p class="dash-tile__foot">
+          {% if portfolio.gain is not none %}
+            {{ delta(portfolio.gain) }}
+            <span class="dash-tile__vs">unrealized{% if portfolio.gain_pct is not none %}
+              · {{ '%+.1f'|format(portfolio.gain_pct) }}%{% endif %}</span>
+          {% else %}
+            <span class="dash-tile__vs">{{ portfolio.positions }} position{{ 's' if portfolio.positions != 1 }}</span>
+          {% endif %}
+        </p>
+      </article>
+      {% endif %}
     </div>
 
-    <!-- Spending Insights sidebar -->
-    {% if insights %}
-    <div style="background:var(--panel);border-radius:8px;overflow:hidden;border:1px solid var(--border)">
-      <div style="padding:12px 16px;border-bottom:1px solid var(--border)">
-        <h3 style="font-size:.75rem;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:var(--fg);margin:0">Spending Insights</h3>
+    <!-- Health detail — the factors behind the score, revealed on demand -->
+    <div class="dash-health-detail ds-card" id="healthDetail" hidden>
+      <div class="ds-card__head">
+        <h3 class="ds-card__title">What goes into your score</h3>
+        <button type="button" class="ds-btn ds-btn--icon" data-close="healthDetail" aria-label="Close">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+        </button>
       </div>
-      <ul style="margin:0;padding:10px 14px 14px;list-style:none;display:flex;flex-direction:column;gap:8px">
-        {% for item in insights %}
-        <li style="display:flex;align-items:flex-start;gap:8px">
-          <span style="flex-shrink:0;width:16px;height:16px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:.65rem;font-weight:700;margin-top:1px;
-            {% if item.positive==true %}background:color-mix(in srgb,#22c55e 15%,var(--panel));color:#22c55e
-            {% elif item.positive==false %}background:color-mix(in srgb,var(--red,#ef4444) 15%,var(--panel));color:var(--red,#ef4444)
-            {% else %}background:color-mix(in srgb,var(--fg) 10%,var(--panel));color:var(--fg){% endif %}">
-            {% if item.positive==true %}↓{% elif item.positive==false %}↑{% else %}●{% endif %}
-          </span>
-          <span style="font-size:.78rem;color:var(--fg);line-height:1.4">{{ item.text }}</span>
+      <ul class="dash-factors">
+        {% for f in health.factors if f.weight > 0 %}
+        <li class="dash-factor">
+          <div class="dash-factor__top">
+            <span class="dash-factor__label">{{ f.label }}</span>
+            <span class="ds-badge ds-badge--{{ {'good':'ok','ok':'info','poor':'danger'}.get(f.status,'info') }}">
+              {{ f.score }}<span class="ds-sr"> out of 100</span>
+            </span>
+          </div>
+          <div class="ds-progress">
+            <div class="ds-progress__fill {{ {'good':'','ok':'ds-progress__fill--warn','poor':'ds-progress__fill--danger'}.get(f.status,'') }}"
+                 data-fill="{{ f.score }}"></div>
+          </div>
+          <p class="dash-factor__detail">{{ f.detail }} <span class="dash-factor__weight">{{ f.weight }}% of score</span></p>
         </li>
         {% endfor %}
       </ul>
     </div>
-    {% else %}
-    <div style="background:var(--panel);border-radius:8px;border:1px solid var(--border);padding:24px 16px;display:flex;align-items:center;justify-content:center">
-      <p style="font-size:.8rem;color:var(--fg);opacity:.35;margin:0;text-align:center">No spending insights for this period</p>
-    </div>
-    {% endif %}
+  </section>
 
-  </div>
-
-  <!-- ── Chart row 1: Income+Outgo Trend | Category Spending Trend ── -->
-  <div class="dash-cols" style="display:grid;grid-template-columns:1fr 1fr;gap:1rem">
-
-    <div style="background:var(--panel);border-radius:8px;border:1px solid var(--border);padding:14px 18px">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin:0 0 12px">
-        <h3 style="font-size:.75rem;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:var(--fg);opacity:.65;margin:0">Income &amp; Outgo Trend</h3>
-        <button onclick="openFocus('combinedTrendChart','Income &amp; Outgo Trend')" title="Expand" style="background:none;border:1px solid var(--border);border-radius:6px;padding:3px 6px;cursor:pointer;color:var(--fg);opacity:.5;display:flex;align-items:center;line-height:1" onmouseover="this.style.opacity=1" onmouseout="this.style.opacity=.5">
-          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/></svg>
-        </button>
-      </div>
-      <div style="height:210px"><canvas id="combinedTrendChart"></canvas></div>
-    </div>
-
-    {% if category_trend.months %}
-    <div style="background:var(--panel);border-radius:8px;border:1px solid var(--border);padding:14px 18px">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin:0 0 2px">
-        <h3 style="font-size:.75rem;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:var(--fg);opacity:.65;margin:0">Category Spending Trend</h3>
-        <button onclick="openFocus('categoryTrendChart','Category Spending Trend')" title="Expand" style="background:none;border:1px solid var(--border);border-radius:6px;padding:3px 6px;cursor:pointer;color:var(--fg);opacity:.5;display:flex;align-items:center;line-height:1" onmouseover="this.style.opacity=1" onmouseout="this.style.opacity=.5">
-          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/></svg>
-        </button>
-      </div>
-      <p style="font-size:.68rem;color:var(--fg);opacity:.4;margin:0 0 10px">{{ filter_label }}</p>
-      <div style="height:210px"><canvas id="categoryTrendChart"></canvas></div>
-    </div>
-    {% else %}
-    <div style="background:var(--panel);border-radius:8px;border:1px solid var(--border);padding:14px 18px;display:flex;align-items:center;justify-content:center">
-      <p style="font-size:.82rem;color:var(--fg);opacity:.35;margin:0">No category data for this period</p>
-    </div>
-    {% endif %}
-
-  </div>
-
-  <!-- ── Chart row 2: Running Balance | Category bars ── -->
-  <div class="dash-cols" style="display:grid;grid-template-columns:3fr 2fr;gap:1rem;align-items:start">
-
-    <div style="background:var(--panel);border-radius:8px;border:1px solid var(--border);padding:14px 18px">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin:0 0 12px">
-        <h3 style="font-size:.75rem;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:var(--fg);opacity:.65;margin:0">Running Balance</h3>
-        <button onclick="openFocus('balanceChart','Running Balance')" title="Expand" style="background:none;border:1px solid var(--border);border-radius:6px;padding:3px 6px;cursor:pointer;color:var(--fg);opacity:.5;display:flex;align-items:center;line-height:1" onmouseover="this.style.opacity=1" onmouseout="this.style.opacity=.5">
-          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/></svg>
-        </button>
-      </div>
-      <div style="height:210px"><canvas id="balanceChart"></canvas></div>
+  {# ══════════════════════════════════════════════════════════════════════
+     LAYER 2 — Financial Copilot
+     The conversational centre of the app. The numbers above are already on
+     screen; this is where they get explained and acted on.
+     ══════════════════════════════════════════════════════════════════════ #}
+  <section class="dash-copilot ds-card ds-card--hero ds-card--wash-ai ds-rise"
+           style="--ds-delay:340ms" aria-labelledby="copilot-h">
+    <div class="dash-copilot__head">
+      <span class="dash-copilot__mark" aria-hidden="true">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2.2l2.1 5.9 5.9 2.1-5.9 2.1L12 18.2l-2.1-5.9L4 10.2l5.9-2.1z"/></svg>
+      </span>
+      <h2 class="dash-copilot__title" id="copilot-h">Financial Copilot</h2>
+      <a href="/chat" class="ds-btn ds-btn--ghost ds-btn--sm dash-copilot__full">
+        Open full chat
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 17 17 7"/><path d="M8 7h9v9"/></svg>
+      </a>
     </div>
 
-    <div style="background:var(--panel);border-radius:8px;border:1px solid var(--border);padding:14px 18px;display:flex;flex-direction:column;gap:12px">
-      <div style="flex:1">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin:0 0 6px">
-          <h3 style="font-size:.7rem;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:var(--fg);opacity:.65;margin:0">Income by Category</h3>
-          <div style="display:flex;align-items:center;gap:4px">
-            <button onclick="toggleBarValues('incomeChart')" id="vals-incomeChart" class="dash-vals-toggle" title="Show values on bars" aria-pressed="false" style="background:none;border:1px solid var(--border);border-radius:6px;padding:3px 6px;cursor:pointer;color:var(--fg);opacity:.5;display:flex;align-items:center;line-height:1" onmouseover="this.style.opacity=1" onmouseout="if(!this.classList.contains('on'))this.style.opacity=.5">
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.586 2.586A2 2 0 0 0 11.172 2H4a2 2 0 0 0-2 2v7.172a2 2 0 0 0 .586 1.414l8.704 8.704a2.426 2.426 0 0 0 3.42 0l6.58-6.58a2.426 2.426 0 0 0 0-3.42z"/><circle cx="7.5" cy="7.5" r="1.5" fill="currentColor" stroke="none"/></svg>
-            </button>
-            <button onclick="openFocus('incomeChart','Income by Category')" title="Expand" style="background:none;border:1px solid var(--border);border-radius:6px;padding:3px 6px;cursor:pointer;color:var(--fg);opacity:.5;display:flex;align-items:center;line-height:1" onmouseover="this.style.opacity=1" onmouseout="this.style.opacity=.5">
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/></svg>
-            </button>
-          </div>
+    <!-- Briefing: the deterministic part renders instantly, the written
+         narrative arrives from the model a moment later. -->
+    <div class="dash-copilot__body">
+      <p class="dash-copilot__lede">
+        {{ period_label }} versus <span class="dash-copilot__prev">{{ compare_label }}</span>.
+      </p>
+
+      <ul class="dash-brief" id="dashBrief">
+        {% for change in [
+          ('Spending', outgo_delta, False),
+          ('Income', income_delta, True),
+          ('Net cash flow', net_delta, True)
+        ] %}
+        {% set label, val, higher_good = change %}
+        <li class="dash-brief__item">
+          <span class="dash-brief__bullet {{ 'is-good' if ((val >= 0) == higher_good) else 'is-bad' }}"
+                aria-hidden="true">{{ '▲' if val > 0 else '▼' if val < 0 else '—' }}</span>
+          <span>{{ label }}
+            {% if val == 0 %}unchanged{% else %}{{ 'up' if val > 0 else 'down' }}
+            <b class="ds-num">{{ val|abs|money }}</b>{% endif %}
+          </span>
+        </li>
+        {% endfor %}
+      </ul>
+
+      <!-- Model-written narrative + opportunities -->
+      <div class="dash-copilot__ai" id="copilotNarrative" aria-live="polite">
+        <div class="dash-copilot__loading" id="copilotLoading">
+          <span class="ds-skeleton ds-skeleton--text" style="width:92%"></span>
+          <span class="ds-skeleton ds-skeleton--text" style="width:74%"></span>
         </div>
-        <div class="dash-catbar" style="height:190px"><canvas id="incomeChart"></canvas></div>
       </div>
-      <div style="height:1px;background:var(--border)"></div>
-      <div style="flex:1">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin:0 0 6px">
-          <h3 style="font-size:.7rem;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:var(--fg);opacity:.65;margin:0">Outgo by Category</h3>
-          <div style="display:flex;align-items:center;gap:4px">
-            <button onclick="toggleBarValues('outgoChart')" id="vals-outgoChart" class="dash-vals-toggle" title="Show values on bars" aria-pressed="false" style="background:none;border:1px solid var(--border);border-radius:6px;padding:3px 6px;cursor:pointer;color:var(--fg);opacity:.5;display:flex;align-items:center;line-height:1" onmouseover="this.style.opacity=1" onmouseout="if(!this.classList.contains('on'))this.style.opacity=.5">
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.586 2.586A2 2 0 0 0 11.172 2H4a2 2 0 0 0-2 2v7.172a2 2 0 0 0 .586 1.414l8.704 8.704a2.426 2.426 0 0 0 3.42 0l6.58-6.58a2.426 2.426 0 0 0 0-3.42z"/><circle cx="7.5" cy="7.5" r="1.5" fill="currentColor" stroke="none"/></svg>
-            </button>
-            <button onclick="openFocus('outgoChart','Outgo by Category')" title="Expand" style="background:none;border:1px solid var(--border);border-radius:6px;padding:3px 6px;cursor:pointer;color:var(--fg);opacity:.5;display:flex;align-items:center;line-height:1" onmouseover="this.style.opacity=1" onmouseout="this.style.opacity=.5">
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/></svg>
-            </button>
-          </div>
+
+      <div class="dash-opps" id="copilotOpps" hidden></div>
+
+      <!-- Answer surface for an inline question -->
+      <div class="dash-answer" id="copilotAnswer" hidden>
+        <div class="dash-answer__q" id="copilotAnswerQ"></div>
+        <div class="dash-answer__a" id="copilotAnswerA" aria-live="polite"></div>
+        <div class="dash-answer__foot">
+          <button type="button" class="ds-btn ds-btn--ghost ds-btn--sm" id="copilotAnswerClose">Dismiss</button>
+          <a href="/chat" class="ds-btn ds-btn--ghost ds-btn--sm">Continue in full chat →</a>
         </div>
-        <div class="dash-catbar" style="height:190px"><canvas id="outgoChart"></canvas></div>
       </div>
     </div>
 
-  </div>
-
-  <!-- ── Budget vs. Actuals (only when budgets are set) ── -->
-  {% if chart_budget_map %}
-  <div style="background:var(--panel);border-radius:8px;border:1px solid var(--border);padding:14px 18px">
-    <div style="display:flex;justify-content:space-between;align-items:center;margin:0 0 2px">
-      <h3 style="font-size:.75rem;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:var(--fg);opacity:.65;margin:0">Budget vs. Actuals — Monthly Avg</h3>
-      <button onclick="openFocus('budgetChart','Budget vs. Actuals — Monthly Avg')" title="Expand" style="background:none;border:1px solid var(--border);border-radius:6px;padding:3px 6px;cursor:pointer;color:var(--fg);opacity:.5;display:flex;align-items:center;line-height:1" onmouseover="this.style.opacity=1" onmouseout="this.style.opacity=.5">
-        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/></svg>
+    <!-- Ask -->
+    <form class="dash-ask" id="copilotForm">
+      <label class="ds-sr" for="copilotInput">Ask about your finances</label>
+      <input type="text" id="copilotInput" class="dash-ask__input" autocomplete="off"
+             placeholder="Ask anything about your money…">
+      <button type="submit" class="ds-btn ds-btn--primary ds-btn--sm dash-ask__send" aria-label="Send question">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 19V5"/><path d="m5 12 7-7 7 7"/></svg>
       </button>
+    </form>
+
+    <div class="dash-suggest" id="copilotSuggest" role="group" aria-label="Suggested questions">
+      {# Seeded from the page's own data so the first suggestions are always
+         relevant; replaced by the model's own once the briefing lands. #}
+      {% set seed = [] %}
+      {% if attention and attention[0].severity in ('critical','warning') %}
+        {% set _ = seed.append('Why ' ~ (attention[0].title|lower) ~ '?') %}
+      {% endif %}
+      {% set _ = seed.append('Where did my money go this period?') %}
+      {% set _ = seed.append('How can I cut spending?') %}
+      {% set _ = seed.append('Compare this month to last month') %}
+      {% for q in seed[:4] %}
+      <button type="button" class="ds-chip ds-chip--ai" data-ask="{{ q }}">{{ q }}</button>
+      {% endfor %}
     </div>
-    <p style="font-size:.68rem;color:var(--fg);opacity:.4;margin:0 0 10px">{{ filter_label }} · avg per month vs. monthly limit</p>
-    <div style="height:180px"><canvas id="budgetChart"></canvas></div>
-  </div>
+  </section>
+
+  {# ══════════════════════════════════════════════════════════════════════
+     LAYER 3 — Attention center
+     One ranked list, replacing the alert strips that used to be scattered
+     down the page. Severity is carried by an icon and a word, never by
+     color alone.
+     ══════════════════════════════════════════════════════════════════════ #}
+  {% set actionable = attention|rejectattr('severity','equalto','positive')|list %}
+  {% set wins = attention|selectattr('severity','equalto','positive')|list %}
+
+  <section class="dash-attention ds-rise" style="--ds-delay:380ms" aria-labelledby="attention-h">
+    <div class="ds-section__head">
+      <div>
+        <h2 class="ds-section__title" id="attention-h">
+          {% if actionable %}Needs your attention{% else %}Everything looks clear{% endif %}
+        </h2>
+        <p class="ds-section__sub">
+          {% if actionable %}
+            {{ actionable|length }} item{{ 's' if actionable|length != 1 }} — most urgent first
+          {% else %}
+            No budget overruns, no unusual spending, and no bills due soon
+          {% endif %}
+        </p>
+      </div>
+    </div>
+
+    {% if actionable %}
+    <ul class="dash-alerts">
+      {% for item in actionable %}
+      <li class="ds-card dash-alert dash-alert--{{ item.severity }} ds-slide-in"
+          style="--ds-delay:{{ 400 + loop.index0 * 55 }}ms">
+        <span class="dash-alert__icon dash-alert__icon--{{ item.severity }}">{{ icon(item.icon, 17) }}</span>
+        <div class="dash-alert__body">
+          <p class="dash-alert__title">
+            {{ item.title }}
+            <span class="ds-badge ds-badge--{{ {'critical':'danger','warning':'warn','info':'info'}[item.severity] }}">
+              {{ {'critical':'Urgent','warning':'Watch','info':'Info'}[item.severity] }}
+            </span>
+          </p>
+          <p class="dash-alert__detail">{{ item.detail }}</p>
+        </div>
+        {% if item.action_url %}
+        <a href="{{ item.action_url }}" class="ds-btn ds-btn--secondary ds-btn--sm dash-alert__action">
+          {{ item.action_label }}
+        </a>
+        {% endif %}
+      </li>
+      {% endfor %}
+    </ul>
+    {% endif %}
+
+    {# Wins get a quieter treatment. Given the same card weight as an
+       overrun they dilute the urgent items and the five-second scan fails. #}
+    {% if wins %}
+    <div class="dash-wins ds-slide-in" style="--ds-delay:{{ 400 + actionable|length * 55 }}ms">
+      <p class="ds-eyebrow dash-wins__label">Going well</p>
+      <ul class="dash-wins__list">
+        {% for item in wins %}
+        <li class="dash-win">
+          <span class="dash-win__icon">{{ icon(item.icon, 14) }}</span>
+          <span class="dash-win__title">{{ item.title }}</span>
+          <span class="dash-win__detail">{{ item.detail }}</span>
+        </li>
+        {% endfor %}
+      </ul>
+    </div>
+    {% endif %}
+  </section>
+
+  {# ══════════════════════════════════════════════════════════════════════
+     LAYER 4 — Outlook
+     Most finance apps only look backwards. This is the signature section:
+     where the balance is heading, what is due, and what it means.
+     ══════════════════════════════════════════════════════════════════════ #}
+  <section class="dash-outlook ds-rise" style="--ds-delay:420ms" aria-labelledby="outlook-h">
+    <div class="ds-section__head">
+      <div>
+        <h2 class="ds-section__title" id="outlook-h">The next {{ forecast.days }} days</h2>
+        <p class="ds-section__sub">
+          Projected from your recent income, spending, and scheduled bills{% if not forecast.confident %} — early estimate, based on limited history{% endif %}.
+        </p>
+      </div>
+    </div>
+
+    <div class="dash-outlook__grid">
+      <article class="ds-card dash-forecast">
+        <div class="ds-card__head">
+          <div>
+            <p class="ds-eyebrow">Projected cash</p>
+            <p class="dash-forecast__value ds-num">
+              {{ forecast.projected_balance|money }}
+              {{ delta(forecast.change) }}
+            </p>
+          </div>
+          <div class="ds-card__actions">
+            {{ chart_tools('forecastChart', 'Cash flow forecast') }}
+          </div>
+        </div>
+        <div class="dash-forecast__chart"><canvas id="forecastChart"
+             aria-label="Projected cash balance over the next {{ forecast.days }} days with an eighty percent confidence band"
+             role="img"></canvas></div>
+        {% if forecast.goes_negative %}
+        <p class="dash-forecast__warn">
+          {{ icon('alert', 14) }}
+          Cash dips to <b class="ds-num">{{ forecast.low_point.balance|money }}</b>
+          around {{ forecast.low_point.date }}.
+        </p>
+        {% endif %}
+      </article>
+
+      <div class="dash-outlook__side">
+        <article class="ds-card ds-card--compact dash-stat">
+          <p class="ds-eyebrow">Cash runway</p>
+          <p class="dash-stat__value ds-num">
+            {% if forecast.runway_months %}{{ forecast.runway_months }}<span class="dash-stat__unit">months</span>
+            {% else %}<span class="dash-stat__unit">Not enough history</span>{% endif %}
+          </p>
+          <p class="ds-meta">At {{ forecast.expected_monthly_spend|money }}/mo of spending</p>
+        </article>
+
+        <article class="ds-card ds-card--compact dash-stat">
+          <p class="ds-eyebrow">Expected monthly savings</p>
+          <p class="dash-stat__value ds-num {{ 'is-negative' if forecast.expected_monthly_savings < 0 }}">
+            {{ forecast.expected_monthly_savings|money }}
+          </p>
+          <p class="ds-meta">
+            {{ forecast.expected_monthly_income|money }} in ·
+            {{ forecast.expected_monthly_spend|money }} out
+          </p>
+        </article>
+
+        <article class="ds-card ds-card--compact dash-bills">
+          <div class="ds-card__head">
+            <p class="ds-eyebrow">Due in 14 days</p>
+            <a href="/recurring" class="dash-link">All →</a>
+          </div>
+          {% if upcoming_bills %}
+          <p class="dash-bills__total ds-num">{{ forecast.bills_total|money }}</p>
+          <ul class="dash-bills__list">
+            {% for b in upcoming_bills[:4] %}
+            <li class="dash-bills__row">
+              <span class="dash-bills__when">{{ b.days_away }}d</span>
+              <span class="dash-bills__what" title="{{ b.description }}">{{ b.description|truncate(26, True, '…') }}</span>
+              <span class="dash-bills__amt ds-num">{{ b.amount|money }}</span>
+            </li>
+            {% endfor %}
+          </ul>
+          {% if upcoming_bills|length > 4 %}
+          <p class="ds-meta dash-bills__more">+{{ upcoming_bills|length - 4 }} more</p>
+          {% endif %}
+          {% else %}
+          <p class="dash-empty">No bills detected in the next 14 days.</p>
+          {% endif %}
+        </article>
+      </div>
+    </div>
+  </section>
+
+  {# ══════════════════════════════════════════════════════════════════════
+     LAYER 5 — Budgets
+     Cards rather than table rows: a budget is a status, and a status wants
+     a shape, not a number in a cell.
+     ══════════════════════════════════════════════════════════════════════ #}
+  {% if budget_map %}
+  <section class="dash-budgets ds-rise" aria-labelledby="budgets-h">
+    <div class="ds-section__head">
+      <div>
+        <h2 class="ds-section__title" id="budgets-h">Budgets</h2>
+        <p class="ds-section__sub">Monthly average over {{ period_label }}</p>
+      </div>
+      <a href="{{ url_for('budgets') }}" class="ds-btn ds-btn--secondary ds-btn--sm">Manage budgets</a>
+    </div>
+
+    <div class="dash-budget-grid">
+      {% for cat, lim in budget_map.items()|sort %}
+        {% set stats = all_category_stats.get(cat, {'inbound': 0, 'outbound': 0}) %}
+        {% set net_spent = [stats.outbound - stats.inbound, 0]|max %}
+        {% set mo_avg = net_spent / period_months %}
+        {% set pct = (mo_avg / lim * 100) if lim > 0 else 0 %}
+        {% set state = 'danger' if pct > 100 else 'warn' if pct > 80 else 'ok' %}
+        {% set prev_stats = prev_category_stats.get(cat, {'inbound': 0, 'outbound': 0}) %}
+        {% set prev_mo = ([prev_stats.outbound - prev_stats.inbound, 0]|max) / period_months %}
+      <article class="ds-card dash-budget dash-budget--{{ state }}">
+        <div class="dash-budget__head">
+          <h3 class="dash-budget__cat">{{ cat }}</h3>
+          <span class="ds-badge ds-badge--{{ state }}">{{ pct|round|int }}%</span>
+        </div>
+        <p class="dash-budget__figures">
+          <b class="ds-num">{{ mo_avg|money }}</b>
+          <span class="dash-budget__of">of {{ lim|money }}/mo</span>
+        </p>
+        <div class="ds-progress ds-progress--tall" role="img"
+             aria-label="{{ cat }}: {{ pct|round|int }} percent of a {{ lim|money }} monthly budget">
+          <div class="ds-progress__fill {{ 'ds-progress__fill--danger' if state=='danger' else 'ds-progress__fill--warn' if state=='warn' else '' }}"
+               data-fill="{{ [pct, 100]|min }}"></div>
+        </div>
+        <p class="dash-budget__foot">
+          <span class="dash-budget__left">
+            {% if mo_avg <= lim %}
+              <b class="ds-num">{{ (lim - mo_avg)|money }}</b> left this month
+            {% else %}
+              <b class="ds-num">{{ (mo_avg - lim)|money }}</b> over
+            {% endif %}
+          </span>
+          {% if prev_mo > 0 %}
+            {%- set change = (mo_avg - prev_mo) / prev_mo * 100 -%}
+            {%- if change|abs >= 5 %}
+            {#- Spending up against a budget is bad news, so the trend takes
+                the opposite polarity to a plain value delta. -#}
+            <span class="dash-budget__trend {{ 'is-bad' if change > 0 else 'is-good' }}">
+              <span aria-hidden="true">{{ '▲' if change > 0 else '▼' }}</span>
+              {{ change|abs|round|int }}% vs. prior
+            </span>
+            {%- endif %}
+          {% endif %}
+        </p>
+        <a class="dash-budget__hit"
+           href="{{ url_for('transactions', start_date=start_date, end_date=end_date, account=account_filter, category=cat, type='outgo') }}">
+          <span class="ds-sr">View {{ cat }} transactions</span>
+        </a>
+      </article>
+      {% endfor %}
+    </div>
+  </section>
   {% endif %}
 
-  <!-- ── Focus Modal ── -->
-  <div id="focusOverlay" onclick="closeFocus()" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:9998;backdrop-filter:blur(2px)"></div>
-  <div id="focusModal" style="display:none;position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);z-index:9999;background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:20px 24px;width:min(90vw,960px);height:min(82vh,620px);display:none;flex-direction:column;gap:12px;box-shadow:0 24px 64px rgba(0,0,0,.35)">
-    <div style="display:flex;justify-content:space-between;align-items:center;flex-shrink:0">
-      <h2 id="focusTitle" style="font-size:.8rem;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:var(--fg);opacity:.65;margin:0"></h2>
-      <button onclick="closeFocus()" title="Close (Esc)" style="background:none;border:1px solid var(--border);border-radius:6px;padding:4px 8px;cursor:pointer;color:var(--fg);font-size:.75rem;font-weight:600;line-height:1;opacity:.6" onmouseover="this.style.opacity=1" onmouseout="this.style.opacity=.6">✕ Close</button>
+  {# ══════════════════════════════════════════════════════════════════════
+     LAYER 6 — Deep analytics
+     Collapsed by default. Every panel can be collapsed, pinned, hidden and
+     reordered; the arrangement is remembered per browser.
+     ══════════════════════════════════════════════════════════════════════ #}
+  <section class="dash-analytics" aria-labelledby="analytics-h" id="analyticsRoot">
+    <div class="ds-section__head">
+      <div>
+        <h2 class="ds-section__title" id="analytics-h">Analytics</h2>
+        <p class="ds-section__sub">Drag to reorder · pin to keep open · changes are remembered</p>
+      </div>
+      <div class="ds-row">
+        <button type="button" class="ds-btn ds-btn--ghost ds-btn--sm" id="analyticsExpandAll">Expand all</button>
+        <button type="button" class="ds-btn ds-btn--ghost ds-btn--sm" id="analyticsReset">Reset layout</button>
+      </div>
     </div>
-    <div style="flex:1;min-height:0;position:relative">
-      <canvas id="focusCanvas" style="width:100%;height:100%"></canvas>
+
+    <div class="dash-panels" id="dashPanels">
+
+      {# ── Category breakdown ── #}
+      <section class="ds-card ds-card--flush dash-panel" data-panel="categories" draggable="false">
+        {{ panel_head('categories', 'Category breakdown', 'Click a category to filter the whole dashboard') }}
+        <div class="dash-panel__body" id="panel-body-categories">
+          <div class="dash-table-wrap ds-scroll">
+            <table class="dash-table">
+              <caption class="ds-sr">Income, spending and budget by category for {{ period_label }}</caption>
+              <thead>
+                <tr>
+                  <th scope="col">Category</th>
+                  <th scope="col" class="is-num">In</th>
+                  <th scope="col" class="is-num">Out</th>
+                  <th scope="col" class="is-num">Net</th>
+                  <th scope="col">Budget</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for category, stats in all_category_stats.items() %}
+                {% set is_active = category in category_filter %}
+                <tr class="{{ 'is-active' if is_active }}">
+                  <td>
+                    <span class="dash-swatch" data-swatch="{{ category }}" aria-hidden="true"></span>
+                    {% if is_active %}
+                    <a class="dash-cat dash-cat--on"
+                       href="{{ url_for('dashboard', start_date=start_date, end_date=end_date, account=account_filter, category=category_filter|reject('equalto', category)|list) }}"
+                       title="Remove {{ category }} from the filter">{{ category }} ✕</a>
+                    {% else %}
+                    <a class="dash-cat"
+                       href="{{ url_for('dashboard', start_date=start_date, end_date=end_date, account=account_filter, category=category_filter + [category]) }}"
+                       title="{% if category_filter %}Add {{ category }} to the dashboard filter{% else %}Filter the whole dashboard to {{ category }}{% endif %}">{{ category }}</a>
+                    {% endif %}
+                  </td>
+                  <td class="is-num">
+                    <a class="dash-amt dash-amt--in" href="{{ url_for('transactions', start_date=start_date, end_date=end_date, account=account_filter, category=category, type='inbound') }}">{{ stats.inbound|money }}</a>
+                  </td>
+                  <td class="is-num">
+                    <a class="dash-amt dash-amt--out" href="{{ url_for('transactions', start_date=start_date, end_date=end_date, account=account_filter, category=category, type='outgo') }}">{{ stats.outbound|money }}</a>
+                  </td>
+                  <td class="is-num">
+                    <span class="ds-num {{ 'is-positive' if stats.inbound - stats.outbound >= 0 else 'is-negative' }}">{{ (stats.inbound - stats.outbound)|money }}</span>
+                  </td>
+                  <td class="dash-table__budget">
+                    {% if category in budget_map %}
+                      {% set lim = budget_map[category] %}
+                      {% set net_spent = [stats.outbound - stats.inbound, 0]|max %}
+                      {% set mo_avg = net_spent / period_months %}
+                      {% set pct = [(mo_avg / lim * 100)|round|int, 100]|min %}
+                      {% set over = mo_avg > lim %}
+                      <div class="dash-minibudget">
+                        <div class="ds-progress">
+                          <div class="ds-progress__fill {{ 'ds-progress__fill--danger' if over else 'ds-progress__fill--warn' if pct > 75 else '' }}"
+                               data-fill="{{ pct }}"></div>
+                        </div>
+                        <span class="dash-minibudget__txt {{ 'is-over' if over }} ds-num">{{ mo_avg|money }}/{{ lim|money }}</span>
+                      </div>
+                    {% else %}
+                      <a class="dash-setbudget" href="{{ url_for('budgets') }}">+ set budget</a>
+                    {% endif %}
+                  </td>
+                </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      {# ── Spending insights ──
+         The attention center surfaces only the single loudest movement; this
+         keeps the full ranked list available for anyone who wants it. #}
+      {% if insights %}
+      <section class="ds-card ds-card--flush dash-panel" data-panel="insights">
+        {{ panel_head('insights', 'Spending insights', 'Every category that moved materially') }}
+        <div class="dash-panel__body" id="panel-body-insights">
+          <ul class="dash-insights">
+            {% for item in insights %}
+            <li class="dash-insight">
+              <span class="dash-insight__mark {{ 'is-good' if item.positive == true else 'is-bad' if item.positive == false else 'is-neutral' }}"
+                    aria-hidden="true">{{ '▼' if item.positive == true else '▲' if item.positive == false else '●' }}</span>
+              <span class="dash-insight__text">{{ item.text }}</span>
+            </li>
+            {% endfor %}
+          </ul>
+        </div>
+      </section>
+      {% endif %}
+
+      {# ── Income & outgo trend ── #}
+      <section class="ds-card ds-card--flush dash-panel" data-panel="trend">
+        {{ panel_head('trend', 'Income & spending trend', period_label, chart='combinedTrendChart') }}
+        <div class="dash-panel__body" id="panel-body-trend">
+          <div class="dash-chart"><canvas id="combinedTrendChart" role="img"
+               aria-label="Monthly income and spending over {{ period_label }}"></canvas></div>
+        </div>
+      </section>
+
+      {# ── Category spending trend ── #}
+      {% if category_trend.months %}
+      <section class="ds-card ds-card--flush dash-panel" data-panel="cattrend">
+        {{ panel_head('cattrend', 'Spending by category over time', period_label, chart='categoryTrendChart') }}
+        <div class="dash-panel__body" id="panel-body-cattrend">
+          <div class="dash-chart"><canvas id="categoryTrendChart" role="img"
+               aria-label="Monthly spending by category, stacked"></canvas></div>
+        </div>
+      </section>
+      {% endif %}
+
+      {# ── Running balance ── #}
+      <section class="ds-card ds-card--flush dash-panel" data-panel="balance">
+        {{ panel_head('balance', 'Running balance', 'Cumulative net movement across the period', chart='balanceChart') }}
+        <div class="dash-panel__body" id="panel-body-balance">
+          <div class="dash-chart"><canvas id="balanceChart" role="img"
+               aria-label="Running account balance across {{ period_label }}"></canvas></div>
+        </div>
+      </section>
+
+      {# ── Ranked categories ── #}
+      <section class="ds-card ds-card--flush dash-panel" data-panel="ranked">
+        {{ panel_head('ranked', 'Top categories', 'Ranked by amount') }}
+        <div class="dash-panel__body" id="panel-body-ranked">
+          <div class="dash-split">
+            <div class="dash-split__half">
+              <div class="dash-split__head">
+                <h3 class="dash-split__title">Income</h3>
+                <div class="ds-card__actions">
+                  {{ chart_tools('incomeChart', 'Income by category') }}
+                </div>
+              </div>
+              <div class="dash-chart dash-chart--short"><canvas id="incomeChart" role="img"
+                   aria-label="Income by category, ranked"></canvas></div>
+            </div>
+            <div class="dash-split__half">
+              <div class="dash-split__head">
+                <h3 class="dash-split__title">Spending</h3>
+                <div class="ds-card__actions">
+                  {{ chart_tools('outgoChart', 'Spending by category') }}
+                </div>
+              </div>
+              <div class="dash-chart dash-chart--short"><canvas id="outgoChart" role="img"
+                   aria-label="Spending by category, ranked"></canvas></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {# ── Budget vs actuals ── #}
+      {% if chart_budget_map %}
+      <section class="ds-card ds-card--flush dash-panel" data-panel="budgetchart">
+        {{ panel_head('budgetchart', 'Budget vs. actual', 'Monthly average against each limit', chart='budgetChart') }}
+        <div class="dash-panel__body" id="panel-body-budgetchart">
+          <div class="dash-chart"><canvas id="budgetChart" role="img"
+               aria-label="Monthly average spending against the budget limit, by category"></canvas></div>
+        </div>
+      </section>
+      {% endif %}
+
+    </div>
+
+    <div class="dash-hidden-tray" id="hiddenTray" hidden>
+      <p class="ds-eyebrow">Hidden panels</p>
+      <div class="ds-row ds-row--wrap" id="hiddenTrayItems"></div>
+    </div>
+  </section>
+
+  {# ── Chart focus modal ── #}
+  <div class="dash-modal" id="focusModal" hidden role="dialog" aria-modal="true" aria-labelledby="focusTitle">
+    <div class="dash-modal__backdrop" data-close-modal></div>
+    <div class="dash-modal__panel">
+      <div class="dash-modal__head">
+        <h2 class="dash-modal__title" id="focusTitle"></h2>
+        <div class="ds-row">
+          <button type="button" class="ds-btn ds-btn--secondary ds-btn--sm" id="focusValues" aria-pressed="false">
+            Show values
+          </button>
+          <button type="button" class="ds-btn ds-btn--secondary ds-btn--sm" id="focusExport">
+            Export PNG
+          </button>
+          <button type="button" class="ds-btn ds-btn--icon" data-close-modal aria-label="Close (Escape)">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+          </button>
+        </div>
+      </div>
+      <div class="dash-modal__body"><canvas id="focusCanvas"></canvas></div>
     </div>
   </div>
 
 </div>
 
-<script>
-// Run immediately if DOM is ready (SPA navigation), or wait for the event on first load.
-window._initDashboard = function _initDashboard() {
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', _initDashboard);
-    return;
-  }
-
-  // Destroy any existing Chart.js instances on these canvases before recreating
-  ['combinedTrendChart','categoryTrendChart','balanceChart','incomeChart',
-   'outgoChart','budgetChart'].forEach(function(id) {
-    var el = document.getElementById(id);
-    if (el && typeof Chart !== 'undefined' && Chart.getChart) {
-      var existing = Chart.getChart(el);
-      if (existing) existing.destroy();
-    }
-  });
-
-  var cs = getComputedStyle(document.documentElement);
-  var cssVar = function(v, fb) { var r = cs.getPropertyValue(v).trim(); return r || fb; };
-  var C = {
-    fg:     cssVar('--fg',     '#1f2937'),
-    panel:  cssVar('--panel',  '#ffffff'),
-    border: cssVar('--border', '#e5e7eb'),
-    red:    cssVar('--red',    '#ef4444')
-  };
-
-  var cur = function(v) {
-    return new Intl.NumberFormat('en-US', {style:'currency',currency:'USD',maximumFractionDigits:0}).format(v);
-  };
-
-  var tip = {
-    backgroundColor: C.panel,
-    titleColor: C.fg,
-    bodyColor: C.fg,
-    borderColor: C.border,
-    borderWidth: 1
-  };
-
-  var legLabels = { color: C.fg, boxWidth: 11, font: { size: 10 } };
-  var tickColor = { color: C.fg };
-
-  function xyScales(stacked) {
-    return {
-      x: { ticks: tickColor, grid: { color: C.border }, stacked: !!stacked },
-      y: { ticks: Object.assign({ callback: function(v){ return cur(v); } }, tickColor),
-           grid: { color: C.border }, beginAtZero: true, stacked: !!stacked }
-    };
-  }
-
-  // Store config builders for focus modal
-  window._dashChartBuilders = {};
-  function _createChart(id, buildFn) {
-    window._dashChartBuilders[id] = buildFn;
-    var el = document.getElementById(id);
-    if (!el) return null;
-    return new Chart(el, buildFn());
-  }
-
-  // ── Combined Income + Outgo trend ──
-  var incomeMonths = {{ monthly_income|tojson }};
-  var outgoMonths  = {{ monthly_outgo|tojson }};
-  _createChart('combinedTrendChart', function() {
-    return {
-      type: 'line',
-      data: {
-        labels: incomeMonths.map(function(d){ return d.month; }),
-        datasets: [
-          { label: 'Income', data: incomeMonths.map(function(d){ return d.total; }),
-            borderColor: '#22c55e', backgroundColor: 'rgba(34,197,94,0.07)',
-            fill: true, tension: 0.4, pointRadius: 2, borderWidth: 2 },
-          { label: 'Outgo', data: outgoMonths.map(function(d){ return d.total; }),
-            borderColor: C.red, backgroundColor: 'rgba(239,68,68,0.07)',
-            fill: true, tension: 0.4, pointRadius: 2, borderWidth: 2 }
-        ]
-      },
-      options: {
-        responsive: true, maintainAspectRatio: false,
-        plugins: {
-          legend: { labels: legLabels },
-          tooltip: Object.assign({ callbacks: { label: function(ctx){ return ctx.dataset.label+': '+cur(ctx.raw); } } }, tip)
-        },
-        scales: xyScales()
-      }
-    };
-  });
-
-  // ── Category Spending Trend ──
-  var trendData = {{ category_trend|tojson }};
-  if (trendData.months && trendData.months.length > 0) {
-    var pal = ['#6366f1','#22c55e','#f59e0b','#ef4444','#8b5cf6','#06b6d4','#f97316','#ec4899'];
-    _createChart('categoryTrendChart', function() {
-      return {
-        type: 'bar',
-        data: {
-          labels: trendData.months,
-          datasets: Object.entries(trendData.series).map(function(e, i) {
-            return { label: e[0], data: e[1], backgroundColor: pal[i % pal.length] };
-          })
-        },
-        options: {
-          responsive: true, maintainAspectRatio: false,
-          plugins: {
-            legend: { labels: legLabels },
-            tooltip: Object.assign({ callbacks: { label: function(ctx){ return ctx.dataset.label+': '+cur(ctx.raw); } } }, tip)
-          },
-          scales: xyScales(true)
-        }
-      };
-    });
-  }
-
-  // ── Running Balance ──
-  var balHist = {{ balance_history|tojson }};
-  if (balHist.length > 0) {
-    _createChart('balanceChart', function() {
-      return {
-        type: 'line',
-        data: {
-          labels: balHist.map(function(d){ return d.date; }),
-          datasets: [{
-            label: 'Balance', data: balHist.map(function(d){ return d.balance; }),
-            borderColor: '#6366f1', backgroundColor: 'rgba(99,102,241,0.07)',
-            fill: true, tension: 0.3, pointRadius: 0, borderWidth: 2
-          }]
-        },
-        options: {
-          responsive: true, maintainAspectRatio: false,
-          plugins: {
-            legend: { display: false },
-            tooltip: Object.assign({ callbacks: { label: function(ctx){ return cur(ctx.raw); } } }, tip)
-          },
-          scales: {
-            x: { ticks: Object.assign({ maxTicksLimit: 10 }, tickColor), grid: { color: C.border } },
-            y: { ticks: Object.assign({ callback: function(v){ return cur(v); } }, tickColor), grid: { color: C.border } }
-          }
-        }
-      };
-    });
-  }
-
-  // ── Income + Outgo — ranked horizontal bars ──
-  // A donut with 10+ slices is unreadable (legend truncates, slivers are
-  // indistinguishable) — a single-hue ranked bar scales to any category
-  // count and reads by length instead of by color-matching a legend.
-  var cats    = {{ category_stats.keys()|list|tojson }};
-  var inArr   = {{ category_stats.values()|map(attribute='inbound')|list|tojson }};
-  var outArr  = {{ category_stats.values()|map(attribute='outbound')|list|tojson }};
-  var CAT_BAR_LIMIT = 6;
-
-  function topCategories(labels, values, limit) {
-    var pairs = labels.map(function(c, i) { return { cat: c, val: values[i] || 0 }; })
-                       .filter(function(p) { return p.val > 0; })
-                       .sort(function(a, b) { return b.val - a.val; });
-    if (pairs.length > limit) {
-      var top = pairs.slice(0, limit);
-      var rest = pairs.slice(limit).reduce(function(s, p) { return s + p.val; }, 0);
-      top.push({ cat: 'Other', val: rest });
-      return top;
-    }
-    return pairs;
-  }
-
-  // Opt-in value callout at each bar's end — off by default (selective
-  // labeling), toggled per-chart via the tag icon in the card header.
-  // NOTE: Chart.js routes everything under `options` through its context/
-  // resolver Proxy, which chokes on a raw function value stored there
-  // ("Cannot convert object to primitive value") — so the formatter is
-  // captured via closure below, never placed inside chart options. Only
-  // plain primitives (enabled: bool, color: string) go in options.
-  if (!window._valueCalloutRegistered) {
-    Chart.register({
-      id: 'valueCallout',
-      afterDatasetsDraw: function(chart) {
-        var opts = chart.options.plugins && chart.options.plugins.valueCallout;
-        if (!opts || !opts.enabled) return;
-        var meta = chart.getDatasetMeta(0);
-        var data = chart.data.datasets[0].data;
-        var ctx = chart.ctx;
-        ctx.save();
-        ctx.font = '600 10px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif';
-        ctx.fillStyle = opts.color || '#111827';
-        ctx.textBaseline = 'middle';
-        ctx.textAlign = 'left';
-        meta.data.forEach(function(bar, i) {
-          ctx.fillText(cur(data[i]), bar.x + 6, bar.y);
-        });
-        ctx.restore();
-      }
-    });
-    window._valueCalloutRegistered = true;
-  }
-
-  window._dashShowValues = window._dashShowValues || { incomeChart: false, outgoChart: false };
-
-  function rankedBarConfig(chartId, dataArr, color) {
-    var top = topCategories(cats, dataArr, CAT_BAR_LIMIT);
-    var showVals = !!window._dashShowValues[chartId];
-    return {
-      type: 'bar',
-      data: {
-        labels: top.map(function(p) { return p.cat; }),
-        datasets: [{
-          data: top.map(function(p) { return p.val; }),
-          backgroundColor: color,
-          borderRadius: 4,
-          maxBarThickness: 18,
-          categoryPercentage: 0.7,
-          barPercentage: 0.9
-        }]
-      },
-      options: {
-        indexAxis: 'y',
-        responsive: true, maintainAspectRatio: false,
-        layout: { padding: { right: showVals ? 44 : 8 } },
-        plugins: {
-          legend: { display: false },
-          tooltip: Object.assign({ callbacks: { label: function(ctx){ return cur(ctx.raw); } } }, tip),
-          valueCallout: { enabled: showVals, color: C.fg, format: cur }
-        },
-        scales: {
-          x: { ticks: Object.assign({ callback: function(v){ return cur(v); } }, tickColor), grid: { color: C.border }, beginAtZero: true },
-          y: { ticks: tickColor, grid: { display: false } }
-        }
-      }
-    };
-  }
-
-  _createChart('incomeChart', function() { return rankedBarConfig('incomeChart', inArr, '#22c55e'); });
-  _createChart('outgoChart',  function() { return rankedBarConfig('outgoChart',  outArr, C.red); });
-
-  // Re-sync each toggle button's visual state (the toggle preference lives on
-  // window and survives SPA navigation; the button HTML is re-rendered fresh).
-  ['incomeChart', 'outgoChart'].forEach(function(id) {
-    var btn = document.getElementById('vals-' + id);
-    if (!btn) return;
-    var on = !!window._dashShowValues[id];
-    btn.classList.toggle('on', on);
-    btn.setAttribute('aria-pressed', String(on));
-    btn.style.opacity = on ? 1 : .5;
-  });
-
-  // ── Budget vs. Actuals ──
-  var bmap    = {{ chart_budget_map|tojson }};
-  var catStat = {{ category_stats|tojson }};
-  var periodMonths = {{ period_months }};
-  var bcats   = Object.keys(bmap);
-  if (bcats.length > 0) {
-    var actuals = bcats.map(function(c){ var s=catStat[c]||{}; return Math.max(0,(s.outbound||0)-(s.inbound||0)) / periodMonths; });
-    var limits  = bcats.map(function(c){ return bmap[c]; });
-    var bColors = actuals.map(function(a,i){
-      return a > limits[i] ? 'rgba(239,68,68,0.8)' : a > limits[i]*0.8 ? 'rgba(234,179,8,0.8)' : 'rgba(99,102,241,0.8)';
-    });
-    _createChart('budgetChart', function() {
-      return {
-        type: 'bar',
-        data: {
-          labels: bcats,
-          datasets: [
-            { label: 'Actual', data: actuals, backgroundColor: bColors },
-            { label: 'Budget', data: limits, backgroundColor: 'rgba(156,163,175,0.25)', borderColor: C.border, borderWidth: 1 }
-          ]
-        },
-        options: {
-          responsive: true, maintainAspectRatio: false,
-          plugins: {
-            legend: { labels: legLabels },
-            tooltip: Object.assign({ callbacks: { label: function(ctx){ return ctx.dataset.label+': '+cur(ctx.raw); } } }, tip)
-          },
-          scales: xyScales()
-        }
-      };
-    });
-  }
-
-  // ── AI Insight (cached, loads async) ──
-  fetch('/api/dashboard-insight')
-    .then(function(r){ return r.json(); })
-    .then(function(data) {
-      if (data.insight) {
-        document.getElementById('ai-insight-text').textContent = data.insight;
-        document.getElementById('ai-insight-card').style.display = 'block';
-      }
-    })
-    .catch(function(){});
-}; // _initDashboard
-window._initDashboard();
-
-// Rebuild all charts with fresh colors whenever the theme changes
-// (avoid stacking duplicate listeners across SPA navigations).
-document.removeEventListener('check:theme-changed', window._dashThemeHandler);
-window._dashThemeHandler = function() {
-  closeFocus();
-  window._initDashboard();
-};
-document.addEventListener('check:theme-changed', window._dashThemeHandler);
-
-// ── Category bar value-callout toggle ──
-function toggleBarValues(chartId) {
-  window._dashShowValues = window._dashShowValues || {};
-  var on = !window._dashShowValues[chartId];
-  window._dashShowValues[chartId] = on;
-
-  var btn = document.getElementById('vals-' + chartId);
-  if (btn) {
-    btn.classList.toggle('on', on);
-    btn.setAttribute('aria-pressed', String(on));
-    btn.style.opacity = on ? 1 : .5;
-  }
-
-  var chart = typeof Chart !== 'undefined' && Chart.getChart ? Chart.getChart(chartId) : null;
-  if (!chart) return;
-  chart.options.plugins.valueCallout.enabled = on;
-  chart.options.layout.padding.right = on ? 44 : 8;
-  chart.update();
-}
-
-// ── Focus modal ──
-var _focusChart = null;
-
-function openFocus(canvasId, title) {
-  var buildFn = window._dashChartBuilders && window._dashChartBuilders[canvasId];
-  if (!buildFn) return;
-
-  document.getElementById('focusTitle').textContent = title;
-
-  var overlay = document.getElementById('focusOverlay');
-  var modal   = document.getElementById('focusModal');
-  overlay.style.display = 'block';
-  modal.style.display   = 'flex';
-
-  // Destroy previous focus chart if any
-  if (_focusChart) { _focusChart.destroy(); _focusChart = null; }
-
-  // Rebuild canvas (replacing to clear any stale Chart state)
-  var container = document.getElementById('focusCanvas').parentNode;
-  var oldCanvas = document.getElementById('focusCanvas');
-  oldCanvas.parentNode.removeChild(oldCanvas);
-  var newCanvas = document.createElement('canvas');
-  newCanvas.id = 'focusCanvas';
-  newCanvas.style.cssText = 'width:100%;height:100%';
-  container.appendChild(newCanvas);
-
-  // Small delay so the modal layout is painted before Chart.js measures size
-  requestAnimationFrame(function() {
-    requestAnimationFrame(function() {
-      var cfg = buildFn();
-      // Adjust legend for larger view
-      if (cfg.options && cfg.options.plugins && cfg.options.plugins.legend) {
-        cfg.options.plugins.legend.labels = Object.assign({}, cfg.options.plugins.legend.labels, { font: { size: 12 }, boxWidth: 14 });
-      }
-      _focusChart = new Chart(newCanvas, cfg);
-    });
-  });
-
-  document.addEventListener('keydown', _focusEscListener);
-}
-
-function closeFocus() {
-  document.getElementById('focusOverlay').style.display = 'none';
-  document.getElementById('focusModal').style.display   = 'none';
-  if (_focusChart) { _focusChart.destroy(); _focusChart = null; }
-  document.removeEventListener('keydown', _focusEscListener);
-}
-
-function _focusEscListener(e) {
-  if (e.key === 'Escape') closeFocus();
-}
+<script id="dashData" type="application/json">
+{{ {
+  'monthlyIncome': monthly_income,
+  'monthlyOutgo': monthly_outgo,
+  'balanceHistory': balance_history,
+  'categoryTrend': category_trend,
+  'categoryStats': category_stats,
+  'budgetMap': chart_budget_map,
+  'periodMonths': period_months,
+  'allCategories': all_categories,
+  'forecast': forecast
+}|tojson }}
 </script>
+<script src="{{ url_for('static', filename='js/dashboard.js') }}"></script>
 {% endblock %}

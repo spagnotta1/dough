@@ -7,13 +7,91 @@
 
   <!-- ── Apply saved theme BEFORE any render (prevents flash of wrong theme) ── -->
   <script>
+  /* CheckScheme — derives everything the design system cannot compute in CSS.
+     A theme gives us four raw colors; whether text on them is legible depends
+     on their luminance, which CSS has no way to inspect. So we measure it here
+     and publish the answers as variables:
+
+       html[data-scheme]  light | dark   — picks the status-color ramp
+       --accent-on        text laid on top of the accent
+       --accent-ink       accent used AS text on a panel, darkened or
+                          lightened until it clears 4.5:1
+
+     Without that last step the pale accents (Paper's gold, Cute's pink)
+     would render accent-colored text at ~2:1 on their own panels. */
+  window.CheckScheme = (function(){
+    function rgb(hex) {
+      hex = String(hex || '').trim().replace('#', '');
+      if (hex.length === 3) hex = hex[0]+hex[0]+hex[1]+hex[1]+hex[2]+hex[2];
+      if (hex.length !== 6) return [0, 0, 0];
+      return [parseInt(hex.slice(0,2),16), parseInt(hex.slice(2,4),16), parseInt(hex.slice(4,6),16)];
+    }
+    function hex(c) {
+      return '#' + c.map(function(v){
+        return Math.max(0, Math.min(255, Math.round(v))).toString(16).padStart(2,'0');
+      }).join('');
+    }
+    function lum(c) {
+      var s = c.map(function(v){
+        v /= 255;
+        return v <= 0.03928 ? v/12.92 : Math.pow((v+0.055)/1.055, 2.4);
+      });
+      return 0.2126*s[0] + 0.7152*s[1] + 0.0722*s[2];
+    }
+    function contrast(a, b) {
+      var la = lum(a), lb = lum(b);
+      return (Math.max(la,lb) + 0.05) / (Math.min(la,lb) + 0.05);
+    }
+    function isDark(color) { return lum(rgb(color)) < 0.34; }
+
+    /* Best of white / near-black for text sitting on `bg`. */
+    function onColor(bg) {
+      var c = rgb(bg);
+      return contrast(c, [255,255,255]) >= contrast(c, [17,17,19]) ? '#ffffff' : '#111113';
+    }
+
+    /* Walk `fg` toward black (on light backgrounds) or white (on dark) in
+       small steps until it is readable against `bg`. Returns the first step
+       that clears `min`, so the accent keeps as much of its own hue as the
+       contrast requirement allows. */
+    function readable(fg, bg, min) {
+      min = min || 4.5;
+      var c = rgb(fg), b = rgb(bg);
+      if (contrast(c, b) >= min) return hex(c);
+      var target = lum(b) > 0.34 ? [0,0,0] : [255,255,255];
+      for (var t = 0.05; t <= 1.0001; t += 0.05) {
+        var m = [ c[0]+(target[0]-c[0])*t, c[1]+(target[1]-c[1])*t, c[2]+(target[2]-c[2])*t ];
+        if (contrast(m, b) >= min) return hex(m);
+      }
+      return hex(target);
+    }
+
+    /* Stamp the derived values for a { bg, fg, panel, border, red } theme. */
+    function apply(c) {
+      if (!c || !c.panel) return;
+      var root = document.documentElement;
+      root.setAttribute('data-scheme', isDark(c.panel) ? 'dark' : 'light');
+      if (c.red) {
+        root.style.setProperty('--accent-on',  onColor(c.red));
+        root.style.setProperty('--accent-ink', readable(c.red, c.panel, 4.5));
+      }
+    }
+
+    return { apply: apply, isDark: isDark, readable: readable, onColor: onColor, contrast: contrast, rgb: rgb };
+  })();
+
   (function(){
     var LS = 'check-theme';
+    // Themes that no longer exist — clear them so a stale preference can't
+    // keep painting colors the picker has no swatch for.
+    var RETIRED = { terminal: 1 };
+    var c = null;
     try {
       var t = JSON.parse(localStorage.getItem(LS));
+      if (t && RETIRED[t.name]) { localStorage.removeItem(LS); t = null; }
       if (t && t.colors) {
+        c = t.colors;
         var s = document.documentElement.style;
-        var c = t.colors;
         s.setProperty('--bg',     c.bg);
         s.setProperty('--fg',     c.fg);
         s.setProperty('--panel',  c.panel);
@@ -21,12 +99,20 @@
         if (c.red) s.setProperty('--red', c.red);
       }
     } catch(e){}
+    // Falls back to the :root defaults declared in the stylesheet.
+    window.CheckScheme.apply(c || { bg:'#f3f4f6', fg:'#111827', panel:'#ffffff', border:'#e5e7eb', red:'#7c3aed' });
   })();
   </script>
 
   <script src="https://cdn.tailwindcss.com"></script>
   <script defer src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <!-- Opt-in value labels for every chart in the app — must follow Chart.js. -->
+  <script src="{{ url_for('static', filename='js/chart-value-labels.js') }}"></script>
+  <!-- Shared palette + Chart.js defaults, so every chart reads as one system. -->
+  <script src="{{ url_for('static', filename='js/chart-theme.js') }}"></script>
+  <!-- Design tokens + component primitives. Everything else styles from these. -->
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/design-system.css') }}">
 
   <style>
   /* ═══════════════════════════════════════════════════════════════════════
@@ -57,17 +143,47 @@
   /* ── Body ── */
   body { background-color: var(--bg) !important; color: var(--fg) !important; }
 
-  /* ── Navigation ── */
-  nav                           { background-color: var(--panel) !important; }
-  nav .shadow-lg                { box-shadow: 0 1px 4px rgba(0,0,0,.18) !important; }
+  /* ── Navigation ──
+     Sticky and translucent: the page scrolls under it rather than pushing it
+     away, which keeps the primary destinations reachable from anywhere on a
+     long dashboard. A hairline replaces the drop shadow — at this weight a
+     shadow reads as a seam, not as elevation. */
+  nav {
+    background-color: color-mix(in srgb, var(--panel) 86%, transparent) !important;
+    position: sticky;
+    top: 0;
+    z-index: 100;
+    backdrop-filter: saturate(180%) blur(14px);
+    -webkit-backdrop-filter: saturate(180%) blur(14px);
+    border-bottom: 1px solid var(--hairline, var(--border));
+  }
+  /* Browsers without backdrop-filter get an opaque bar rather than
+     unreadable text over scrolling content. */
+  @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+    nav { background-color: var(--panel) !important; }
+  }
+  nav .shadow-lg                { box-shadow: none !important; }
 
   /* Brand title */
-  nav a.text-xl                 { color: var(--fg) !important; }
+  nav a.text-xl {
+    color: var(--fg) !important;
+    letter-spacing: -.022em;
+    font-weight: 650;
+  }
 
   /* Nav links */
   nav a.text-gray-500           { color: color-mix(in srgb, var(--fg) 55%, transparent) !important; }
   nav a.hover\:text-gray-700:hover { color: var(--fg) !important; }
   nav a.hover\:border-gray-300:hover { border-color: color-mix(in srgb, var(--border) 120%, var(--fg) 5%) !important; }
+
+  /* A soft plate on hover so the target reads before the pointer lands. */
+  nav .sm\:flex > a {
+    border-radius: 8px 8px 0 0;
+    padding-left: 10px !important;
+    padding-right: 10px !important;
+    transition: background-color .14s ease, color .14s ease, border-color .14s ease;
+  }
+  nav .sm\:flex > a:hover { background: color-mix(in srgb, var(--fg) 6%, transparent); }
 
   /* Active nav item (AI Chat link uses violet classes) */
   nav a.text-violet-500,
@@ -380,6 +496,7 @@
 </head>
 <body class="bg-gray-100 min-h-screen">
 <div id="spa-bar"></div>
+<a href="#main" class="ds-skip">Skip to main content</a>
 
   <!-- ── Navigation ── -->
   <nav class="bg-white shadow-lg">
@@ -461,7 +578,7 @@
     </div>
   </div>
 
-  <main class="max-w-7xl mx-auto py-6 px-4 sm:px-6 lg:px-8">
+  <main id="main" tabindex="-1" class="max-w-7xl mx-auto py-6 px-4 sm:px-6 lg:px-8">
     {% block content %}{% endblock %}
   </main>
 
@@ -508,7 +625,6 @@
     'ocean':     { bg:'#0b1a2c', fg:'#64d2ff', panel:'#091422', border:'#1e5074', red:'#4facfe', label:'Ocean'      },
     'ume':       { bg:'#2b1b2e', fg:'#f5c2e7', panel:'#1e1420', border:'#6c4675', red:'#f5a0c0', label:'Ume'        },
     'copper':    { bg:'#1c1410', fg:'#e8c39e', panel:'#140f0a', border:'#7a5533', red:'#d4764e', label:'Copper'     },
-    'terminal':  { bg:'#000000', fg:'#00ff41', panel:'#0a0a0a', border:'#003b00', red:'#00ff41', label:'Terminal'   },
     'organs':    { bg:'#0a0406', fg:'#efe1c8', panel:'#15080a', border:'#3a1519', red:'#c83240', label:'Organs'     },
     'lavender':  { bg:'#f3eef8', fg:'#3d3551', panel:'#faf7ff', border:'#cec3de', red:'#9b6dcc', label:'Lavender'   },
     'gpt':       { bg:'#212121', fg:'#ececec', panel:'#171717', border:'#424242', red:'#949494', label:'GPT'        },
@@ -531,6 +647,10 @@
     s.setProperty('--panel',  t.panel);
     s.setProperty('--border', t.border);
     s.setProperty('--red',    t.red);
+
+    // Re-derive the values CSS can't: light/dark ramp, and accent colors
+    // adjusted for contrast against this theme's panel.
+    window.CheckScheme.apply(t);
 
     // Persist to localStorage
     try { localStorage.setItem(LS_KEY, JSON.stringify({ name: key, colors: t })); } catch(e){}
@@ -773,12 +893,26 @@
           window.scrollTo(0, 0);
         } catch(e) { window.location.href = url; _barDone(); return; }
         // Sequentially execute scripts — handles external src, text/babel+src, and inline
+        //
+        // A <script> whose type is not a JavaScript type is DATA, not code —
+        // pages embed their server-rendered state as application/json. Those
+        // must be left exactly as the new markup delivered them: re-creating
+        // one as a bare <script> drops its id and type, so the element the
+        // page looks up by id disappears and the browser tries to execute the
+        // JSON as JavaScript.
+        var _JS_TYPES = ['', 'text/javascript', 'application/javascript',
+                         'module', 'text/babel'];
+        function _isExecutable(el) {
+          return _JS_TYPES.indexOf((el.getAttribute('type') || '').toLowerCase().trim()) !== -1;
+        }
+
         (function _rx(scripts, i) {
           if (i >= scripts.length) {
             if (typeof Alpine !== 'undefined') { try { Alpine.initTree(curMain); } catch(e){} }
             _barDone(); return;
           }
           var old = scripts[i], isBabel = old.type === 'text/babel', hasSrc = !!old.src;
+          if (!_isExecutable(old)) { _rx(scripts, i + 1); return; }
           if (hasSrc && isBabel) {
             fetch(old.src).then(function(r){ return r.text(); }).then(function(src){
               try {
@@ -801,7 +935,14 @@
             } catch(ex){}
             _rx(scripts, i + 1);
           } else {
-            var s = document.createElement('script'); s.textContent = old.textContent;
+            var s = document.createElement('script');
+            // Carry the attributes across, not just the code: an inline script
+            // may be identified by id or carry a nonce, and losing those
+            // breaks anything that looks the element up afterwards.
+            Array.prototype.forEach.call(old.attributes, function(a) {
+              s.setAttribute(a.name, a.value);
+            });
+            s.textContent = old.textContent;
             old.parentNode.replaceChild(s, old);
             _rx(scripts, i + 1);
           }
@@ -823,8 +964,15 @@
     spaNavigate(location.pathname + location.search, false);
   });
 
-  history.replaceState({url: location.pathname}, '', location.pathname);
-  _updateNav(location.pathname);
+  // Seed history with the FULL url, query string included. Replacing it with
+  // the bare pathname threw away the filter a GET form had just applied: the
+  // page showed filtered data at an address that claimed to be unfiltered, so
+  // the view could not be bookmarked or shared, and Back skipped past it.
+  (function () {
+    var full = location.pathname + location.search;
+    history.replaceState({url: full}, '', full);
+    _updateNav(location.pathname);
+  })();
 
   /* ═══════════════════════════════════════════════════════════════════════
      ON-SCREEN KEYBOARD TRACKING (phones)

@@ -1,0 +1,1035 @@
+/* ══════════════════════════════════════════════════════════════════════════
+   Investments — wealth surface
+   ──────────────────────────────────────────────────────────────────────────
+   Layout and components for the six-layer Investments page. Every value here
+   resolves to a design token — no raw spacing, radius, color or duration
+   literals, so a change in design-system.css moves this page with it.
+
+   The page reads top to bottom as one argument:
+     1  Hero ......... What am I worth, and what happened?
+     2  Copilot ...... What does that mean, and what should I do?
+     3  Story ........ The four sentences before any table.
+     4  Attention .... What needs me now?
+     5  Analytics .... Show me the detail (collapsed by default).
+     6  Holdings ..... The positions themselves.
+   ══════════════════════════════════════════════════════════════════════════ */
+
+.inv {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-10);
+  padding-bottom: var(--sp-16);
+}
+
+/* The `hidden` attribute is how every toggle on this page hides things, and
+   the UA rule behind it is only `display: none` at author-origin weight —
+   any component rule with `display: flex` silently beats it. That is how the
+   copilot's thread footer ended up permanently on screen with no thread. One
+   rule, stated once, instead of a `[hidden]` variant on every component. */
+.inv [hidden] { display: none !important; }
+
+/* The app has no global `x-cloak` rule, so the attribute was decorative and
+   the edit modal painted at full size for the moment before Alpine ran. */
+.inv [x-cloak] { display: none !important; }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   Header
+   ══════════════════════════════════════════════════════════════════════════ */
+
+.inv-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--sp-5);
+  flex-wrap: wrap;
+}
+.inv-header__title {
+  font-size: var(--f-display);
+  font-weight: var(--w-semi);
+  line-height: var(--lh-tight);
+  letter-spacing: -.028em;
+  color: var(--ink-strong);
+  margin: 0;
+}
+.inv-header__sub {
+  font-size: var(--f-sm);
+  color: var(--ink-faint);
+  margin: var(--sp-1) 0 0;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  flex-wrap: wrap;
+}
+.inv-header__tools { display: flex; align-items: center; gap: var(--sp-2); flex-wrap: wrap; }
+
+/* Connection pills */
+.inv-conns { display: flex; flex-wrap: wrap; gap: var(--sp-2); }
+.inv-conn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: 5px var(--sp-3);
+  border-radius: var(--r-full);
+  border: 1px solid var(--hairline);
+  background: var(--surface);
+  font-size: var(--f-xs);
+  color: var(--ink-muted);
+  text-decoration: none;
+  transition: border-color var(--dur-1) var(--ease-out), background var(--dur-1) var(--ease-out);
+}
+.inv-conn:hover { background: var(--surface-hover); border-color: var(--hairline-firm); }
+.inv-conn__dot { width: 7px; height: 7px; border-radius: var(--r-full); background: var(--ok-mark); flex-shrink: 0; }
+.inv-conn__dot--expired { background: var(--warn-mark); }
+.inv-conn__dot--error   { background: var(--danger-mark); }
+.inv-conn__name { font-weight: var(--w-semi); color: var(--ink-body); }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   LAYER 1 — Hero
+   One cohesive block rather than six floating cards: net worth is the
+   headline, the split bar shows the shape, and the tiles support it.
+   ══════════════════════════════════════════════════════════════════════════ */
+
+.inv-hero {
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr);
+  gap: var(--sp-8);
+  align-items: center;
+}
+
+.inv-hero__eyebrow { display: flex; align-items: center; gap: var(--sp-3); flex-wrap: wrap; }
+.inv-hero__value {
+  font-size: var(--f-hero);
+  font-weight: var(--w-bold);
+  line-height: var(--lh-tight);
+  letter-spacing: -.032em;
+  color: var(--ink-strong);
+  margin: var(--sp-2) 0 0;
+}
+.inv-hero__delta { display: flex; align-items: baseline; gap: var(--sp-3); flex-wrap: wrap; margin-top: var(--sp-2); }
+.inv-hero__delta .ds-delta { font-size: var(--f-md); }
+.inv-hero__window { font-size: var(--f-xs); color: var(--ink-faint); }
+
+/* Period toggle */
+.inv-periods { display: flex; gap: var(--sp-1); flex-wrap: wrap; margin-top: var(--sp-4); }
+.inv-period {
+  min-height: 28px;
+  padding: 0 var(--sp-3);
+  border-radius: var(--r-full);
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--ink-faint);
+  font-family: inherit;
+  font-size: var(--f-xs);
+  font-weight: var(--w-semi);
+  letter-spacing: .01em;
+  cursor: pointer;
+  transition: background var(--dur-1) var(--ease-out), color var(--dur-1) var(--ease-out);
+}
+.inv-period:hover:not(:disabled) { background: color-mix(in srgb, var(--fg) 7%, transparent); color: var(--ink); }
+.inv-period[aria-pressed="true"] {
+  background: var(--accent-bg);
+  border-color: color-mix(in srgb, var(--accent) 40%, transparent);
+  color: var(--accent-ink);
+}
+.inv-period:disabled { opacity: .34; cursor: not-allowed; }
+
+/* Composition bar — cash vs invested vs crypto in one 6px line */
+.inv-hero__bar {
+  display: flex;
+  height: 7px;
+  border-radius: var(--r-full);
+  overflow: hidden;
+  background: color-mix(in srgb, var(--fg) 9%, transparent);
+  margin-top: var(--sp-5);
+}
+.inv-hero__seg { height: 100%; transition: width var(--dur-5) var(--ease-out); }
+.inv-hero__seg--cash   { background: var(--info-mark); }
+.inv-hero__seg--inv    { background: var(--ok-mark); }
+.inv-hero__seg--crypto { background: var(--warn-mark); }
+
+.inv-hero__legend {
+  display: flex;
+  gap: var(--sp-5);
+  flex-wrap: wrap;
+  margin-top: var(--sp-3);
+  font-size: var(--f-xs);
+  color: var(--ink-muted);
+}
+.inv-hero__legend b { color: var(--ink-body); font-weight: var(--w-semi); }
+.inv-hero__dot {
+  display: inline-block;
+  width: 8px; height: 8px;
+  border-radius: var(--r-full);
+  margin-right: 6px;
+}
+.inv-hero__dot--cash   { background: var(--info-mark); }
+.inv-hero__dot--inv    { background: var(--ok-mark); }
+.inv-hero__dot--crypto { background: var(--warn-mark); }
+
+/* Twin score rings — health and risk, side by side */
+.inv-rings { display: flex; gap: var(--sp-5); justify-content: flex-end; }
+.inv-ring {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--sp-2);
+  background: none;
+  border: 0;
+  padding: var(--sp-2);
+  border-radius: var(--r-md);
+  cursor: pointer;
+  font-family: inherit;
+  transition: background var(--dur-1) var(--ease-out);
+}
+.inv-ring:hover { background: color-mix(in srgb, var(--fg) 5%, transparent); }
+.inv-ring__svg { width: 104px; height: 104px; transform: rotate(-90deg); }
+.inv-ring__track { fill: none; stroke: color-mix(in srgb, var(--fg) 11%, transparent); stroke-width: 8; }
+.inv-ring__value {
+  fill: none;
+  stroke-width: 8;
+  stroke-linecap: round;
+  stroke-dasharray: 264;          /* 2πr for r = 42 */
+  stroke-dashoffset: 264;
+  transition: stroke-dashoffset var(--dur-5) var(--ease-out);
+}
+.inv-ring__value--strong { stroke: var(--ok-mark); }
+.inv-ring__value--solid  { stroke: var(--info-mark); }
+.inv-ring__value--watch  { stroke: var(--warn-mark); }
+.inv-ring__value--weak   { stroke: var(--danger-mark); }
+/* Risk is a posture, not a verdict — an aggressive portfolio is right for
+   some people. It gets a deliberately non-judgemental hue rather than the
+   theme accent, which is red on several themes and reads as an alarm. */
+.inv-ring__value--risk   { stroke: var(--ai-mark); }
+.inv-ring__num {
+  position: absolute;
+  top: 44px; left: 50%;
+  transform: translate(-50%, -50%);
+  font-size: var(--f-xl);
+  font-weight: var(--w-bold);
+  color: var(--ink-strong);
+  letter-spacing: var(--track-tight);
+  pointer-events: none;
+}
+.inv-ring__label {
+  font-size: var(--f-micro);
+  font-weight: var(--w-semi);
+  text-transform: uppercase;
+  letter-spacing: var(--track-caps);
+  color: var(--ink-faint);
+  text-align: center;
+  line-height: 1.5;
+}
+.inv-ring__band { display: block; font-size: var(--f-xs); text-transform: none; letter-spacing: 0; font-style: normal; color: var(--ink-body); }
+
+/* Supporting tiles */
+.inv-tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(158px, 1fr));
+  gap: var(--sp-3);
+}
+.inv-tile { position: relative; display: flex; flex-direction: column; gap: var(--sp-1); }
+.inv-tile__value {
+  font-size: var(--f-xl);
+  font-weight: var(--w-semi);
+  color: var(--ink-strong);
+  line-height: var(--lh-tight);
+  margin: 2px 0 0;
+}
+.inv-tile__value--up   { color: var(--ok-ink); }
+.inv-tile__value--down { color: var(--danger-ink); }
+.inv-tile__foot { font-size: var(--f-xs); color: var(--ink-faint); margin: auto 0 0; padding-top: var(--sp-2); }
+.inv-tile__hit { position: absolute; inset: 0; border-radius: inherit; }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   LAYER 2 — Wealth copilot
+   ══════════════════════════════════════════════════════════════════════════ */
+
+.inv-copilot { display: flex; flex-direction: column; gap: var(--sp-4); }
+.inv-copilot__head { display: flex; align-items: center; gap: var(--sp-3); }
+.inv-copilot__mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px; height: 32px;
+  border-radius: var(--r-sm);
+  background: var(--ai-bg);
+  color: var(--ai-ink);
+  flex-shrink: 0;
+}
+.inv-copilot__title {
+  font-size: var(--f-lg);
+  font-weight: var(--w-semi);
+  color: var(--ink-strong);
+  letter-spacing: -.014em;
+  margin: 0;
+  flex: 1;
+}
+
+.inv-copilot__ai { font-size: var(--f-md); color: var(--ink-body); line-height: var(--lh-body); }
+.inv-copilot__ai p { margin: 0 0 var(--sp-2); }
+.inv-copilot__ai p:last-child { margin-bottom: 0; }
+.inv-copilot__ai ul { margin: var(--sp-2) 0; padding-left: var(--sp-5); }
+.inv-copilot__ai li { margin-bottom: var(--sp-1); }
+.inv-copilot__ai code {
+  font-size: .92em;
+  padding: 1px 5px;
+  border-radius: var(--r-xs);
+  background: color-mix(in srgb, var(--fg) 8%, transparent);
+}
+.inv-copilot__loading { display: flex; flex-direction: column; gap: var(--sp-2); }
+
+/* Opportunities */
+.inv-opps { display: flex; flex-direction: column; gap: var(--sp-2); }
+.inv-opp {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--sp-3);
+  padding: var(--sp-3);
+  border-radius: var(--r-md);
+  background: color-mix(in srgb, var(--fg) 4%, transparent);
+  animation: ds-rise var(--dur-4) var(--ease-out) both;
+  animation-delay: var(--ds-delay, 0ms);
+}
+.inv-opp__num {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 21px; height: 21px;
+  flex-shrink: 0;
+  border-radius: var(--r-full);
+  background: var(--ai-bg);
+  color: var(--ai-ink);
+  font-size: var(--f-micro);
+  font-weight: var(--w-bold);
+}
+.inv-opp__title { font-size: var(--f-sm); font-weight: var(--w-semi); color: var(--ink-strong); margin: 0; }
+.inv-opp__detail { font-size: var(--f-xs); color: var(--ink-muted); margin: 2px 0 0; line-height: var(--lh-snug); }
+.inv-opp__impact { flex-shrink: 0; }
+
+/* The conversation thread — this copilot keeps its turns, unlike the
+   dashboard's one-shot answer card. */
+.inv-thread { display: flex; flex-direction: column; gap: var(--sp-3); }
+.inv-turn { display: flex; flex-direction: column; gap: var(--sp-1); }
+.inv-turn__q {
+  align-self: flex-end;
+  max-width: 85%;
+  padding: var(--sp-2) var(--sp-4);
+  border-radius: var(--r-lg) var(--r-lg) var(--r-xs) var(--r-lg);
+  background: var(--accent-bg);
+  color: var(--accent-ink);
+  font-size: var(--f-sm);
+  font-weight: var(--w-medium);
+}
+.inv-turn__a {
+  font-size: var(--f-sm);
+  color: var(--ink-body);
+  line-height: var(--lh-body);
+  padding: var(--sp-1) 0;
+}
+.inv-turn__a p { margin: 0 0 var(--sp-2); }
+.inv-turn__a p:last-child { margin-bottom: 0; }
+.inv-turn__a ul { margin: var(--sp-2) 0; padding-left: var(--sp-5); }
+.inv-turn__a.is-streaming::after {
+  content: "";
+  display: inline-block;
+  width: 7px; height: 1.05em;
+  margin-left: 3px;
+  vertical-align: text-bottom;
+  background: var(--ai-mark);
+  animation: inv-caret 1s steps(2) infinite;
+}
+@keyframes inv-caret { 50% { opacity: 0; } }
+
+.inv-thread__foot { display: flex; align-items: center; gap: var(--sp-2); flex-wrap: wrap; }
+
+/* Ask box */
+.inv-ask {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: var(--sp-1) var(--sp-1) var(--sp-1) var(--sp-4);
+  border: 1px solid var(--hairline-firm);
+  border-radius: var(--r-full);
+  background: var(--surface);
+  transition: border-color var(--dur-2) var(--ease-out), box-shadow var(--dur-2) var(--ease-out);
+}
+.inv-ask:focus-within {
+  border-color: var(--ai-mark);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--ai-mark) 16%, transparent);
+}
+.inv-ask__input {
+  flex: 1;
+  min-width: 0;
+  min-height: 38px;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  font-family: inherit;
+  font-size: var(--f-sm);
+  outline: none;
+}
+.inv-ask__input::placeholder { color: var(--ink-ghost); }
+.inv-ask__send { border-radius: var(--r-full); width: 34px; padding: 0; }
+
+.inv-suggest { display: flex; flex-wrap: wrap; gap: var(--sp-2); }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   LAYER 3 — Story
+   Horizontal scroll on narrow screens, grid on wide. Each beat is one fact
+   with its consequence, so the reader never has to open a table to know
+   what happened.
+   ══════════════════════════════════════════════════════════════════════════ */
+
+.inv-story {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(232px, 1fr));
+  gap: var(--sp-3);
+}
+.inv-beat {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  border-left: 3px solid var(--hairline-firm);
+}
+.inv-beat--positive { border-left-color: var(--ok-mark); }
+.inv-beat--negative { border-left-color: var(--danger-mark); }
+.inv-beat--neutral  { border-left-color: color-mix(in srgb, var(--fg) 22%, transparent); }
+.inv-beat__headline {
+  font-size: var(--f-sm);
+  font-weight: var(--w-semi);
+  color: var(--ink-strong);
+  line-height: var(--lh-snug);
+  margin: 0;
+}
+.inv-beat__detail { font-size: var(--f-xs); color: var(--ink-muted); line-height: var(--lh-snug); margin: 0; }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   LAYER 4 — Insights
+   ══════════════════════════════════════════════════════════════════════════ */
+
+.inv-insights { display: flex; flex-direction: column; gap: var(--sp-2); list-style: none; margin: 0; padding: 0; }
+.inv-insight {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: start;
+  gap: var(--sp-3);
+  padding: var(--sp-4);
+}
+.inv-insight--critical { border-color: color-mix(in srgb, var(--danger-mark) 34%, var(--border)); background: var(--danger-bg); }
+.inv-insight--warning  { border-color: color-mix(in srgb, var(--warn-mark) 30%, var(--border)); background: var(--warn-bg); }
+.inv-insight__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px; height: 30px;
+  border-radius: var(--r-sm);
+  flex-shrink: 0;
+  background: color-mix(in srgb, var(--fg) 8%, transparent);
+  color: var(--ink-muted);
+}
+.inv-insight__icon--critical { background: color-mix(in srgb, var(--danger-mark) 20%, transparent); color: var(--danger-ink); }
+.inv-insight__icon--warning  { background: color-mix(in srgb, var(--warn-mark) 22%, transparent); color: var(--warn-ink); }
+.inv-insight__icon--info     { background: color-mix(in srgb, var(--info-mark) 18%, transparent); color: var(--info-ink); }
+.inv-insight__icon--positive { background: color-mix(in srgb, var(--ok-mark) 18%, transparent); color: var(--ok-ink); }
+
+.inv-insight__title {
+  font-size: var(--f-sm);
+  font-weight: var(--w-semi);
+  color: var(--ink-strong);
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  flex-wrap: wrap;
+}
+.inv-insight__detail { font-size: var(--f-xs); color: var(--ink-muted); margin: 3px 0 0; line-height: var(--lh-snug); }
+
+/* The "why" is the difference between an instruction and an explanation.
+   It is one click away rather than always on, so the list stays scannable. */
+.inv-insight__why {
+  margin-top: var(--sp-2);
+  padding: var(--sp-3);
+  border-radius: var(--r-sm);
+  background: color-mix(in srgb, var(--fg) 5%, transparent);
+  font-size: var(--f-xs);
+  color: var(--ink-body);
+  line-height: var(--lh-body);
+}
+.inv-insight__explain {
+  align-self: flex-start;
+  font-size: var(--f-micro);
+  font-weight: var(--w-semi);
+  letter-spacing: .02em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+  background: none;
+  border: 0;
+  padding: var(--sp-1) var(--sp-2);
+  border-radius: var(--r-xs);
+  cursor: pointer;
+  font-family: inherit;
+}
+.inv-insight__explain:hover { color: var(--ink); background: color-mix(in srgb, var(--fg) 8%, transparent); }
+.inv-insight__side { display: flex; flex-direction: column; align-items: flex-end; gap: var(--sp-2); }
+
+.inv-wins { display: flex; flex-wrap: wrap; gap: var(--sp-2); }
+.inv-win {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: var(--sp-2) var(--sp-3);
+  border-radius: var(--r-full);
+  background: var(--ok-bg);
+  color: var(--ok-ink);
+  font-size: var(--f-xs);
+  font-weight: var(--w-medium);
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   LAYER 5 — Analytics panels
+   Collapsed by default, reorderable, pinnable, hideable — the same contract
+   as the dashboard, so the two pages behave identically.
+   ══════════════════════════════════════════════════════════════════════════ */
+
+.inv-panels { display: flex; flex-direction: column; gap: var(--sp-3); }
+
+.inv-panel { overflow: hidden; }
+.inv-panel.is-dragging { opacity: .55; }
+.inv-panel.is-drop-target { border-color: var(--accent); }
+
+.inv-panel__head {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: var(--sp-3) var(--sp-4);
+}
+.inv-panel__toggle {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  flex: 1;
+  min-width: 0;
+  background: none;
+  border: 0;
+  padding: var(--sp-1) 0;
+  text-align: left;
+  cursor: pointer;
+  font-family: inherit;
+  color: var(--ink-strong);
+}
+.inv-panel__caret {
+  flex-shrink: 0;
+  color: var(--ink-faint);
+  transition: transform var(--dur-2) var(--ease-out);
+}
+.inv-panel__toggle[aria-expanded="true"] .inv-panel__caret { transform: rotate(90deg); }
+.inv-panel__title { font-size: var(--f-sm); font-weight: var(--w-semi); }
+.inv-panel__sub {
+  font-size: var(--f-xs);
+  color: var(--ink-faint);
+  font-weight: var(--w-normal);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.inv-panel__tools { display: flex; align-items: center; gap: 2px; flex-shrink: 0; }
+.inv-panel__grip { color: var(--ink-ghost); cursor: grab; display: flex; padding: var(--sp-1); }
+.inv-panel__grip:active { cursor: grabbing; }
+
+.inv-panel__body { padding: 0 var(--sp-4) var(--sp-5); }
+.inv-panel__body[hidden] { display: none; }
+
+.inv-chart { position: relative; height: 300px; }
+.inv-chart--tall  { height: 380px; }
+.inv-chart--short { height: 236px; }
+
+.inv-hidden-tray {
+  margin-top: var(--sp-4);
+  padding: var(--sp-4);
+  border: 1px dashed var(--hairline-firm);
+  border-radius: var(--r-md);
+}
+
+/* Allocation table beneath a donut — the numeric statement of the chart. */
+.inv-alloc { display: grid; grid-template-columns: minmax(0, 320px) minmax(0, 1fr); gap: var(--sp-6); align-items: center; }
+.inv-alloc__list { display: flex; flex-direction: column; gap: var(--sp-1); margin: 0; padding: 0; list-style: none; }
+.inv-alloc__row {
+  display: grid;
+  grid-template-columns: 10px minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: var(--sp-3);
+  padding: var(--sp-2);
+  border-radius: var(--r-xs);
+  font-size: var(--f-sm);
+}
+.inv-alloc__row:hover { background: color-mix(in srgb, var(--fg) 5%, transparent); }
+.inv-alloc__swatch { width: 10px; height: 10px; border-radius: 3px; }
+.inv-alloc__label { color: var(--ink-body); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.inv-alloc__value { color: var(--ink-strong); font-weight: var(--w-semi); }
+.inv-alloc__pct { color: var(--ink-faint); font-size: var(--f-xs); min-width: 46px; text-align: right; }
+
+/* A quiet, permanent statement of where a classification came from. */
+.inv-basis {
+  font-size: var(--f-micro);
+  color: var(--ink-faint);
+  margin: var(--sp-3) 0 0;
+  line-height: var(--lh-snug);
+  display: flex;
+  align-items: flex-start;
+  gap: var(--sp-2);
+}
+.inv-basis svg { flex-shrink: 0; margin-top: 1px; }
+
+/* Metric strips inside analytics panels */
+.inv-metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: var(--sp-3); margin-bottom: var(--sp-5); }
+.inv-metric { padding: var(--sp-3); border-radius: var(--r-md); background: color-mix(in srgb, var(--fg) 4%, transparent); }
+.inv-metric__value { font-size: var(--f-lg); font-weight: var(--w-semi); color: var(--ink-strong); margin: 2px 0 0; }
+.inv-metric__value--up   { color: var(--ok-ink); }
+.inv-metric__value--down { color: var(--danger-ink); }
+.inv-metric__note { font-size: var(--f-micro); color: var(--ink-faint); margin: 2px 0 0; }
+
+/* Factor bars — health / diversification breakdowns */
+.inv-factors { display: flex; flex-direction: column; gap: var(--sp-4); list-style: none; margin: 0; padding: 0; }
+.inv-factor__top { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-3); margin-bottom: var(--sp-2); }
+.inv-factor__label { font-size: var(--f-sm); font-weight: var(--w-medium); color: var(--ink-body); }
+.inv-factor__detail { font-size: var(--f-xs); color: var(--ink-faint); margin: var(--sp-2) 0 0; }
+.inv-factor__weight { color: var(--ink-ghost); }
+
+.inv-recs { display: flex; flex-direction: column; gap: var(--sp-2); margin: var(--sp-5) 0 0; padding: 0; list-style: none; }
+.inv-rec {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--sp-3);
+  padding: var(--sp-3);
+  border-radius: var(--r-md);
+  background: var(--info-bg);
+}
+.inv-rec__title { font-size: var(--f-sm); font-weight: var(--w-semi); color: var(--ink-strong); margin: 0; }
+.inv-rec__detail { font-size: var(--f-xs); color: var(--ink-muted); margin: 2px 0 0; line-height: var(--lh-snug); }
+
+/* Projection controls */
+.inv-controls { display: flex; flex-wrap: wrap; align-items: flex-end; gap: var(--sp-4); margin-bottom: var(--sp-5); }
+.inv-control { display: flex; flex-direction: column; gap: var(--sp-1); }
+.inv-control__label {
+  font-size: var(--f-micro);
+  font-weight: var(--w-semi);
+  text-transform: uppercase;
+  letter-spacing: var(--track-caps);
+  color: var(--ink-faint);
+}
+.inv-input {
+  min-height: 34px;
+  padding: 0 var(--sp-3);
+  border: 1px solid var(--hairline-firm);
+  border-radius: var(--r-sm);
+  background: var(--surface);
+  color: var(--ink);
+  font-family: inherit;
+  font-size: var(--f-sm);
+}
+.inv-input:focus { outline: none; border-color: var(--accent); }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   LAYER 6 — Holdings
+   ══════════════════════════════════════════════════════════════════════════ */
+
+.inv-holdings__bar {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  flex-wrap: wrap;
+  margin-bottom: var(--sp-4);
+}
+.inv-search {
+  flex: 1;
+  min-width: 180px;
+  max-width: 300px;
+  min-height: 34px;
+  padding: 0 var(--sp-3);
+  border: 1px solid var(--hairline-firm);
+  border-radius: var(--r-full);
+  background: var(--surface);
+  color: var(--ink);
+  font-family: inherit;
+  font-size: var(--f-sm);
+}
+.inv-search:focus { outline: none; border-color: var(--accent); }
+
+.inv-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(272px, 1fr)); gap: var(--sp-3); }
+
+.inv-pos {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+  padding: var(--sp-4);
+  text-align: left;
+  width: 100%;
+  font-family: inherit;
+  cursor: pointer;
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-md);
+  box-shadow: var(--e-1);
+  transition: transform var(--dur-2) var(--ease-out),
+              box-shadow var(--dur-2) var(--ease-out),
+              border-color var(--dur-2) var(--ease-out);
+}
+.inv-pos:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--e-3);
+  border-color: color-mix(in srgb, var(--border) 55%, var(--fg) 14%);
+}
+.inv-pos:active { transform: translateY(0); }
+.inv-pos[hidden] { display: none; }
+
+.inv-pos__top { display: flex; align-items: center; gap: var(--sp-3); }
+/* The "logo" is the ticker's own initials on a hue derived from it — no
+   remote asset, no layout shift, and it still gives each row an anchor the
+   eye can find on a second visit. */
+.inv-pos__mark {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 38px; height: 38px;
+  flex-shrink: 0;
+  border-radius: var(--r-sm);
+  font-size: var(--f-xs);
+  font-weight: var(--w-bold);
+  letter-spacing: -.01em;
+  color: #fff;
+}
+.inv-pos__id { flex: 1; min-width: 0; }
+.inv-pos__ticker {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  font-size: var(--f-md);
+  font-weight: var(--w-semi);
+  color: var(--ink-strong);
+  margin: 0;
+}
+.inv-pos__synced { width: 6px; height: 6px; border-radius: var(--r-full); background: var(--ok-mark); flex-shrink: 0; }
+.inv-pos__name {
+  font-size: var(--f-xs);
+  color: var(--ink-faint);
+  margin: 1px 0 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.inv-pos__figs { text-align: right; flex-shrink: 0; }
+.inv-pos__value { font-size: var(--f-md); font-weight: var(--w-semi); color: var(--ink-strong); margin: 0; }
+
+.inv-pos__spark { height: 30px; margin: calc(var(--sp-1) * -1) 0; }
+
+.inv-pos__meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-2);
+  font-size: var(--f-xs);
+  color: var(--ink-faint);
+  flex-wrap: wrap;
+}
+.inv-pos__weight { display: flex; align-items: center; gap: var(--sp-2); flex: 1; min-width: 90px; }
+.inv-pos__weight .ds-progress { flex: 1; height: 4px; }
+
+/* Table view — the same data for people who want density */
+.inv-table-wrap { overflow-x: auto; }
+.inv-table { width: 100%; border-collapse: collapse; font-size: var(--f-sm); min-width: 720px; }
+.inv-table th {
+  text-align: left;
+  padding: var(--sp-2) var(--sp-3);
+  font-size: var(--f-micro);
+  font-weight: var(--w-semi);
+  text-transform: uppercase;
+  letter-spacing: var(--track-caps);
+  color: var(--ink-faint);
+  border-bottom: 1px solid var(--hairline);
+  white-space: nowrap;
+}
+.inv-table th.is-num, .inv-table td.is-num { text-align: right; }
+.inv-table td { padding: var(--sp-3); border-bottom: 1px solid var(--hairline); color: var(--ink-body); }
+.inv-table tbody tr { cursor: pointer; }
+.inv-table tbody tr:hover { background: color-mix(in srgb, var(--fg) 5%, transparent); }
+.inv-table tbody tr[hidden] { display: none; }
+.inv-table__ticker { font-weight: var(--w-semi); color: var(--ink-strong); }
+.inv-table tfoot td { font-weight: var(--w-semi); color: var(--ink-strong); border-bottom: 0; }
+
+.inv-sort {
+  background: none;
+  border: 0;
+  padding: 0;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  text-transform: inherit;
+  letter-spacing: inherit;
+}
+.inv-sort[aria-sort]:not([aria-sort="none"]) { color: var(--accent-ink); }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   Accounts
+   ══════════════════════════════════════════════════════════════════════════ */
+
+.inv-accounts { display: grid; grid-template-columns: repeat(auto-fill, minmax(268px, 1fr)); gap: var(--sp-3); }
+.inv-account { display: flex; flex-direction: column; gap: var(--sp-3); }
+.inv-account__top { display: flex; align-items: center; gap: var(--sp-3); }
+.inv-account__mark {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px; height: 36px;
+  flex-shrink: 0;
+  border-radius: var(--r-sm);
+  background: var(--accent-bg);
+  color: var(--accent-ink);
+  font-size: var(--f-xs);
+  font-weight: var(--w-bold);
+}
+.inv-account__name { font-size: var(--f-sm); font-weight: var(--w-semi); color: var(--ink-strong); margin: 0; }
+.inv-account__inst { font-size: var(--f-xs); color: var(--ink-faint); margin: 1px 0 0; }
+.inv-account__value { font-size: var(--f-xl); font-weight: var(--w-semi); color: var(--ink-strong); margin: 0; }
+.inv-account__foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-2);
+  font-size: var(--f-xs);
+  color: var(--ink-faint);
+  flex-wrap: wrap;
+}
+.inv-account__tickers { display: flex; flex-wrap: wrap; gap: 4px; }
+.inv-account__chip {
+  padding: 2px var(--sp-2);
+  border-radius: var(--r-xs);
+  background: color-mix(in srgb, var(--fg) 7%, transparent);
+  font-size: var(--f-micro);
+  font-weight: var(--w-semi);
+  color: var(--ink-muted);
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   Detail panel — a side sheet on desktop, a bottom sheet on phones.
+   Clicking a holding must never navigate away: the reader loses the
+   allocation context they were reading it against.
+   ══════════════════════════════════════════════════════════════════════════ */
+
+/* Above the sticky site nav (z-index 100) and the mobile tab bar (9990),
+   below the SPA progress bar. A sheet that slides under the nav loses its
+   own title, which is where this sat before. */
+.inv-sheet { position: fixed; inset: 0; z-index: 9995; }
+.inv-sheet[hidden] { display: none; }
+.inv-sheet__backdrop {
+  position: absolute;
+  inset: 0;
+  background: color-mix(in srgb, black 46%, transparent);
+  backdrop-filter: blur(2px);
+  animation: ds-fade var(--dur-2) var(--ease-out) both;
+}
+.inv-sheet__panel {
+  position: absolute;
+  top: 0; right: 0; bottom: 0;
+  width: min(440px, 100%);
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  border-left: 1px solid var(--hairline-firm);
+  box-shadow: var(--e-5);
+  animation: inv-slide-right var(--dur-3) var(--ease-out) both;
+}
+@keyframes inv-slide-right { from { transform: translateX(24px); opacity: 0; } to { transform: none; opacity: 1; } }
+
+.inv-sheet__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--sp-3);
+  padding: var(--sp-5);
+  border-bottom: 1px solid var(--hairline);
+}
+.inv-sheet__title { font-size: var(--f-xl); font-weight: var(--w-semi); color: var(--ink-strong); margin: 0; }
+.inv-sheet__sub {
+  font-size: var(--f-sm);
+  color: var(--ink-faint);
+  margin: 2px 0 0;
+  /* Fund names run long enough to push the body off screen on their own. */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.inv-sheet__body { flex: 1; overflow-y: auto; padding: var(--sp-5); display: flex; flex-direction: column; gap: var(--sp-5); }
+.inv-sheet__foot { padding: var(--sp-4) var(--sp-5); border-top: 1px solid var(--hairline); display: flex; gap: var(--sp-2); flex-wrap: wrap; }
+
+.inv-detail-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--sp-3); }
+.inv-detail { padding: var(--sp-3); border-radius: var(--r-sm); background: color-mix(in srgb, var(--fg) 4%, transparent); }
+.inv-detail__value { font-size: var(--f-md); font-weight: var(--w-semi); color: var(--ink-strong); margin: 2px 0 0; }
+.inv-detail__value--up   { color: var(--ok-ink); }
+.inv-detail__value--down { color: var(--danger-ink); }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   Chart focus modal
+   ══════════════════════════════════════════════════════════════════════════ */
+
+.inv-modal { position: fixed; inset: 0; z-index: 9996; display: flex; align-items: center; justify-content: center; padding: var(--sp-5); }
+.inv-modal[hidden] { display: none; }
+.inv-modal__backdrop { position: absolute; inset: 0; background: color-mix(in srgb, black 52%, transparent); }
+.inv-modal__panel {
+  position: relative;
+  width: min(1040px, 100%);
+  max-height: 88vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  border: 1px solid var(--hairline-firm);
+  border-radius: var(--r-lg);
+  box-shadow: var(--e-5);
+  animation: ds-rise var(--dur-3) var(--ease-out) both;
+}
+.inv-modal__head { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-4); padding: var(--sp-4) var(--sp-5); border-bottom: 1px solid var(--hairline); }
+.inv-modal__title { font-size: var(--f-lg); font-weight: var(--w-semi); color: var(--ink-strong); margin: 0; }
+.inv-modal__body { flex: 1; min-height: 340px; padding: var(--sp-5); position: relative; }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   Forms — add / edit holding
+   ══════════════════════════════════════════════════════════════════════════ */
+
+.inv-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: var(--sp-4); }
+.inv-field { display: flex; flex-direction: column; gap: var(--sp-1); }
+.inv-field__label {
+  font-size: var(--f-micro);
+  font-weight: var(--w-semi);
+  text-transform: uppercase;
+  letter-spacing: var(--track-caps);
+  color: var(--ink-faint);
+}
+.inv-field--wide { grid-column: span 2; }
+.inv-form__actions { display: flex; gap: var(--sp-2); flex-wrap: wrap; margin-top: var(--sp-4); }
+.inv-error { color: var(--danger-ink); font-size: var(--f-sm); margin: var(--sp-3) 0 0; }
+
+.inv-empty { text-align: center; padding: var(--sp-10) var(--sp-4); color: var(--ink-faint); font-size: var(--f-sm); }
+.inv-empty a { color: var(--accent-ink); font-weight: var(--w-semi); }
+
+/* Floating copilot button — phones only, so the assistant is always one tap
+   away without stealing desktop real estate. */
+.inv-fab {
+  position: fixed;
+  right: var(--sp-4);
+  bottom: calc(var(--sp-4) + env(safe-area-inset-bottom, 0px) + 56px);
+  z-index: 9985;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 52px; height: 52px;
+  border: 0;
+  border-radius: var(--r-full);
+  background: var(--accent);
+  color: var(--accent-on);
+  box-shadow: var(--e-4);
+  cursor: pointer;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   Responsive
+   ══════════════════════════════════════════════════════════════════════════ */
+
+@media (max-width: 1080px) {
+  .inv-hero { grid-template-columns: minmax(0, 1fr); gap: var(--sp-6); }
+  .inv-rings { justify-content: flex-start; }
+  .inv-alloc { grid-template-columns: minmax(0, 1fr); }
+}
+
+@media (max-width: 640px) {
+  .inv { gap: var(--sp-8); }
+  .inv-header { flex-direction: column; align-items: stretch; gap: var(--sp-3); }
+  .inv-header__tools .ds-btn { flex: 1; }
+
+  .inv-hero__value { font-size: 2.35rem; }
+  .inv-rings { gap: var(--sp-3); }
+  .inv-ring__svg { width: 86px; height: 86px; }
+  .inv-ring__num { top: 36px; font-size: var(--f-lg); }
+
+  .inv-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+
+  /* The story becomes a swipeable rail — five cards stacked is a scroll,
+     five cards side by side is a glance. */
+  .inv-story {
+    display: flex;
+    overflow-x: auto;
+    scroll-snap-type: x mandatory;
+    margin: 0 calc(var(--sp-4) * -1);
+    padding: 0 var(--sp-4) var(--sp-2);
+    scrollbar-width: none;
+  }
+  .inv-story::-webkit-scrollbar { display: none; }
+  .inv-beat { flex: 0 0 78%; scroll-snap-align: start; }
+
+  .inv-insight { grid-template-columns: auto minmax(0, 1fr); }
+  .inv-insight__side { grid-column: 1 / -1; flex-direction: row; align-items: center; justify-content: flex-start; }
+
+  .inv-grid { grid-template-columns: minmax(0, 1fr); }
+  .inv-accounts { grid-template-columns: minmax(0, 1fr); }
+
+  /* Detail becomes a bottom sheet: thumbs are at the bottom of the phone. */
+  .inv-sheet__panel {
+    top: auto;
+    left: 0;
+    right: 0;
+    width: 100%;
+    max-height: 88vh;
+    border-left: 0;
+    border-top: 1px solid var(--hairline-firm);
+    border-radius: var(--r-xl) var(--r-xl) 0 0;
+    animation: inv-slide-up var(--dur-3) var(--ease-out) both;
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+  @keyframes inv-slide-up { from { transform: translateY(28px); opacity: 0; } to { transform: none; opacity: 1; } }
+
+  .inv-sheet__panel::before {
+    content: "";
+    position: absolute;
+    top: var(--sp-2); left: 50%;
+    transform: translateX(-50%);
+    width: 38px; height: 4px;
+    border-radius: var(--r-full);
+    background: color-mix(in srgb, var(--fg) 20%, transparent);
+  }
+
+  .inv-modal { padding: 0; }
+  .inv-modal__panel { width: 100%; height: 100%; max-height: 100%; border-radius: 0; border: 0; }
+
+  .inv-detail-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .inv-field--wide { grid-column: span 2; }
+  .inv-fab { display: flex; }
+  .inv-panel__grip { display: none; }   /* drag-to-reorder is a pointer affordance */
+
+  /* The panel subtitle competes with the title for a 390px row and loses
+     both: "Dividend & income" wrapped to three lines to make room for a
+     summary the panel repeats the moment it opens. */
+  .inv-panel__sub { display: none; }
+  .inv-panel__title { white-space: nowrap; }
+  .inv-panel__head { padding: var(--sp-2) var(--sp-3); }
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   Print — someone asking for an "investment report" often just wants paper
+   ══════════════════════════════════════════════════════════════════════════ */
+
+@media print {
+  .inv-header__tools, .inv-ask, .inv-suggest, .inv-panel__tools,
+  .inv-fab, .inv-sheet, .inv-modal, .inv-holdings__bar { display: none !important; }
+  .inv-panel__body[hidden] { display: block !important; }
+  .inv { gap: var(--sp-6); }
+  .ds-card { box-shadow: none; break-inside: avoid; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .inv-pos:hover { transform: none; }
+  .inv-turn__a.is-streaming::after { animation: none; }
+}

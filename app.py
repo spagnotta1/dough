@@ -7,8 +7,9 @@ import uuid
 from dotenv import load_dotenv
 load_dotenv()
 from calendar import monthrange
-from datetime import datetime, timedelta
-from flask import Flask, render_template, request, jsonify, redirect, url_for, flash, session, Response, stream_with_context
+from datetime import datetime, timedelta, date
+from flask import (Flask, render_template, request, jsonify, redirect, url_for, flash,
+                   session, Response, stream_with_context, g)
 from flask_migrate import Migrate
 from werkzeug.security import check_password_hash, generate_password_hash
 from werkzeug.utils import secure_filename
@@ -22,14 +23,86 @@ from sqlalchemy import func, and_, or_
 from config import Config
 from models import (db, AppUser, Transaction, LogEntry, AccountBalance, Budget, Holding,
                     ChatMessage, Conversation, InstitutionConnection,
-                    FinancialAccount, SyncRun, RecurringDismissal)
+                    FinancialAccount, SyncRun, RecurringDismissal,
+                    PortfolioSnapshotRow)
 from rules import CategoryRules
 from recurring import detect_recurring, normalize_description
+import dashboard_intel
+import investments_intel
 from finance_sync.repository import SyncRepository
 from finance_sync.routes import sync_bp
 from finance_sync.scheduler import init_scheduler
 
 _insight_cache = {'text': None, 'expires': 0}
+_brief_cache = {'data': None, 'expires': 0, 'key': None}
+_wealth_cache = {'data': None, 'expires': 0}
+
+# How much line-item detail rides along in the chat assistant's context window.
+CHAT_RECENT_TXN_LIMIT     = 150
+CHAT_TOP_MERCHANT_LIMIT   = 30
+CHAT_ANOMALY_LIMIT        = 25
+CHAT_TREND_MONTHS         = 24     # months of month-by-category history
+CHAT_HISTORY_LIMIT        = 24     # prior messages replayed to Claude
+CHAT_MAX_TOKENS           = 4096
+
+# Charting contract. The client owns every colour decision — the model only
+# supplies a shape and the numbers — so this describes the data, not the design.
+CHART_INSTRUCTIONS = """Charts:
+You can draw a chart by emitting a fenced block tagged `chart` containing JSON:
+
+```chart
+{"type": "bar", "title": "Spending by category, last 30 days",
+ "unit": "usd", "labels": ["Groceries", "Dining", "Transport"],
+ "series": [{"name": "Spent", "data": [842.10, 511.42, 220.00]}]}
+```
+
+- type: "bar" (compare categories), "grouped_bar" (the same measure for several
+  groups side by side, e.g. months across the axis with one bar per category),
+  "line" (trend over time), "stacked_bar" (parts of a whole over time), "donut"
+  (share of a whole, max 6 slices), or "diverging_bar" (amounts above/below a
+  baseline, e.g. over/under budget — use signed numbers).
+- Grouping: `labels` is the axis, `series` is the legend — one entry per group,
+  named by that group. So "spending by category by month" is labels = the
+  months, series = one per category; "total by category" with no time dimension
+  is a plain bar with labels = the categories and a single series. When a
+  question names a breakdown ("by category", "by account") alongside a period,
+  the period goes on the axis and the breakdown goes in the legend. Six series
+  is the ceiling and is already a lot — take the top few and, if it is worth
+  showing, sum the rest into one "Other" series rather than dropping to a
+  flatter chart. Use "grouped_bar" to compare the groups against each other and
+  "stacked_bar" when their total is also part of the point. Grouped bars need
+  room — past about eight axis points they turn to hatching, so use a "line"
+  with one series per category for a long run of months.
+- On a diverging_bar, add "positive": "bad" when a positive number is the
+  unwelcome direction (over budget, overspending — this is the default), or
+  "positive": "good" when a positive number is the welcome one (surplus,
+  money saved). This decides which side is drawn in the warning colour, so
+  set it deliberately, and say in your sentence which way is which.
+- unit: "usd", "percent", or "number". labels: max 24. series: max 6, each
+  with a data array the same length as labels. Numbers only — no strings,
+  no nulls, no formatting, no currency symbols.
+- Always write a sentence of plain-language interpretation before or after the
+  chart saying what it shows. The chart supports your answer; it is not the answer.
+
+When NOT to chart — this matters as much as the format:
+- One number, or a simple comparison of two: say it in a sentence. A one-bar
+  chart is worse than the sentence.
+- Three or four values the reader will want to read exactly: use a table.
+- Anything you cannot fill from the data above. Never estimate a data point to
+  round out a chart; a shorter honest chart beats a padded one.
+Reach for a chart when shape is the point — a trend across months, a split
+across many categories, or a comparison against budget. At most one or two per
+reply."""
+
+
+def _months_ago(n):
+    """First day of the month `n` months before today."""
+    today = date.today()
+    year, month = today.year, today.month - n
+    while month <= 0:
+        month += 12
+        year -= 1
+    return date(year, month, 1)
 
 
 def _md_to_html(text):
@@ -112,6 +185,21 @@ def create_app(test_config=None):
     db.init_app(app)
     migrate = Migrate(app, db)
     category_rules = CategoryRules()
+
+    @app.template_filter('money')
+    def _money_filter(value, decimals=0):
+        """Format a number the way people write money: -$341, not $-341.
+
+        Every currency figure in a template should go through this. Doing it
+        inline with format() put the minus sign in the wrong place wherever a
+        value could go negative, which on a finance dashboard is most of them.
+        """
+        try:
+            amount = float(value)
+        except (TypeError, ValueError):
+            return value
+        sign = '-' if amount < 0 else ''
+        return f'{sign}${abs(amount):,.{decimals}f}'
 
     @app.context_processor
     def _inject_current_user():
@@ -308,8 +396,57 @@ def create_app(test_config=None):
             for kind, groups in detected.items()
         }
 
-    def _build_finance_context(months=6):
-        """Assemble a full financial snapshot for Claude — spending, net worth, and complete holdings detail."""
+    def _detect_recurring_full():
+        """Full recurring detection, memoized for the life of one request.
+
+        Detection walks every transaction and clusters them, which is fine
+        once but wasteful three times in a single dashboard render — the
+        attention center, the bill schedule, and the forecast all want the
+        same answer.
+        """
+        cached = getattr(g, '_recurring_full', None)
+        if cached is not None:
+            return cached
+        txns = Transaction.query.order_by(Transaction.date.asc()).all()
+        detected = detect_recurring([{
+            'date': t.date,
+            'description': t.description,
+            'amount': float(t.amount),
+            'category': t.category,
+            'account_name': t.account_name,
+        } for t in txns], dismissed_keys=_dismissed_recurring_keys())
+        g._recurring_full = detected
+        return detected
+
+    def _portfolio_snapshot():
+        """Portfolio value with unrealized gain, where a cost basis exists.
+
+        Holdings entered by hand often have no basis. Those still count toward
+        the value but are left out of the gain, so the percentage reflects only
+        the positions it can actually be computed for rather than silently
+        treating cost as zero.
+        """
+        holdings = Holding.query.all()
+        value = sum(float(h.current_value) for h in holdings)
+        with_basis = [h for h in holdings if h.cost_basis is not None]
+        basis = sum(h.cost_basis for h in with_basis)
+        covered = sum(float(h.current_value) for h in with_basis)
+        gain = covered - basis if with_basis else 0.0
+        return {
+            'value': round(value, 2),
+            'cost_basis': round(basis, 2) if with_basis else None,
+            'gain': round(gain, 2) if with_basis else None,
+            'gain_pct': round(gain / basis * 100, 2) if basis else None,
+            'positions': len(holdings),
+        }
+
+    def _build_finance_context(months=6, detail=False):
+        """Assemble a full financial snapshot for Claude — spending, net worth, and complete holdings detail.
+
+        When ``detail`` is True the snapshot also carries line-item data the chat
+        assistant needs to answer questions about specific purchases: recent
+        transactions, top merchants, and unreviewed anomalies.
+        """
         cutoff = datetime.now() - timedelta(days=months * 30)
 
         # --- Spending by category (last N months) ---
@@ -385,7 +522,7 @@ def create_app(test_config=None):
             'investments_pct': round(total_invested / total_nw * 100, 1) if total_nw > 0 else 0,
         }
 
-        return {
+        ctx = {
             'data_period_months': months,
             'net_worth': nw,
             'allocation_summary': allocation_summary,
@@ -398,6 +535,156 @@ def create_app(test_config=None):
             'recurring_bills': recurring_items['bills'],
             'recurring_subscriptions': recurring_items['subscriptions'],
         }
+
+        if not detail:
+            return ctx
+
+        # --- Line-item detail: lets the assistant answer "what did I spend at X?" ---
+        ctx['today'] = date.today().isoformat()
+
+        # What actually exists, stated plainly. Without this the assistant infers
+        # its coverage from the newest slice below and wrongly reports that older
+        # months are missing.
+        first_txn, last_txn, txn_count = db.session.query(
+            func.min(Transaction.date), func.max(Transaction.date),
+            func.count(Transaction.id)).one()
+        account_names = sorted(
+            n for (n,) in db.session.query(Transaction.account_name).distinct().all() if n)
+        ctx['transaction_coverage'] = {
+            'first_transaction': first_txn.isoformat() if first_txn else None,
+            'last_transaction': last_txn.isoformat() if last_txn else None,
+            'total_transactions': int(txn_count or 0),
+            'accounts': account_names,
+            'note': ('monthly_spending_by_category, monthly_spending_by_account_category, '
+                     'monthly_income and monthly_income_by_account all cover this whole '
+                     'range. Anything that can be asked about the total can also be asked '
+                     'about one account. recent_transactions is only the newest slice, for '
+                     'questions about individual purchases.'),
+        }
+
+        # Month-by-category spend over the full history — the series behind any
+        # "how has X trended" question. Aggregated in SQL so the window can be
+        # long without the token cost of the underlying rows.
+        trend_cutoff = _months_ago(CHAT_TREND_MONTHS)
+        by_month = {}
+        cat_rows = (db.session.query(
+            func.strftime('%Y-%m', Transaction.date).label('month'),
+            Transaction.category,
+            func.sum(Transaction.amount).label('total'))
+            .filter(Transaction.date >= trend_cutoff, Transaction.amount < 0)
+            .group_by('month', Transaction.category).all())
+        for r in cat_rows:
+            amount = round(abs(float(r.total)), 2)
+            if amount:
+                by_month.setdefault(r.month, {})[r.category] = amount
+        ctx['monthly_spending_by_category'] = dict(sorted(by_month.items()))
+
+        # The same spend split by account. Both series ship: the aggregate above
+        # is what a "total" question should read directly rather than re-adding,
+        # and this one answers "checking only" / "which account paid for it",
+        # which the aggregate silently cannot. Categories barely overlap between
+        # accounts, so the split costs a handful of extra numbers, not double.
+        acct_cat_rows = (db.session.query(
+            func.strftime('%Y-%m', Transaction.date).label('month'),
+            Transaction.account_name,
+            Transaction.category,
+            func.sum(Transaction.amount).label('total'))
+            .filter(Transaction.date >= trend_cutoff, Transaction.amount < 0)
+            .group_by('month', Transaction.account_name, Transaction.category).all())
+        by_month_acct = {}
+        for r in acct_cat_rows:
+            amount = round(abs(float(r.total)), 2)
+            if amount:
+                by_month_acct.setdefault(r.month, {}).setdefault(
+                    r.account_name, {})[r.category] = amount
+        ctx['monthly_spending_by_account_category'] = {
+            month: {acct: dict(sorted(cats.items(), key=lambda kv: -kv[1]))
+                    for acct, cats in sorted(accts.items())}
+            for month, accts in sorted(by_month_acct.items())
+        }
+
+        # Ground truth for any chart that folds the small categories into an
+        # "Other" series. Adding a dozen leftovers by hand is exactly the step
+        # the assistant gets wrong, so the residual is a subtraction from a
+        # number that is already here. Both conventions are given because
+        # transfers count as an outflow for one account but cancel across two.
+        totals = {}
+        for r in acct_cat_rows:
+            amount = abs(float(r.total))
+            if not amount:
+                continue
+            is_transfer = (r.category or '').strip().lower() in ('transfer', 'transfers')
+            for group in (r.account_name, 'all_accounts'):
+                bucket = totals.setdefault(r.month, {}).setdefault(
+                    group, {'total': 0.0, 'excluding_transfers': 0.0})
+                bucket['total'] += amount
+                if not is_transfer:
+                    bucket['excluding_transfers'] += amount
+        ctx['monthly_spending_totals'] = {
+            month: {group: {k: round(v, 2) for k, v in sums.items()}
+                    for group, sums in sorted(groups.items())}
+            for month, groups in sorted(totals.items())
+        }
+
+        income_rows = (db.session.query(
+            func.strftime('%Y-%m', Transaction.date).label('month'),
+            func.sum(Transaction.amount).label('total'))
+            .filter(Transaction.date >= trend_cutoff, Transaction.amount > 0)
+            .group_by('month').all())
+        ctx['monthly_income'] = {r.month: round(float(r.total), 2)
+                                 for r in sorted(income_rows, key=lambda r: r.month)}
+
+        income_acct_rows = (db.session.query(
+            func.strftime('%Y-%m', Transaction.date).label('month'),
+            Transaction.account_name,
+            func.sum(Transaction.amount).label('total'))
+            .filter(Transaction.date >= trend_cutoff, Transaction.amount > 0)
+            .group_by('month', Transaction.account_name).all())
+        by_month_income = {}
+        for r in income_acct_rows:
+            by_month_income.setdefault(r.month, {})[r.account_name] = round(float(r.total), 2)
+        ctx['monthly_income_by_account'] = {
+            month: dict(sorted(accts.items())) for month, accts in sorted(by_month_income.items())
+        }
+
+        recent = (Transaction.query
+                  .order_by(Transaction.date.desc(), Transaction.id.desc())
+                  .limit(CHAT_RECENT_TXN_LIMIT).all())
+        ctx['recent_transactions'] = [{
+            'date': t.date.isoformat(),
+            'description': t.description,
+            'amount': round(float(t.amount), 2),
+            'category': t.category,
+            'account': t.account_name,
+        } for t in recent]
+
+        merchant_rows = (db.session.query(
+            Transaction.description,
+            func.sum(Transaction.amount).label('total'),
+            func.count(Transaction.id).label('n'))
+            .filter(Transaction.date >= cutoff, Transaction.amount < 0)
+            .group_by(Transaction.description)
+            .order_by(func.sum(Transaction.amount))
+            .limit(CHAT_TOP_MERCHANT_LIMIT).all())
+        ctx['top_merchants_in_period'] = [{
+            'description': r.description,
+            'total_spent': round(abs(float(r.total)), 2),
+            'transactions': int(r.n),
+        } for r in merchant_rows]
+
+        flagged = (Transaction.query
+                   .filter(Transaction.anomaly_score == -1.0,
+                           Transaction.anomaly_reviewed == False)  # noqa: E712
+                   .order_by(Transaction.date.desc())
+                   .limit(CHAT_ANOMALY_LIMIT).all())
+        ctx['open_anomalies'] = [{
+            'date': t.date.isoformat(),
+            'description': t.description,
+            'amount': round(float(t.amount), 2),
+            'category': t.category,
+        } for t in flagged]
+
+        return ctx
 
     # ---------------------------------------------------------------------------
     # Dashboard
@@ -582,7 +869,9 @@ def create_app(test_config=None):
         under_budget = [c for c, lim in chart_budget_map.items()
                         if max(0, category_stats.get(c, {}).get('outbound', 0) - category_stats.get(c, {}).get('inbound', 0)) / period_months < lim * 0.5]
         if over_budget:
-            insights.insert(0, {'text': f"{len(over_budget)} budget(s) exceeded this period.", 'positive': False})
+            count = len(over_budget)
+            insights.insert(0, {'text': f"{count} budget{'s' if count != 1 else ''} "
+                                        f"exceeded this period.", 'positive': False})
         if under_budget:
             insights.append({'text': f"Well within budget in: {', '.join(under_budget[:3])}.", 'positive': True})
 
@@ -618,9 +907,99 @@ def create_app(test_config=None):
 
         filter_label = f"{start_date_str} – {end_date_str}"
 
+        def _window_label(a, b):
+            """A window as a person would say it, not as two ISO dates."""
+            if a.year == b.year and a.month == b.month:
+                if a.day == 1 and b.day >= 28:
+                    return f'{a:%B %Y}'
+                return f'{a:%b} {a.day}–{b.day}, {b.year}'
+            if a.year == b.year:
+                return f'{a:%b} {a.day} – {b:%b} {b.day}, {b.year}'
+            return f'{a:%b} {a.day}, {a.year} – {b:%b} {b.day}, {b.year}'
+
+        period_label = _window_label(start_date, end_date)
+        compare_label = _window_label(prev_start, prev_end)
+
         nw = _compute_net_worth()
 
+        # ── Layer 2 & 3 intelligence ────────────────────────────────────
+        # What the numbers mean, rather than what they are. Kept in
+        # dashboard_intel so the reasoning is testable apart from the route.
+        today = datetime.now()
+        recurring_full = _detect_recurring_full()
+        portfolio = _portfolio_snapshot()
+
+        upcoming = dashboard_intel.upcoming_bills(recurring_full, today)
+
+        # The forecast reads recent reality, not the selected filter window:
+        # projecting next month's cash from a "last year" filter would be
+        # nonsense. 90 days is enough to see a monthly cycle repeat.
+        forecast_txns = [{'date': t.date, 'amount': float(t.amount),
+                          'description': t.description}
+                         for t in Transaction.query
+                         .filter(Transaction.date >= today - timedelta(days=90))
+                         .order_by(Transaction.date.asc()).all()]
+        forecast = dashboard_intel.cash_flow_forecast(
+            transactions=forecast_txns, cash=nw['cash'], bills=upcoming, today=today)
+
+        hikes = dashboard_intel.subscription_hikes(recurring_full, forecast_txns)
+
+        anomaly_count = (Transaction.query
+                         .filter(Transaction.anomaly_score == -1.0,
+                                 Transaction.anomaly_reviewed.is_(False)).count())
+
+        health = dashboard_intel.health_score(
+            income=total_income, outgo=total_outgo,
+            runway_months=forecast['runway_months'],
+            budget_map=budget_map, category_stats=category_stats,
+            period_months=period_months, prev_outgo=prev_outgo)
+
+        attention = dashboard_intel.attention_items(
+            budget_alerts=budget_alerts,
+            category_stats=category_stats, prev_category_stats=prev_category_stats,
+            income=total_income, outgo=total_outgo,
+            prev_income=prev_income, prev_outgo=prev_outgo,
+            cash=nw['cash'], period_months=period_months,
+            runway_months=forecast['runway_months'],
+            bills=upcoming, hikes=hikes, anomaly_count=anomaly_count,
+            portfolio=portfolio)
+
+        _uid = session.get('user_id')
+        _user = db.session.get(AppUser, _uid) if _uid else None
+        greeting = dashboard_intel.personalize(
+            now=today, name=_user.username if _user else None,
+            transactions=forecast_txns,
+            income=total_income, outgo=total_outgo, prev_outgo=prev_outgo,
+            net_worth=nw['net_worth'], health=health)
+
+        # Every category the account has ever used, ranked by lifetime volume.
+        # The client walks this list to assign palette slots, so the categories
+        # that actually reach a chart are the ones holding distinct hues and
+        # the long tail shares the neutral.
+        #
+        # Ranked on the WHOLE history, never the filtered window: that is what
+        # lets the mapping stay fixed while a filter changes which categories
+        # are on screen. Alphabetical ordering was worse — it handed the eight
+        # hues to whichever categories started with early letters, which put
+        # three of the six charted series on the same gray.
+        all_categories = [row[0] for row in db.session.query(
+            Transaction.category, func.sum(func.abs(Transaction.amount)).label('vol')
+        ).filter(Transaction.category.isnot(None))
+         .group_by(Transaction.category).order_by(func.sum(func.abs(Transaction.amount)).desc()).all()]
+
         return render_template('dashboard.html',
+                               all_categories=all_categories,
+                               period_label=period_label,
+                               compare_label=compare_label,
+                               has_data=bool(transactions),
+                               health=health,
+                               attention=attention,
+                               forecast=forecast,
+                               upcoming_bills=upcoming,
+                               greeting=greeting,
+                               portfolio=portfolio,
+                               anomaly_count=anomaly_count,
+                               savings_rate=round((net_cashflow / total_income * 100), 1) if total_income > 0 else 0.0,
                                total_income=total_income,
                                total_outgo=total_outgo,
                                net_cashflow=net_cashflow,
@@ -1113,7 +1492,59 @@ def create_app(test_config=None):
             return redirect(url_for('budgets'))
 
         all_budgets = Budget.query.order_by(Budget.category).all()
+
+        # Actual spend for the current month and the one before it, so each
+        # budget can show where it stands rather than only what it is. A page
+        # of limits with no spend against them cannot answer the only question
+        # anyone opens it with: am I over?
+        today = datetime.now()
+        month_start = today.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        prev_end = month_start - timedelta(days=1)
+        prev_start = prev_end.replace(day=1)
+
+        def _spend_by_category(start, end):
+            rows = (db.session.query(Transaction.category,
+                                     Transaction.account_name,
+                                     func.sum(Transaction.amount).label('net'))
+                    .filter(Transaction.date.between(start, end))
+                    .group_by(Transaction.category, Transaction.account_name).all())
+            totals = {}
+            for category, account, net in rows:
+                spent = max(0.0, -float(net or 0.0))
+                totals[(category, account)] = totals.get((category, account), 0.0) + spent
+                totals[(category, 'both')] = totals.get((category, 'both'), 0.0) + spent
+            return totals
+
+        this_month = _spend_by_category(month_start, today)
+        last_month = _spend_by_category(prev_start, prev_end)
+
+        budget_status = []
+        for b in all_budgets:
+            limit = float(b.monthly_limit)
+            spent = this_month.get((b.category, b.account_name), 0.0)
+            prior = last_month.get((b.category, b.account_name), 0.0)
+            pct = (spent / limit * 100) if limit > 0 else 0.0
+            budget_status.append({
+                'budget': b,
+                'spent': round(spent, 2),
+                'prior': round(prior, 2),
+                'remaining': round(limit - spent, 2),
+                'pct': round(pct, 1),
+                'state': 'danger' if pct > 100 else 'warn' if pct > 80 else 'ok',
+                'change_pct': round((spent - prior) / prior * 100) if prior > 0 else None,
+            })
+
+        # How far through the month we are — the pace marker on each bar. Being
+        # at 60% of a budget means nothing without knowing it is the 5th.
+        days_in_month = monthrange(today.year, today.month)[1]
+        month_progress = round(today.day / days_in_month * 100)
+
         return render_template('budgets.html', budgets=all_budgets,
+                               budget_status=budget_status,
+                               month_label=today.strftime('%B %Y'),
+                               month_progress=month_progress,
+                               total_budgeted=round(sum(float(b.monthly_limit) for b in all_budgets), 2),
+                               total_spent=round(sum(s['spent'] for s in budget_status), 2),
                                categories=categories, accounts=accounts)
 
     # ---------------------------------------------------------------------------
@@ -1560,6 +1991,22 @@ Respond with ONLY valid JSON (no markdown fences, no commentary):
         db.session.commit()
         return jsonify({'id': conv.id, 'title': conv.title})
 
+    @app.route('/api/conversations/<conv_id>', methods=['PATCH'])
+    def api_rename_conversation(conv_id):
+        """Rename a conversation. Empty titles fall back to 'New Chat'."""
+        req   = request.get_json(force=True) or {}
+        title = (req.get('title') or '').strip()[:120] or 'New Chat'
+        conv  = db.session.get(Conversation, conv_id)
+        if not conv:
+            return jsonify({'error': 'Conversation not found'}), 404
+        try:
+            conv.title = title
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+            return jsonify({'error': 'Could not rename conversation'}), 500
+        return jsonify({'id': conv.id, 'title': conv.title})
+
     @app.route('/api/conversations/<conv_id>', methods=['DELETE'])
     def api_delete_conversation(conv_id):
         try:
@@ -1587,6 +2034,38 @@ Respond with ONLY valid JSON (no markdown fences, no commentary):
             for m in msgs
         ]})
 
+    @app.route('/api/chat_truncate', methods=['POST'])
+    def api_chat_truncate():
+        """Drop every message from ``keep`` onwards.
+
+        Backs the two rewind actions in the UI: regenerating a reply (keep all
+        messages up to and including the last user turn) and editing an earlier
+        prompt (keep everything before it). Returns the surviving count so the
+        client can reconcile its local cache.
+        """
+        req     = request.get_json(force=True) or {}
+        conv_id = (req.get('conv_id') or '').strip()
+        keep    = req.get('keep')
+        if not conv_id:
+            return jsonify({'error': 'No conversation ID'}), 400
+        try:
+            keep = max(0, int(keep))
+        except (TypeError, ValueError):
+            return jsonify({'error': 'keep must be an integer'}), 400
+
+        msgs = (ChatMessage.query
+                .filter_by(session_id=conv_id)
+                .order_by(ChatMessage.id.asc()).all())
+        try:
+            for m in msgs[keep:]:
+                db.session.delete(m)
+            db.session.commit()
+        except Exception as e:
+            app.logger.error('chat_truncate failed: %s', e)
+            db.session.rollback()
+            return jsonify({'error': 'Could not update conversation'}), 500
+        return jsonify({'ok': True, 'remaining': min(keep, len(msgs))})
+
     _ALLOWED_MODELS = {
         'claude-haiku-4-5-20251001',
         'claude-sonnet-4-6',
@@ -1599,16 +2078,20 @@ Respond with ONLY valid JSON (no markdown fences, no commentary):
         user_message = (req.get('message') or '').strip()
         conv_id       = (req.get('conv_id') or '').strip()
         model         = (req.get('model')   or 'claude-sonnet-4-6').strip()
+        # `resend` replays the conversation as it already stands — used by
+        # "regenerate", where the trailing assistant reply has been truncated
+        # away and the last stored message is the user's prompt.
+        resend        = bool(req.get('resend'))
         if model not in _ALLOWED_MODELS:
             model = 'claude-sonnet-4-6'
-        if not user_message:
+        if not user_message and not resend:
             return jsonify({'error': 'No message provided'}), 400
         if not conv_id:
             return jsonify({'error': 'No conversation ID'}), 400
 
         api_key = app.config.get('ANTHROPIC_API_KEY', '')
         if not api_key:
-            return jsonify({'error': 'ANTHROPIC_API_KEY not configured.'}), 503
+            return jsonify({'error': 'The AI assistant is not set up yet — no API key is configured.'}), 503
 
         conv = db.session.get(Conversation, conv_id)
         if not conv:
@@ -1618,32 +2101,77 @@ Respond with ONLY valid JSON (no markdown fences, no commentary):
         recent = (ChatMessage.query
                   .filter_by(session_id=conv_id)
                   .order_by(ChatMessage.id.desc())
-                  .limit(20).all())
+                  .limit(CHAT_HISTORY_LIMIT).all())
         history = [{'role': m.role, 'content': m.content} for m in reversed(recent)]
 
-        # ── Persist user message immediately so it survives navigation / disconnect ──
-        user_ts = datetime.utcnow()
-        try:
-            db.session.add(ChatMessage(session_id=conv_id, role='user',
-                                       content=user_message, created_at=user_ts))
-            if conv.title == 'New Chat':
-                conv.title = user_message[:55] + ('…' if len(user_message) > 55 else '')
-            conv.updated_at = user_ts
-            db.session.commit()
-        except Exception as e:
-            app.logger.error('chat_stream pre-save user msg failed: %s', e)
-            db.session.rollback()
+        if resend:
+            # Nothing new to persist; the stored history already ends with the
+            # user turn we want answered.
+            if not history or history[-1]['role'] != 'user':
+                return jsonify({'error': 'Nothing to regenerate'}), 400
+            messages = history
+        else:
+            # ── Persist user message immediately so it survives navigation / disconnect ──
+            user_ts = datetime.utcnow()
+            try:
+                db.session.add(ChatMessage(session_id=conv_id, role='user',
+                                           content=user_message, created_at=user_ts))
+                if conv.title == 'New Chat':
+                    conv.title = user_message[:55] + ('…' if len(user_message) > 55 else '')
+                conv.updated_at = user_ts
+                db.session.commit()
+            except Exception as e:
+                app.logger.error('chat_stream pre-save user msg failed: %s', e)
+                db.session.rollback()
+            messages = history + [{'role': 'user', 'content': user_message}]
 
-        fin_ctx = _build_finance_context()
+        fin_ctx = _build_finance_context(detail=True)
         system_prompt = (
-            "You are a personal finance and investment advisor. "
-            "Here is the user's current financial snapshot:\n\n"
-            f"{json.dumps(fin_ctx, indent=2)}\n\n"
-            "Respond in clear, well-formatted markdown. Be specific with dollar amounts. "
-            "Use headers, tables, and bullet lists when they add clarity. "
-            "Keep responses concise and actionable."
+            "You are the personal finance assistant built into this user's own checkbook app. "
+            "You are talking to the account holder about their own money, and every question "
+            "should be answered from the snapshot of their linked accounts below — transactions, "
+            "spending, income, budgets, recurring bills, net worth, investment holdings, and "
+            "flagged anomalies.\n\n"
+            f"{json.dumps(fin_ctx, indent=2, default=str)}\n\n"
+            "How to answer:\n"
+            "- Lead with the answer, then the supporting numbers. Cite real figures from the data.\n"
+            "- Write for a smart person who is not a finance professional: plain language, no jargon "
+            "unless you define it in the same breath.\n"
+            "- Keep it short by default. Use a table or bullet list only when it genuinely reads "
+            "better than a sentence; skip headers on short answers.\n"
+            "- Format money the way people read it ($1,284.50).\n"
+            "- Check 'transaction_coverage' before saying anything about what you can and "
+            "cannot see. It states the real date range.\n"
+            "- For any 'per month', 'trend', 'this year', or 'compare months' question, use "
+            "'monthly_spending_by_category' and 'monthly_income' — they cover the whole "
+            "range in 'transaction_coverage', broken down by category. Do not rebuild a "
+            "monthly total by adding up 'recent_transactions'.\n"
+            "- For one account ('checking only', 'what does savings pay for'), use "
+            "'monthly_spending_by_account_category' and 'monthly_income_by_account', which "
+            "carry the same full range split by account. The account names are listed in "
+            "'transaction_coverage'. Never say you cannot separate the accounts, and never "
+            "fall back to 'recent_transactions' for a question these series answer.\n"
+            "- Transfers between the user's own accounts are movement, not spending. When "
+            "totalling ACROSS accounts, leave the Transfer category out and say so, or it "
+            "double-counts money that only moved. When reporting on a SINGLE account, keep "
+            "transfers in — money really did leave that account — and label them as such. "
+            "If transfers are more than half of a chart, say so in your sentence: the shape "
+            "of everything else is invisible next to them.\n"
+            "- Every chart must reconcile. If you fold the smaller categories into an "
+            "'Other' series, get it by subtracting the categories you named from that "
+            "month's figure in 'monthly_spending_totals' ('total' when transfers are in the "
+            "chart, 'excluding_transfers' when they are not). Never add the leftover "
+            "categories up yourself — that is the step that goes wrong, and a wrong 'Other' "
+            "hides real spending. If your series do not sum to the total, the chart is wrong.\n"
+            "- 'recent_transactions' is only the newest slice, for questions about specific "
+            "purchases. Its start date is NOT the start of your data. If someone asks to "
+            "itemise a month older than that slice, say you can give the monthly totals but "
+            "not the individual purchases for that month.\n"
+            "- Use the category names as they appear in the data. If a question uses a "
+            "different word, map it to the real categories and say which ones you combined.\n"
+            "- Never invent a transaction, holding, or balance that is not in the data.\n\n"
+            + CHART_INSTRUCTIONS
         )
-        messages = history + [{'role': 'user', 'content': user_message}]
 
         def _generate():
             full_response = ''
@@ -1652,20 +2180,38 @@ Respond with ONLY valid JSON (no markdown fences, no commentary):
                 client = anthropic.Anthropic(api_key=api_key)
                 with client.messages.stream(
                     model=model,
-                    max_tokens=1500,
-                    system=system_prompt,
+                    max_tokens=CHAT_MAX_TOKENS,
+                    # The snapshot runs ~8-9k tokens and is byte-identical for
+                    # every turn in a session, so cache it: later messages read
+                    # the prefix at a tenth of the cost and start streaming
+                    # noticeably sooner.
+                    system=[{
+                        'type': 'text',
+                        'text': system_prompt,
+                        'cache_control': {'type': 'ephemeral'},
+                    }],
                     messages=messages,
                 ) as stream:
                     for text in stream.text_stream:
                         full_response += text
                         yield f'data: {json.dumps({"delta": text})}\n\n'
                 stream_done = True
+            except anthropic.RateLimitError:
+                yield f'data: {json.dumps({"error": "Too many requests right now. Give it a moment and try again."})}\n\n'
+                return
+            except anthropic.AuthenticationError:
+                yield f'data: {json.dumps({"error": "The configured API key was rejected. Check ANTHROPIC_API_KEY."})}\n\n'
+                return
+            except anthropic.APIConnectionError:
+                yield f'data: {json.dumps({"error": "Could not reach the AI service. Check your connection and try again."})}\n\n'
+                return
             except anthropic.APIError as e:
-                yield f'data: {json.dumps({"error": str(e)})}\n\n'
+                app.logger.error('chat_stream API error: %s', e)
+                yield f'data: {json.dumps({"error": "The AI service returned an error. Try again in a moment."})}\n\n'
                 return
             except Exception as e:
-                app.logger.error('chat_stream API error: %s', e)
-                yield f'data: {json.dumps({"error": "Unexpected error during streaming."})}\n\n'
+                app.logger.error('chat_stream unexpected error: %s', e)
+                yield f'data: {json.dumps({"error": "Something went wrong generating that reply. Try again."})}\n\n'
                 return
             finally:
                 # Runs on normal completion, errors, AND client disconnect (GeneratorExit).
@@ -1675,6 +2221,9 @@ Respond with ONLY valid JSON (no markdown fences, no commentary):
                         asst_ts = datetime.utcnow()
                         db.session.add(ChatMessage(session_id=conv_id, role='assistant',
                                                    content=full_response, created_at=asst_ts))
+                        c = db.session.get(Conversation, conv_id)
+                        if c:
+                            c.updated_at = asst_ts
                         db.session.commit()
                     except Exception as e:
                         app.logger.error('chat_stream save assistant failed: %s', e)
@@ -1734,39 +2283,612 @@ Respond with ONLY valid JSON (no markdown fences, no commentary):
             return jsonify({'insight': ''})
 
     # ---------------------------------------------------------------------------
+    # Financial Copilot — the dashboard's conversational layer
+    # ---------------------------------------------------------------------------
+
+    def _copilot_context(start=None, end=None):
+        """The compact snapshot the copilot reasons over.
+
+        Deliberately smaller than the chat assistant's context: the briefing
+        needs the shape of the period, not every line item, and a tight
+        context is what keeps the card appearing in about a second.
+
+        The window defaults to the current month but follows the dashboard's
+        own filter when one is given. Without that the copilot would narrate
+        July while the page beneath it showed March through June.
+        """
+        end = end or datetime.now()
+        start = start or end.replace(day=1)
+        txns = Transaction.query.filter(Transaction.date.between(start, end)).all()
+
+        def is_transfer(t):
+            return t.category.lower() in ('transfer', 'transfers')
+
+        spend = {}
+        income = 0.0
+        for t in txns:
+            if is_transfer(t):
+                continue
+            if t.amount > 0:
+                income += float(t.amount)
+            else:
+                spend[t.category] = round(spend.get(t.category, 0.0) + abs(float(t.amount)), 2)
+
+        # The comparison window is the same length as the selected one, so a
+        # four-month filter compares against the four months before it.
+        span = max(1, (end - start).days + 1)
+        prev_end = start - timedelta(days=1)
+        prev_start = prev_end - timedelta(days=span - 1)
+        prev_txns = Transaction.query.filter(Transaction.date.between(prev_start, prev_end)).all()
+        prev_spend = {}
+        prev_income = 0.0
+        for t in prev_txns:
+            if is_transfer(t):
+                continue
+            if t.amount > 0:
+                prev_income += float(t.amount)
+            else:
+                prev_spend[t.category] = round(prev_spend.get(t.category, 0.0) + abs(float(t.amount)), 2)
+
+        nw = _compute_net_worth()
+        recurring_full = _detect_recurring_full()
+        upcoming = dashboard_intel.upcoming_bills(recurring_full, end)
+        budget_map = {b.category: float(b.monthly_limit) for b in Budget.query.all()}
+
+        def window_label(a, b):
+            """"March 2026" for a single month, "Mar 1 – Jun 30, 2026" otherwise."""
+            if a.year == b.year and a.month == b.month:
+                return f'{a:%B %Y}'
+            return f'{a:%b} {a.day} – {b:%b} {b.day}, {b.year}'
+
+        return {
+            'today': datetime.now().strftime('%Y-%m-%d'),
+            'selected_period': {'label': window_label(start, end),
+                                'start': start.strftime('%Y-%m-%d'),
+                                'end': end.strftime('%Y-%m-%d'),
+                                'income': round(income, 2),
+                                'spending_by_category': spend,
+                                'total_spending': round(sum(spend.values()), 2)},
+            'previous_period': {'label': window_label(prev_start, prev_end),
+                                'start': prev_start.strftime('%Y-%m-%d'),
+                                'end': prev_end.strftime('%Y-%m-%d'),
+                                'income': round(prev_income, 2),
+                                'spending_by_category': prev_spend,
+                                'total_spending': round(sum(prev_spend.values()), 2)},
+            'net_worth': nw,
+            'portfolio': _portfolio_snapshot(),
+            'monthly_budgets': budget_map,
+            'upcoming_bills': upcoming[:10],
+            'subscriptions': [{'description': s['description'],
+                               'monthly_amount': abs(s['monthly_amount'])}
+                              for s in recurring_full.get('subscriptions', [])[:15]],
+        }
+
+    _COPILOT_STYLE = (
+        "You are the financial copilot built into the account holder's own checkbook app. "
+        "You are talking to them about their own money, using the snapshot below.\n\n"
+        "Voice: calm, specific, and short. Lead with the answer. Cite real dollar figures "
+        "from the data and format them the way people read them ($1,284). Plain language, "
+        "no jargon. Never invent a transaction, balance, or holding that is not in the data. "
+        "Transfers between the user's own accounts are movement, not spending — leave them "
+        "out of spending totals."
+    )
+
+    @app.route('/api/copilot/brief')
+    def copilot_brief():
+        """A short written read on the month, plus concrete opportunities.
+
+        The dashboard already renders the hard numbers server-side, so this
+        endpoint exists only for the parts that need judgement: how the month
+        is actually going, and what is worth doing about it.
+        """
+        def _parse(name):
+            raw = request.args.get(name)
+            try:
+                return datetime.strptime(raw, '%Y-%m-%d') if raw else None
+            except ValueError:
+                return None
+
+        start, end = _parse('start'), _parse('end')
+        # Cache per window: a briefing about March–June must not be served to
+        # a reader who has since switched the dashboard to this month.
+        cache_key = f"{start:%Y-%m-%d}|{end:%Y-%m-%d}" if start and end else 'default'
+
+        now = time.time()
+        if (_brief_cache['data'] and now < _brief_cache['expires']
+                and _brief_cache.get('key') == cache_key):
+            return jsonify(_brief_cache['data'])
+
+        api_key = app.config.get('ANTHROPIC_API_KEY', '')
+        if not api_key:
+            return jsonify({'available': False})
+
+        try:
+            client = anthropic.Anthropic(api_key=api_key)
+            resp = client.messages.create(
+                model='claude-haiku-4-5-20251001',
+                max_tokens=700,
+                system=(
+                    _COPILOT_STYLE + "\n\n"
+                    "Reply with ONLY a JSON object, no prose around it, shaped like:\n"
+                    '{"narrative": "2-3 sentences on how this month is going versus last, '
+                    'naming the single biggest driver of the difference.",\n'
+                    ' "opportunities": [{"title": "Short imperative, max 6 words",\n'
+                    '                    "detail": "One sentence with the dollar figure and why.",\n'
+                    '                    "impact": "estimated annual or monthly dollar saving, e.g. $480/yr"}],\n'
+                    ' "questions": ["3 or 4 short follow-up questions the user might ask next, '
+                    'each answerable from this data, phrased in their voice"]}\n\n'
+                    "Give 2-3 opportunities, most valuable first. An opportunity must be "
+                    "something they can act on, grounded in a figure you can point to. If the "
+                    "period genuinely offers none, return an empty list rather than padding it.\n\n"
+                    "Write about 'selected_period' versus 'previous_period' and refer to them by "
+                    "their labels. This briefing sits directly beneath a dashboard showing exactly "
+                    "that window, so narrating a different one contradicts what the user is "
+                    "looking at."
+                ),
+                messages=[{'role': 'user',
+                           'content': json.dumps(_copilot_context(start, end), default=str)}]
+            )
+            raw = resp.content[0].text.strip()
+            # Haiku occasionally wraps JSON in a fenced block despite the instruction.
+            if raw.startswith('```'):
+                raw = raw.split('\n', 1)[1].rsplit('```', 1)[0]
+            data = json.loads(raw)
+            data['available'] = True
+            data.setdefault('opportunities', [])
+            data.setdefault('questions', [])
+            _brief_cache['data'] = data
+            _brief_cache['key'] = cache_key
+            _brief_cache['expires'] = now + app.config.get('AI_INSIGHT_CACHE_TTL', 3600)
+            return jsonify(data)
+        except (json.JSONDecodeError, IndexError, KeyError) as e:
+            app.logger.warning('copilot_brief could not parse model output: %s', e)
+            return jsonify({'available': False})
+        except Exception as e:
+            app.logger.error('copilot_brief failed: %s', e)
+            return jsonify({'available': False})
+
+    @app.route('/api/copilot/ask', methods=['POST'])
+    def copilot_ask():
+        """Answer one dashboard question, streamed, without touching chat history.
+
+        Deliberately stateless: the copilot card is for a quick question in
+        passing. Anything that wants to become a conversation has a "continue
+        in chat" path into /chat, which is where history belongs.
+        """
+        req = request.get_json(force=True) or {}
+        question = (req.get('question') or '').strip()
+        if not question:
+            return jsonify({'error': 'No question provided'}), 400
+        if len(question) > 500:
+            question = question[:500]
+
+        def _parse(name):
+            try:
+                raw = req.get(name)
+                return datetime.strptime(raw, '%Y-%m-%d') if raw else None
+            except (ValueError, TypeError):
+                return None
+
+        api_key = app.config.get('ANTHROPIC_API_KEY', '')
+        if not api_key:
+            return jsonify({'error': 'The AI assistant is not set up yet — '
+                                     'no API key is configured.'}), 503
+
+        system_prompt = (
+            _COPILOT_STYLE + "\n\n"
+            f"{json.dumps(_copilot_context(_parse('start'), _parse('end')), indent=2, default=str)}\n\n"
+            "'selected_period' is the window the user currently has the dashboard "
+            "filtered to. Unless they name a different one, answer about that.\n\n"
+            "This answer appears in a small card on their dashboard, so keep it to "
+            "2-4 sentences. No headings. Use a short bullet list only if the answer is "
+            "genuinely a list. If the question needs data you do not have here, say so "
+            "in one sentence and suggest opening the full chat."
+        )
+
+        def _generate():
+            try:
+                client = anthropic.Anthropic(api_key=api_key)
+                with client.messages.stream(
+                    model='claude-sonnet-4-6',
+                    max_tokens=600,
+                    system=[{'type': 'text', 'text': system_prompt,
+                             'cache_control': {'type': 'ephemeral'}}],
+                    messages=[{'role': 'user', 'content': question}],
+                ) as stream:
+                    for text in stream.text_stream:
+                        yield f'data: {json.dumps({"delta": text})}\n\n'
+                yield 'data: [DONE]\n\n'
+            except anthropic.RateLimitError:
+                yield f'data: {json.dumps({"error": "Too many requests right now. Give it a moment."})}\n\n'
+            except anthropic.AuthenticationError:
+                yield f'data: {json.dumps({"error": "The configured API key was rejected."})}\n\n'
+            except anthropic.APIConnectionError:
+                yield f'data: {json.dumps({"error": "Could not reach the AI service."})}\n\n'
+            except Exception as e:
+                app.logger.error('copilot_ask failed: %s', e)
+                yield f'data: {json.dumps({"error": "Something went wrong. Try again."})}\n\n'
+
+        return Response(
+            stream_with_context(_generate()),
+            mimetype='text/event-stream',
+            headers={'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no',
+                     'Connection': 'keep-alive'},
+        )
+
+    # ---------------------------------------------------------------------------
     # Investments / Holdings
     # ---------------------------------------------------------------------------
 
+    def _monthly_outgo(months=6):
+        """Typical monthly spending, for the emergency-liquidity factor.
+
+        Transfers between the user's own accounts are movement, not spending,
+        so they are excluded — counting them would make the buffer look far
+        thinner than it is.
+        """
+        cutoff = datetime.now() - timedelta(days=months * 30)
+        total = float(db.session.query(func.sum(func.abs(Transaction.amount)))
+                      .filter(Transaction.date >= cutoff, Transaction.amount < 0,
+                              func.lower(Transaction.category).notin_(('transfer', 'transfers')))
+                      .scalar() or 0.0)
+        return round(total / months, 2) if total else None
+
+    def _snapshot_history(days=730):
+        """Daily net-worth snapshots, oldest first — the only real price history."""
+        cutoff = date.today() - timedelta(days=days)
+        rows = (PortfolioSnapshotRow.query
+                .filter(PortfolioSnapshotRow.snapshot_date >= cutoff)
+                .order_by(PortfolioSnapshotRow.snapshot_date).all())
+        return [r.to_dict() for r in rows]
+
+    def _wealth_snapshot(benchmark='sp500', horizon=10, contribution=0.0):
+        """Everything the Investments page reasons over, in one place.
+
+        The route renders it, the copilot endpoints send it to the model, and
+        the tests can call it directly — one derivation, three consumers, no
+        chance of the AI narrating figures the page does not show.
+        """
+        holding_rows = [h.to_dict() for h in
+                        Holding.query.order_by(Holding.asset_class, Holding.ticker).all()]
+        nw = _compute_net_worth()
+        history = _snapshot_history()
+        today = date.today()
+
+        positions = investments_intel.build_positions(holding_rows)
+        sector_alloc = investments_intel.allocation(positions, 'sector', 'sector_known')
+        region_alloc = investments_intel.allocation(positions, 'region', 'region_known')
+        class_alloc = investments_intel.allocation(positions, 'asset_class')
+        cap_alloc = investments_intel.allocation(positions, 'market_cap', 'market_cap_known')
+        account_alloc = investments_intel.allocation(positions, 'account')
+        conc = investments_intel.concentration(positions)
+        perf = investments_intel.performance(history, today)
+        measured_vol, vol_is_measured = investments_intel.volatility(history)
+        risk = investments_intel.risk_score(positions, nw['cash'],
+                                            measured_vol if vol_is_measured else None)
+        div = investments_intel.diversification_score(positions, sector_alloc,
+                                                      region_alloc, conc)
+        health = investments_intel.health_score(
+            positions=positions, cash=nw['cash'], net_worth=nw['net_worth'],
+            diversification=div, conc=conc, monthly_expenses=_monthly_outgo())
+        dividends = investments_intel.dividend_forecast(positions)
+
+        # Allocation "before" is the cost-basis-weighted shape: what the money
+        # looked like when it was put in, versus what it looks like now. That
+        # difference is exactly the drift winners cause on their own.
+        basis_rows = [dict(p, value=p['cost_basis']) for p in positions
+                      if p.get('cost_basis')]
+        prev_sector = (investments_intel.allocation(basis_rows, 'sector', 'sector_known')
+                       if len(basis_rows) == len(positions) and basis_rows else None)
+
+        story = investments_intel.portfolio_story(
+            positions=positions, perf=perf, conc=conc, sector_alloc=sector_alloc,
+            region_alloc=region_alloc, dividends=dividends, cash=nw['cash'],
+            net_worth=nw['net_worth'], today=today)
+        feed = investments_intel.insights(
+            positions=positions, conc=conc, sector_alloc=sector_alloc,
+            region_alloc=region_alloc, dividends=dividends, cash=nw['cash'],
+            net_worth=nw['net_worth'], risk=risk, perf=perf,
+            prev_sector_alloc=prev_sector)
+
+        return {
+            'holdings': holding_rows,
+            'positions': positions,
+            'nw': nw,
+            'history': history,
+            'performance': perf,
+            'annualized_return': investments_intel.annualized_return(history),
+            'drawdown': investments_intel.drawdown(history),
+            'volatility': {'value': measured_vol if vol_is_measured
+                           else investments_intel.estimated_volatility(positions),
+                           'measured': vol_is_measured},
+            'allocation': {
+                'asset_class': class_alloc, 'sector': sector_alloc,
+                'region': region_alloc, 'market_cap': cap_alloc,
+                'account': account_alloc,
+            },
+            'concentration': conc,
+            'risk': risk,
+            'diversification': div,
+            'health': health,
+            'dividends': dividends,
+            'story': story,
+            'insights': feed,
+            'benchmark': investments_intel.benchmark_compare(history, benchmark),
+            'projection': investments_intel.projection(
+                value=nw['investments'], years=horizon,
+                monthly_contribution=contribution,
+                volatility_pct=measured_vol if vol_is_measured else None),
+        }
+
     @app.route('/investments')
     def investments():
+        benchmark = request.args.get('benchmark', 'sp500')
+        if benchmark not in investments_intel.BENCHMARKS:
+            benchmark = 'sp500'
+        try:
+            horizon = max(1, min(40, int(request.args.get('horizon', 10))))
+        except (TypeError, ValueError):
+            horizon = 10
+        try:
+            contribution = max(0.0, float(request.args.get('contribution', 0)))
+        except (TypeError, ValueError):
+            contribution = 0.0
+
+        snap = _wealth_snapshot(benchmark, horizon, contribution)
+        nw = snap['nw']
         holdings = Holding.query.order_by(Holding.asset_class, Holding.ticker).all()
-        nw = _compute_net_worth()
-        # Include cash accounts (checking + savings) in portfolio breakdown
-        portfolio_by_class = {'Checking': nw['checking'], 'Savings': nw['savings']} if (nw['checking'] or nw['savings']) else {}
+
+        # The original donut mixed cash accounts in with the holdings; keep
+        # that view intact, it answers a different question from the pure
+        # portfolio allocation below it.
+        portfolio_by_class = ({'Checking': nw['checking'], 'Savings': nw['savings']}
+                              if (nw['checking'] or nw['savings']) else {})
         for h in holdings:
             portfolio_by_class[h.asset_class] = round(
                 portfolio_by_class.get(h.asset_class, 0) + float(h.current_value), 2)
-        # Remove zero-value buckets
         portfolio_by_class = {k: v for k, v in portfolio_by_class.items() if v > 0}
         asset_classes = ['Stock', 'ETF', 'Mutual Fund', 'Bond', 'Crypto', 'Cash', 'Other']
 
         # --- synchronization context (finance_sync) ---
-        connections = (InstitutionConnection.query
-                       .order_by(InstitutionConnection.display_name).all())
-        synced_accounts = (FinancialAccount.query.filter_by(is_active=True)
+        connections = [c.to_dict() for c in InstitutionConnection.query
+                       .order_by(InstitutionConnection.display_name).all()]
+        synced_accounts = [a.to_dict() for a in
+                           FinancialAccount.query.filter_by(is_active=True)
                            .order_by(FinancialAccount.account_type,
-                                     FinancialAccount.name).all())
-        cash_synced = any(a.account_type in ('checking', 'savings') for a in synced_accounts)
+                                     FinancialAccount.name).all()]
+        cash_synced = any(a['account_type'] in ('checking', 'savings')
+                          for a in synced_accounts)
         last_sync = (db.session.query(func.max(InstitutionConnection.last_sync_at))
                      .scalar())
-        return render_template('investments.html',
-                               holdings=holdings, nw=nw,
-                               portfolio_by_class=portfolio_by_class,
-                               asset_classes=asset_classes,
-                               connections=[c.to_dict() for c in connections],
-                               synced_accounts=[a.to_dict() for a in synced_accounts],
-                               cash_synced=cash_synced,
-                               last_sync=last_sync.strftime('%Y-%m-%d %H:%M') if last_sync else None)
+        investment_accounts = [a for a in synced_accounts
+                               if a['account_type'] in ('brokerage', 'crypto')]
+
+        return render_template(
+            'investments.html',
+            holdings=holdings, nw=nw,
+            portfolio_by_class=portfolio_by_class,
+            asset_classes=asset_classes,
+            connections=connections,
+            synced_accounts=synced_accounts,
+            cash_synced=cash_synced,
+            last_sync=last_sync.strftime('%Y-%m-%d %H:%M') if last_sync else None,
+            wealth=snap,
+            accounts=investments_intel.account_rollup(
+                snap['positions'], investment_accounts, connections),
+            benchmarks=investments_intel.BENCHMARKS,
+            benchmark_key=benchmark,
+            horizon=horizon,
+            contribution=contribution,
+        )
+
+    # ── Wealth copilot ──────────────────────────────────────────────────────
+    # Same split as the dashboard copilot: the page renders every hard number
+    # server-side, and the model is asked only for the parts that need
+    # judgement. Its context is the identical snapshot the page drew from, so
+    # it can never narrate figures the reader cannot see.
+
+    def _wealth_context():
+        snap = _wealth_snapshot()
+        positions = snap['positions']
+
+        def bucket(alloc, limit=8):
+            return [{'label': b['label'], 'value': b['value'], 'pct': b['pct']}
+                    for b in alloc['buckets'][:limit]]
+
+        return {
+            'today': date.today().strftime('%Y-%m-%d'),
+            'net_worth': snap['nw'],
+            'portfolio_value': snap['nw']['investments'],
+            'performance': snap['performance'],
+            'annualized_return_pct': snap['annualized_return'],
+            'volatility': snap['volatility'],
+            'max_drawdown': snap['drawdown'],
+            'holdings': [
+                {'ticker': p['ticker'], 'name': p['name'], 'value': p['value'],
+                 'weight_pct': p['weight'], 'asset_class': p['asset_class'],
+                 'sector': p['sector'], 'region': p['region'],
+                 'account': p['account'], 'gain': p['gain'], 'gain_pct': p['gain_pct'],
+                 'cost_basis': p['cost_basis'],
+                 'estimated_yield_pct': p['yield_pct']}
+                for p in positions[:60]
+            ],
+            'allocation': {
+                'asset_class': bucket(snap['allocation']['asset_class']),
+                'sector': bucket(snap['allocation']['sector']),
+                'region': bucket(snap['allocation']['region']),
+                'market_cap': bucket(snap['allocation']['market_cap']),
+                'account': bucket(snap['allocation']['account']),
+            },
+            'allocation_coverage': {
+                'sector_pct': snap['allocation']['sector']['coverage'],
+                'region_pct': snap['allocation']['region']['coverage'],
+            },
+            'concentration': snap['concentration'],
+            'risk': snap['risk'],
+            'diversification': snap['diversification'],
+            'portfolio_health': snap['health'],
+            'estimated_dividends': snap['dividends'],
+            'benchmark_reference': {k: v for k, v in snap['benchmark'].items()
+                                    if k not in ('portfolio', 'reference')},
+            'projection': {'final': snap['projection']['final'],
+                           'assumptions': snap['projection']['assumptions']},
+            'deterministic_insights': [
+                {'severity': i['severity'], 'title': i['title'], 'detail': i['detail']}
+                for i in snap['insights'][:10]
+            ],
+        }
+
+    _WEALTH_STYLE = (
+        "You are the wealth copilot built into the account holder's own portfolio app. "
+        "You are talking to them about their own investments, using the snapshot below.\n\n"
+        "Voice: calm, specific, and short. Lead with the answer. Cite real figures from "
+        "the data and format them the way people read them ($12,480, 4.2%). Plain "
+        "language, no jargon.\n\n"
+        "Honesty rules, which matter more here than anywhere else in the app:\n"
+        "- Never invent a holding, price, balance, or return that is not in the data.\n"
+        "- Sector, region, market-cap and dividend-yield labels come from a built-in "
+        "reference table, not a market feed. 'allocation_coverage' says how much of the "
+        "portfolio could be classified. Say 'estimated' when you lean on them.\n"
+        "- 'benchmark_reference' is a modelled line compounding at a long-run average "
+        "rate, not live index data. Never present it as the S&P's actual return for "
+        "this period.\n"
+        "- 'projection' is a model built on the stated assumptions. Never call it a "
+        "prediction or imply a guaranteed outcome.\n"
+        "- When 'performance.sparse' is true there are only a handful of daily "
+        "snapshots, mostly taken while accounts were still being connected. Say so "
+        "if you quote a return from that window — a swing there is usually setup, "
+        "not the market.\n"
+        "- You are not a licensed advisor. Explain trade-offs and name what a decision "
+        "depends on rather than issuing buy or sell instructions."
+    )
+
+    @app.route('/api/investments/brief')
+    def wealth_brief():
+        """A written read on the portfolio, plus concrete moves worth considering."""
+        now = time.time()
+        if _wealth_cache['data'] and now < _wealth_cache['expires']:
+            return jsonify(_wealth_cache['data'])
+
+        api_key = app.config.get('ANTHROPIC_API_KEY', '')
+        if not api_key:
+            return jsonify({'available': False})
+
+        try:
+            client = anthropic.Anthropic(api_key=api_key)
+            resp = client.messages.create(
+                model='claude-haiku-4-5-20251001',
+                max_tokens=900,
+                system=(
+                    _WEALTH_STYLE + "\n\n"
+                    "Reply with ONLY a JSON object, no prose around it, shaped like:\n"
+                    '{"narrative": "2-3 sentences on the shape and health of this '
+                    'portfolio right now, naming the single thing that most defines it.",\n'
+                    ' "opportunities": [{"title": "Short imperative, max 6 words",\n'
+                    '                    "detail": "One sentence with the figure and why it matters.",\n'
+                    '                    "impact": "the size of the move, e.g. \'$18k over-weight\' or \'+9 health\'"}],\n'
+                    ' "questions": ["3 or 4 short follow-up questions the user might ask '
+                    'next, each answerable from this data, phrased in their voice"]}\n\n'
+                    "Give 2-3 opportunities, most valuable first, each grounded in a "
+                    "figure you can point to. If the portfolio genuinely offers none, "
+                    "return an empty list rather than padding it."
+                ),
+                messages=[{'role': 'user',
+                           'content': json.dumps(_wealth_context(), default=str)}],
+            )
+            raw = resp.content[0].text.strip()
+            if raw.startswith('```'):
+                raw = raw.split('\n', 1)[1].rsplit('```', 1)[0]
+            data = json.loads(raw)
+            data['available'] = True
+            data.setdefault('opportunities', [])
+            data.setdefault('questions', [])
+            _wealth_cache['data'] = data
+            _wealth_cache['expires'] = now + app.config.get('AI_INSIGHT_CACHE_TTL', 3600)
+            return jsonify(data)
+        except (json.JSONDecodeError, IndexError, KeyError) as e:
+            app.logger.warning('wealth_brief could not parse model output: %s', e)
+            return jsonify({'available': False})
+        except Exception as e:
+            app.logger.error('wealth_brief failed: %s', e)
+            return jsonify({'available': False})
+
+    @app.route('/api/investments/ask', methods=['POST'])
+    def wealth_ask():
+        """Answer one portfolio question, streamed, with follow-up context.
+
+        Unlike the dashboard copilot this one accepts a short prior turn list,
+        because "should I rebalance?" is rarely the last thing someone wants
+        to ask. History stays client-side and capped — anything that wants to
+        become a real conversation has a path into /chat.
+        """
+        req = request.get_json(force=True) or {}
+        question = (req.get('question') or '').strip()
+        if not question:
+            return jsonify({'error': 'No question provided'}), 400
+        question = question[:500]
+
+        history = []
+        for turn in (req.get('history') or [])[-6:]:
+            role = turn.get('role')
+            content = (turn.get('content') or '').strip()[:2000]
+            if role in ('user', 'assistant') and content:
+                history.append({'role': role, 'content': content})
+        # A trailing assistant turn would leave two assistant messages in a row
+        # once the new question is appended below.
+        while history and history[-1]['role'] == 'assistant' and len(history) % 2 == 0:
+            history.pop()
+
+        api_key = app.config.get('ANTHROPIC_API_KEY', '')
+        if not api_key:
+            return jsonify({'error': 'The AI assistant is not set up yet — '
+                                     'no API key is configured.'}), 503
+
+        system_prompt = (
+            _WEALTH_STYLE + "\n\n"
+            f"{json.dumps(_wealth_context(), indent=2, default=str)}\n\n"
+            "This answer appears in a card on the user's Investments page, beside the "
+            "charts these figures came from. Keep it to 2-4 sentences. No headings. "
+            "Use a short bullet list only when the answer is genuinely a list. If the "
+            "question needs data that is not here — a live quote, a tax position, a "
+            "specific fund's holdings — say so in one sentence and suggest the full chat."
+        )
+
+        messages = history + [{'role': 'user', 'content': question}]
+
+        def _generate():
+            try:
+                client = anthropic.Anthropic(api_key=api_key)
+                with client.messages.stream(
+                    model='claude-sonnet-4-6',
+                    max_tokens=800,
+                    system=[{'type': 'text', 'text': system_prompt,
+                             'cache_control': {'type': 'ephemeral'}}],
+                    messages=messages,
+                ) as stream:
+                    for text in stream.text_stream:
+                        yield f'data: {json.dumps({"delta": text})}\n\n'
+                yield 'data: [DONE]\n\n'
+            except anthropic.RateLimitError:
+                yield f'data: {json.dumps({"error": "Too many requests right now. Give it a moment."})}\n\n'
+            except anthropic.AuthenticationError:
+                yield f'data: {json.dumps({"error": "The configured API key was rejected."})}\n\n'
+            except anthropic.APIConnectionError:
+                yield f'data: {json.dumps({"error": "Could not reach the AI service."})}\n\n'
+            except Exception as e:
+                app.logger.error('wealth_ask failed: %s', e)
+                yield f'data: {json.dumps({"error": "Something went wrong. Try again."})}\n\n'
+
+        return Response(
+            stream_with_context(_generate()),
+            mimetype='text/event-stream',
+            headers={'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no',
+                     'Connection': 'keep-alive'},
+        )
+
+    # Tests reach the snapshot directly; the AI routes above need a key and a
+    # network, and the page itself is a poor place to assert on arithmetic.
+    app.wealth_snapshot = _wealth_snapshot
 
     @app.route('/api/holdings', methods=['POST'])
     def add_holding():
@@ -1911,6 +3033,10 @@ Respond with ONLY valid JSON (no markdown fences, no commentary):
     # Financial institution synchronization (finance_sync)
     # ---------------------------------------------------------------------------
     app.register_blueprint(sync_bp)
+
+    # The assistant's whole answer quality rides on this snapshot, so give the
+    # tests a way in — the routes that use it need an API key and a network.
+    app.build_finance_context = _build_finance_context
 
     if app.config.get('SYNC_AUTO_ENABLED', True) and not app.config.get('TESTING'):
         # Start the background scheduler lazily on the first request so it only

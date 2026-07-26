@@ -1,481 +1,1206 @@
 {% extends "base.html" %}
-{% block title %}Investments - Checkbook App{% endblock %}
+{% block title %}Investments – Checkbook App{% endblock %}
+
+{#
+  ════════════════════════════════════════════════════════════════════════════
+  Investments — six layers, read top to bottom as one argument.
+
+    Layer 1  Hero ......... What am I worth, and what changed?
+    Layer 2  Copilot ...... What does that mean, and what should I do?
+    Layer 3  Story ........ The five sentences before any table.
+    Layer 4  Attention .... What needs me right now?
+    Layer 5  Analytics .... Show me the detail (collapsed by default).
+    Layer 6  Holdings ..... The positions, and the accounts holding them.
+
+  Everything that used to be here still is — sync, manual holdings, the cash
+  editor, the allocation donut, the holdings table. What changed is the order
+  and the weight: the numbers that answer "am I okay" are unmissable, and the
+  detail is one click away instead of competing with them.
+
+  Two honesty rules run through the markup, mirroring investments_intel:
+  classifications that come from the built-in reference table always say so,
+  and modelled figures (projections, the benchmark line) always carry their
+  assumptions beside them.
+  ════════════════════════════════════════════════════════════════════════════
+#}
 
 {% block content %}
-<style>
-/* Mobile-only layout — no effect ≥640px */
-@media (max-width: 640px) {
-  .inv-head { flex-wrap: wrap; gap: 12px; }
+{% set perf = wealth.performance %}
+{% set day = perf.windows.get('day', {}) %}
+{% set conc = wealth.concentration %}
+{% set health = wealth.health %}
+{% set risk = wealth.risk %}
 
-  /* Holdings table → cards */
-  #holdingsTable, #holdingsTable tbody { display: block; min-width: 0 !important; }
-  #holdingsTable thead, #holdingsTable tfoot { display: none; }
-  #holdingsTable tbody tr {
-    display: grid;
-    grid-template-columns: 1fr auto;
-    column-gap: 10px; row-gap: 2px;
-    padding: 12px 4px;
-    border-bottom: 1px solid var(--border);
-  }
-  #holdingsTable td { display: block; padding: 0 !important; border: none !important; white-space: normal !important; text-align: left !important; }
-  #holdingsTable td:nth-child(1) { grid-column: 1; grid-row: 1; }                     /* ticker */
-  #holdingsTable td:nth-child(8) { grid-column: 2; grid-row: 1; text-align: right !important; } /* value */
-  #holdingsTable td:nth-child(2) { grid-column: 1; grid-row: 2; font-size: .75rem; opacity: .65; max-width: none !important; } /* name */
-  #holdingsTable td:nth-child(9) { grid-column: 2; grid-row: 2; text-align: right !important; font-size: .75rem; } /* gain */
-  #holdingsTable td:nth-child(4) { grid-column: 1; grid-row: 3; font-size: .72rem; opacity: .55; } /* account */
-  #holdingsTable td:nth-child(10) { grid-column: 2; grid-row: 3; text-align: right !important; }   /* actions */
-  #holdingsTable td:nth-child(10) button { padding: 6px 4px; font-size: .78rem !important; }
-  #holdingsTable td:nth-child(3),
-  #holdingsTable td:nth-child(5),
-  #holdingsTable td:nth-child(6),
-  #holdingsTable td:nth-child(7) { display: none; }  /* class, shares, avg cost, price */
-}
-</style>
-<div class="space-y-6"
-     x-data="investmentsApp({{ nw.checking }}, {{ nw.savings }}, {{ nw.investments }})">
+{#- Reusable bits -#}
 
-    <!-- Header -->
-    <div class="inv-head flex items-center justify-between">
-        <div>
-            <h1 class="text-2xl font-bold text-gray-900">Investments &amp; Net Worth</h1>
-            <p class="text-sm text-gray-500 mt-0.5">
-                {% if connections %}
-                    Synchronized automatically
-                    {% if last_sync %} · Last sync {{ last_sync }}{% endif %}
-                {% else %}
-                    Track cash accounts, holdings, and total net worth
-                {% endif %}
-            </p>
-        </div>
-        <div class="flex items-center gap-2 flex-wrap">
-            {% if connections %}
-            <span x-show="syncing" class="flex items-center gap-2 text-sm text-violet-600">
-                <svg class="animate-spin h-4 w-4" fill="none" viewBox="0 0 24 24">
-                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
-                </svg>
-                Syncing…
-            </span>
-            <button @click="refreshAll()" :disabled="syncing"
-                class="inline-flex items-center gap-2 px-4 py-2 bg-violet-600 text-white text-sm font-medium rounded-lg hover:bg-violet-700 transition-colors shadow-sm disabled:opacity-50">
-                <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor">
-                    <path stroke-linecap="round" stroke-linejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99"/>
-                </svg>
-                Refresh
-            </button>
-            {% else %}
-            <a href="/connections"
-                class="inline-flex items-center gap-2 px-4 py-2 bg-violet-600 text-white text-sm font-medium rounded-lg hover:bg-violet-700 transition-colors shadow-sm">
-                <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor">
-                    <path stroke-linecap="round" stroke-linejoin="round" d="M13.19 8.688a4.5 4.5 0 0 1 1.242 7.244l-4.5 4.5a4.5 4.5 0 0 1-6.364-6.364l1.757-1.757m13.35-.622 1.757-1.757a4.5 4.5 0 0 0-6.364-6.364l-4.5 4.5a4.5 4.5 0 0 0 1.242 7.244"/>
-                </svg>
-                Connect an Institution
-            </a>
-            {% endif %}
-            <button @click="showAddForm = !showAddForm"
-                class="inline-flex items-center gap-2 px-4 py-2 border border-gray-300 text-gray-700 text-sm font-medium rounded-lg hover:bg-gray-50 transition-colors">
-                <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor">
-                    <path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15"/>
-                </svg>
-                Add Manual Holding
-            </button>
-        </div>
-    </div>
+{% macro icon(name, size=16) %}
+{%- set paths = {
+  'alert':      '<path d="M12 9v4"/><path d="M12 17h.01"/><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>',
+  'trend-up':   '<polyline points="22 7 13.5 15.5 8.5 10.5 2 17"/><polyline points="16 7 22 7 22 13"/>',
+  'trend-down': '<polyline points="22 17 13.5 8.5 8.5 13.5 2 7"/><polyline points="16 17 22 17 22 11"/>',
+  'target':     '<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1.4" fill="currentColor" stroke="none"/>',
+  'check':      '<path d="M20 6 9 17l-5-5"/>',
+  'sparkle':    '<path d="M12 2.6l1.9 5.3 5.3 1.9-5.3 1.9L12 17l-1.9-5.3L4.8 9.8l5.3-1.9z"/><path d="M18.6 15.4l.8 2.2 2.2.8-2.2.8-.8 2.2-.8-2.2-2.2-.8 2.2-.8z"/>',
+  'wallet':     '<path d="M20 8.5V7a2 2 0 0 0-2-2H5.5A2.5 2.5 0 0 1 3 2.5v13A2.5 2.5 0 0 0 5.5 18H18a2 2 0 0 0 2-2v-1.5"/><path d="M21 8.5h-4a2.5 2.5 0 0 0 0 5h4z"/>',
+  'chart':      '<path d="M3 3v16.5A1.5 1.5 0 0 0 4.5 21H21"/><path d="m7 14 3.5-3.5 3 3L19 8"/>',
+  'info':       '<circle cx="12" cy="12" r="9"/><path d="M12 11v5"/><path d="M12 8h.01"/>',
+  'refresh':    '<path d="M16 9.3h5V4.3"/><path d="M3 14.7v5h5"/><path d="M3.2 15a8.25 8.25 0 0 0 13.8 3.7l3.2-3.2M4 9.9a8.25 8.25 0 0 1 13.8-3.7L21 9.4"/>',
+  'dot':        '<circle cx="12" cy="12" r="4"/>'
+} -%}
+<svg width="{{ size }}" height="{{ size }}" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+     stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"
+     focusable="false">{{ paths.get(name, paths['dot'])|safe }}</svg>
+{%- endmacro %}
 
-    <!-- Connection status strip -->
-    {% if connections %}
-    <div class="flex flex-wrap gap-2">
-        {% for c in connections %}
-        {% if c.status != 'disconnected' %}
-        <a href="/connections" class="inline-flex items-center gap-2 px-3 py-1.5 bg-white border border-gray-200 rounded-full shadow-sm text-xs hover:bg-gray-50 transition-colors">
-            <span class="w-2 h-2 rounded-full inline-block
-                {% if c.status == 'connected' %}bg-green-500
-                {% elif c.status == 'expired' %}bg-yellow-500
-                {% else %}bg-red-500{% endif %}"></span>
-            <span class="font-medium text-gray-700">{{ c.display_name }}</span>
-            <span class="text-gray-400">{{ c.last_sync_at or 'never synced' }}</span>
-        </a>
+{% macro delta(value, pct=None, higher_is_better=True) %}
+  {%- set good = (value >= 0) if higher_is_better else (value <= 0) -%}
+  {%- if value == 0 -%}
+    <span class="ds-delta ds-delta--flat"><span aria-hidden="true">—</span> No change</span>
+  {%- else -%}
+    <span class="ds-delta {{ 'ds-delta--up' if good else 'ds-delta--down' }}">
+      <span aria-hidden="true">{{ '▲' if value > 0 else '▼' }}</span>
+      <span class="ds-num">{{ value|abs|money }}{% if pct is not none %} ({{ '%+.2f'|format(pct) }}%){% endif %}</span>
+    </span>
+  {%- endif -%}
+{% endmacro %}
+
+{% macro chart_tools(chart_id, title) %}
+<button type="button" class="ds-btn ds-btn--icon" data-values="{{ chart_id }}"
+        aria-pressed="false" aria-label="Show values on {{ title }}" title="Show values">
+  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12.586 2.586A2 2 0 0 0 11.172 2H4a2 2 0 0 0-2 2v7.172a2 2 0 0 0 .586 1.414l8.704 8.704a2.426 2.426 0 0 0 3.42 0l6.58-6.58a2.426 2.426 0 0 0 0-3.42z"/><circle cx="7.5" cy="7.5" r="1.5" fill="currentColor" stroke="none"/></svg>
+</button>
+<button type="button" class="ds-btn ds-btn--icon" data-expand="{{ chart_id }}"
+        data-title="{{ title }}" aria-label="Expand {{ title }}" title="Expand">
+  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/></svg>
+</button>
+{% endmacro %}
+
+{% macro panel_head(key, title, subtitle='', chart='') %}
+<div class="inv-panel__head" data-drag-handle>
+  <button type="button" class="inv-panel__toggle" data-toggle="{{ key }}"
+          aria-expanded="false" aria-controls="inv-panel-{{ key }}">
+    <svg class="inv-panel__caret" width="14" height="14" viewBox="0 0 24 24" fill="none"
+         stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9 6 6 6-6 6"/></svg>
+    <span class="inv-panel__title">{{ title }}</span>
+    {% if subtitle %}<span class="inv-panel__sub">{{ subtitle }}</span>{% endif %}
+  </button>
+  <div class="inv-panel__tools">
+    {% if chart %}{{ chart_tools(chart, title) }}{% endif %}
+    <button type="button" class="ds-btn ds-btn--icon" data-pin="{{ key }}"
+            aria-pressed="false" aria-label="Pin {{ title }} open" title="Pin open">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 17v5"/><path d="M9 2h6l-1 6 3.5 3.5V14H6.5v-2.5L10 8z"/></svg>
+    </button>
+    <button type="button" class="ds-btn ds-btn--icon" data-hide="{{ key }}"
+            aria-label="Hide {{ title }}" title="Hide panel">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9.9 5.1A9.5 9.5 0 0 1 12 4.9c5 0 9 4.4 9 7.1a9.7 9.7 0 0 1-2.2 3.3M6.2 6.2A11.6 11.6 0 0 0 3 12c0 2.7 4 7.1 9 7.1a9.9 9.9 0 0 0 4.3-1M3 3l18 18"/></svg>
+    </button>
+    <span class="inv-panel__grip" aria-hidden="true" title="Drag to reorder">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="9" cy="6" r="1.5"/><circle cx="15" cy="6" r="1.5"/><circle cx="9" cy="12" r="1.5"/><circle cx="15" cy="12" r="1.5"/><circle cx="9" cy="18" r="1.5"/><circle cx="15" cy="18" r="1.5"/></svg>
+    </span>
+  </div>
+</div>
+{% endmacro %}
+
+{% macro basis_note(text) %}
+<p class="inv-basis">{{ icon('info', 13) }}<span>{{ text }}</span></p>
+{% endmacro %}
+
+{% macro alloc_list(alloc, chart_id) %}
+<ul class="inv-alloc__list" data-swatches="{{ chart_id }}">
+  {% for b in alloc.buckets %}
+  <li class="inv-alloc__row">
+    <span class="inv-alloc__swatch" data-slot="{{ loop.index0 }}"></span>
+    <span class="inv-alloc__label">{{ b.label }}</span>
+    <span class="inv-alloc__value ds-num">{{ b.value|money }}</span>
+    <span class="inv-alloc__pct ds-num">{{ '%.1f'|format(b.pct) }}%</span>
+  </li>
+  {% endfor %}
+</ul>
+{% endmacro %}
+
+<link rel="stylesheet" href="{{ url_for('static', filename='css/investments.css') }}">
+
+{#- Alpine is held off this subtree until the script at the bottom of this
+    file has defined investmentsApp.
+
+    On an SPA navigation the router assigns the new markup with innerHTML and
+    Alpine's mutation observer walks it *immediately* — before the router has
+    executed the inline scripts that came with that markup. A literal x-data
+    here therefore throws "investmentsApp is not defined" on every SPA entry,
+    and every x-show / x-model beneath it throws in turn, so the sync button
+    and both holding forms come up dead. `x-ignore` makes Alpine skip the
+    subtree entirely; the script at the bottom lifts it once the definition
+    exists, and initialization then happens on the router's own
+    `Alpine.initTree` pass (SPA) or Alpine's start-up walk (full load). -#}
+<div class="inv" id="inv" x-ignore
+     data-alpine="investmentsApp({{ nw.checking }}, {{ nw.savings }}, {{ nw.investments }})">
+
+  {# ══════════════════════════════════════════════════════════════════════
+     Header
+     ══════════════════════════════════════════════════════════════════════ #}
+  <header class="inv-header ds-rise">
+    <div>
+      <h1 class="inv-header__title">Investments</h1>
+      <p class="inv-header__sub">
+        {% if connections %}
+          Synchronized automatically{% if last_sync %} · last sync {{ last_sync }}{% endif %}
+        {% else %}
+          Track holdings, allocation, and total net worth
         {% endif %}
-        {% endfor %}
+        {% if wealth.positions %}
+          · {{ wealth.positions|length }} position{{ 's' if wealth.positions|length != 1 }}
+        {% endif %}
+      </p>
     </div>
+
+    <div class="inv-header__tools">
+      {% if connections %}
+      <span x-show="syncing" class="ds-badge ds-badge--ai ds-badge--pill" x-cloak>Syncing…</span>
+      <button type="button" class="ds-btn ds-btn--primary ds-btn--sm"
+              @click="refreshAll()" :disabled="syncing">
+        {{ icon('refresh', 14) }} Refresh
+      </button>
+      {% else %}
+      <a href="/connections" class="ds-btn ds-btn--primary ds-btn--sm">Connect an institution</a>
+      {% endif %}
+      <button type="button" class="ds-btn ds-btn--secondary ds-btn--sm"
+              @click="showAddForm = !showAddForm" :aria-expanded="showAddForm.toString()">
+        Add holding
+      </button>
+      <button type="button" class="ds-btn ds-btn--ghost ds-btn--sm" id="invReport">
+        Report
+      </button>
+    </div>
+  </header>
+
+  {% if connections %}
+  <div class="inv-conns">
+    {% for c in connections %}{% if c.status != 'disconnected' %}
+    <a href="/connections" class="inv-conn">
+      <span class="inv-conn__dot {% if c.status == 'expired' %}inv-conn__dot--expired{% elif c.status != 'connected' %}inv-conn__dot--error{% endif %}"></span>
+      <span class="inv-conn__name">{{ c.display_name }}</span>
+      <span>{{ c.last_sync_at or 'never synced' }}</span>
+    </a>
+    {% endif %}{% endfor %}
+  </div>
+  {% endif %}
+
+  {# ══════════════════════════════════════════════════════════════════════
+     LAYER 1 — Hero
+     Net worth is the headline; the composition bar shows the shape; the two
+     rings answer "is this a good portfolio" and "how much risk am I taking"
+     before any number is read.
+     ══════════════════════════════════════════════════════════════════════ #}
+  <section aria-labelledby="hero-h">
+    <h2 id="hero-h" class="ds-sr">Portfolio summary</h2>
+
+    <article class="ds-card ds-card--hero ds-card--wash inv-hero ds-rise" style="--ds-delay:40ms">
+      <div>
+        <div class="inv-hero__eyebrow">
+          <p class="ds-eyebrow">Net worth</p>
+          {% if wealth.annualized_return is not none %}
+          <span class="ds-badge">{{ '%+.1f'|format(wealth.annualized_return) }}% a year</span>
+          {% endif %}
+        </div>
+
+        <p class="inv-hero__value ds-num" data-countup="{{ nw.net_worth }}" data-format="usd">
+          {{ nw.net_worth|money }}
+        </p>
+
+        {# The delta swaps with the period toggle below; the server renders
+           the day window so there is a correct figure before any JS runs. #}
+        <div class="inv-hero__delta">
+          <span id="invHeroDelta">
+            {% if day.get('available') %}
+              {{ delta(day.change, day.change_pct) }}
+            {% else %}
+              <span class="ds-delta ds-delta--flat">Awaiting a second snapshot</span>
+            {% endif %}
+          </span>
+          <span class="inv-hero__window" id="invHeroWindow">
+            {% if day.get('available') %}portfolio, since {{ day.from_date }}{% else %}portfolio value only{% endif %}
+          </span>
+        </div>
+
+        <div class="inv-periods" role="group" aria-label="Performance window">
+          {% for key, label in [('day','1D'), ('week','1W'), ('month','1M'),
+                                ('quarter','3M'), ('ytd','YTD'), ('year','1Y'), ('all','All')] %}
+          {% set w = perf.windows.get(key, {}) %}
+          <button type="button" class="inv-period" data-period="{{ key }}"
+                  aria-pressed="{{ 'true' if key == 'day' else 'false' }}"
+                  {% if not w.get('available') %}disabled title="Not enough snapshot history yet"{% endif %}>
+            {{ label }}
+          </button>
+          {% endfor %}
+        </div>
+
+        {% set nwv = nw.net_worth if nw.net_worth > 0 else 1 %}
+        <div class="inv-hero__bar" role="img"
+             aria-label="Net worth is {{ ((nw.cash / nwv * 100)|round|int) }} percent cash, {{ ((nw.brokerage / nwv * 100)|round|int) }} percent invested, {{ ((nw.crypto / nwv * 100)|round|int) }} percent crypto">
+          <div class="inv-hero__seg inv-hero__seg--cash"   style="width:{{ '%.2f'|format(nw.cash / nwv * 100) }}%"></div>
+          <div class="inv-hero__seg inv-hero__seg--inv"    style="width:{{ '%.2f'|format(nw.brokerage / nwv * 100) }}%"></div>
+          <div class="inv-hero__seg inv-hero__seg--crypto" style="width:{{ '%.2f'|format(nw.crypto / nwv * 100) }}%"></div>
+        </div>
+        <div class="inv-hero__legend">
+          <span><span class="inv-hero__dot inv-hero__dot--cash"></span>Cash <b class="ds-num">{{ nw.cash|money }}</b></span>
+          <span><span class="inv-hero__dot inv-hero__dot--inv"></span>Invested <b class="ds-num">{{ nw.brokerage|money }}</b></span>
+          {% if nw.crypto > 0 %}
+          <span><span class="inv-hero__dot inv-hero__dot--crypto"></span>Crypto <b class="ds-num">{{ nw.crypto|money }}</b></span>
+          {% endif %}
+        </div>
+      </div>
+
+      <div class="inv-rings">
+        <button type="button" class="inv-ring" data-open-panel="health"
+                aria-label="Portfolio health {{ health.score }} out of 100 — {{ health.label }}. Opens the breakdown.">
+          <svg class="inv-ring__svg" viewBox="0 0 100 100" aria-hidden="true">
+            <circle class="inv-ring__track" cx="50" cy="50" r="42"></circle>
+            <circle class="inv-ring__value inv-ring__value--{{ health.band }}" cx="50" cy="50" r="42"
+                    data-ring="{{ health.score }}"></circle>
+          </svg>
+          <span class="inv-ring__num ds-num" data-countup="{{ health.score }}" data-format="int">{{ health.score }}</span>
+          <span class="inv-ring__label">Health<em class="inv-ring__band">{{ health.label }}</em></span>
+        </button>
+
+        <button type="button" class="inv-ring" data-open-panel="risk"
+                aria-label="Risk score {{ risk.score }} out of 100 — {{ risk.label }}. Opens the breakdown.">
+          <svg class="inv-ring__svg" viewBox="0 0 100 100" aria-hidden="true">
+            <circle class="inv-ring__track" cx="50" cy="50" r="42"></circle>
+            <circle class="inv-ring__value inv-ring__value--risk" cx="50" cy="50" r="42"
+                    data-ring="{{ risk.score }}"></circle>
+          </svg>
+          <span class="inv-ring__num ds-num" data-countup="{{ risk.score }}" data-format="int">{{ risk.score }}</span>
+          <span class="inv-ring__label">Risk<em class="inv-ring__band">{{ risk.label }}</em></span>
+        </button>
+      </div>
+    </article>
+
+    {# Supporting tiles. Each is one figure plus the thing it depends on —
+       never a number without a denominator. #}
+    {% set unrealized = wealth.positions | selectattr('gain', 'ne', None) | sum(attribute='gain') %}
+    {% set basis_total = wealth.positions | selectattr('cost_basis', 'ne', None) | sum(attribute='cost_basis') %}
+    <div class="inv-tiles" style="margin-top: var(--sp-3)">
+      <article class="ds-card ds-card--compact inv-tile ds-rise" style="--ds-delay:90ms">
+        <p class="ds-eyebrow">Portfolio value</p>
+        <p class="inv-tile__value ds-num" data-countup="{{ nw.investments }}" data-format="usd">{{ nw.investments|money }}</p>
+        <p class="inv-tile__foot">{{ wealth.positions|length }} position{{ 's' if wealth.positions|length != 1 }} across {{ accounts|length }} account{{ 's' if accounts|length != 1 }}</p>
+      </article>
+
+      <article class="ds-card ds-card--compact inv-tile ds-rise" style="--ds-delay:130ms">
+        <p class="ds-eyebrow">Total gain / loss</p>
+        <p class="inv-tile__value ds-num {{ 'inv-tile__value--up' if unrealized >= 0 else 'inv-tile__value--down' }}"
+           data-countup="{{ unrealized }}" data-format="usd">{{ unrealized|money }}</p>
+        <p class="inv-tile__foot">
+          {% if basis_total %}
+            {{ '%+.1f'|format(unrealized / basis_total * 100) }}% on {{ basis_total|money }} of cost basis
+          {% else %}
+            No cost basis reported yet
+          {% endif %}
+        </p>
+      </article>
+
+      <article class="ds-card ds-card--compact inv-tile ds-rise" style="--ds-delay:170ms">
+        <p class="ds-eyebrow">Cash available</p>
+        <p class="inv-tile__value ds-num">{{ nw.cash|money }}</p>
+        <p class="inv-tile__foot">
+          {% if health.months_of_cash %}{{ health.months_of_cash }} months of spending{% else %}Checking + savings{% if nw.brokerage_cash %} + sweep{% endif %}{% endif %}
+        </p>
+      </article>
+
+      <article class="ds-card ds-card--compact inv-tile ds-rise" style="--ds-delay:210ms">
+        <p class="ds-eyebrow">Diversification</p>
+        <p class="inv-tile__value ds-num" data-countup="{{ wealth.diversification.score }}" data-format="int">{{ wealth.diversification.score }}</p>
+        <div class="ds-progress" style="margin-top: var(--sp-2)">
+          <div class="ds-progress__fill {{ 'ds-progress__fill--danger' if wealth.diversification.score < 40 else 'ds-progress__fill--warn' if wealth.diversification.score < 62 else '' }}"
+               data-fill="{{ wealth.diversification.score }}"></div>
+        </div>
+        <p class="inv-tile__foot">{{ conc.effective_positions }} effective holdings</p>
+      </article>
+
+      <article class="ds-card ds-card--compact inv-tile ds-rise" style="--ds-delay:250ms">
+        <p class="ds-eyebrow">Est. annual income</p>
+        <p class="inv-tile__value ds-num">{{ wealth.dividends.annual|money }}</p>
+        <p class="inv-tile__foot">{{ '%.2f'|format(wealth.dividends.portfolio_yield) }}% yield · estimated</p>
+      </article>
+
+      <article class="ds-card ds-card--compact inv-tile ds-rise" style="--ds-delay:290ms">
+        <p class="ds-eyebrow">Volatility</p>
+        <p class="inv-tile__value ds-num">{{ '%.1f'|format(wealth.volatility.value) }}%</p>
+        <p class="inv-tile__foot">
+          {{ 'Measured from your snapshots' if wealth.volatility.measured else 'Estimated — not enough history' }}
+        </p>
+      </article>
+    </div>
+  </section>
+
+  {# ══════════════════════════════════════════════════════════════════════
+     LAYER 2 — Wealth copilot
+     The numbers above are already on screen; this is where they get
+     explained and acted on. Unlike the dashboard copilot this one keeps its
+     turns, because "should I rebalance?" is rarely the last question.
+     ══════════════════════════════════════════════════════════════════════ #}
+  <section class="ds-card ds-card--hero ds-card--wash-ai inv-copilot ds-rise"
+           style="--ds-delay:330ms" aria-labelledby="copilot-h" id="invCopilot">
+    <div class="inv-copilot__head">
+      <span class="inv-copilot__mark" aria-hidden="true">{{ icon('sparkle', 18) }}</span>
+      <h2 class="inv-copilot__title" id="copilot-h">Wealth Copilot</h2>
+      <a href="/chat" class="ds-btn ds-btn--ghost ds-btn--sm">Open full chat →</a>
+    </div>
+
+    {# The deterministic read is already on screen above; this is only the
+       part that needs judgement, and it arrives a moment later. #}
+    <div class="inv-copilot__ai" id="invNarrative" aria-live="polite">
+      <div class="inv-copilot__loading" id="invNarrativeLoading">
+        <span class="ds-skeleton ds-skeleton--text" style="width:94%"></span>
+        <span class="ds-skeleton ds-skeleton--text" style="width:71%"></span>
+      </div>
+    </div>
+
+    <div class="inv-opps" id="invOpps" hidden></div>
+
+    <div class="inv-thread" id="invThread" hidden></div>
+    <div class="inv-thread__foot" id="invThreadFoot" hidden>
+      <button type="button" class="ds-btn ds-btn--ghost ds-btn--sm" id="invThreadClear">Clear conversation</button>
+      <a href="/chat" class="ds-btn ds-btn--ghost ds-btn--sm">Continue in full chat →</a>
+    </div>
+
+    <form class="inv-ask" id="invAskForm">
+      <label class="ds-sr" for="invAskInput">Ask about your portfolio</label>
+      <input type="text" id="invAskInput" class="inv-ask__input" autocomplete="off"
+             placeholder="Ask anything about your portfolio…">
+      <button type="submit" class="ds-btn ds-btn--primary ds-btn--sm inv-ask__send" aria-label="Send question">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 19V5"/><path d="m5 12 7-7 7 7"/></svg>
+      </button>
+    </form>
+
+    <div class="inv-suggest" id="invSuggest" role="group" aria-label="Suggested questions">
+      {# Seeded from the page's own figures so the first suggestions are
+         always about this portfolio; replaced by the model's once it lands. #}
+      {% set seed = [] %}
+      {% if conc.largest and conc.top1_pct >= 20 %}
+        {% set _ = seed.append('Am I too concentrated in ' ~ conc.largest.ticker ~ '?') %}
+      {% endif %}
+      {% set _ = seed.append('Analyze my portfolio') %}
+      {% set _ = seed.append('Should I rebalance?') %}
+      {% set _ = seed.append('How risky am I?') %}
+      {% set _ = seed.append('Compare me to the S&P 500') %}
+      {% set _ = seed.append('Where are my tax-loss opportunities?') %}
+      {% for q in seed[:5] %}
+      <button type="button" class="ds-chip ds-chip--ai" data-ask="{{ q }}">{{ q }}</button>
+      {% endfor %}
+    </div>
+  </section>
+
+  {# ══════════════════════════════════════════════════════════════════════
+     LAYER 3 — Story
+     ══════════════════════════════════════════════════════════════════════ #}
+  {% if wealth.story %}
+  <section class="ds-rise" style="--ds-delay:370ms" aria-labelledby="story-h">
+    <div class="ds-section__head">
+      <div>
+        <h2 class="ds-section__title" id="story-h">What changed</h2>
+        <p class="ds-section__sub">The portfolio in a few sentences, before any table</p>
+      </div>
+    </div>
+    <div class="inv-story">
+      {% for beat in wealth.story %}
+      <article class="ds-card ds-card--compact inv-beat inv-beat--{{ beat.tone }} ds-slide-in"
+               style="--ds-delay:{{ 390 + loop.index0 * 45 }}ms">
+        <p class="inv-beat__headline">{{ beat.headline }}</p>
+        <p class="inv-beat__detail">{{ beat.detail }}</p>
+      </article>
+      {% endfor %}
+    </div>
+  </section>
+  {% endif %}
+
+  {# ══════════════════════════════════════════════════════════════════════
+     LAYER 4 — Attention
+     One ranked list. Severity is carried by an icon and a word, never by
+     color alone, and every item can explain itself.
+     ══════════════════════════════════════════════════════════════════════ #}
+  {% set actionable = wealth.insights | rejectattr('severity', 'equalto', 'positive') | list %}
+  {% set wins = wealth.insights | selectattr('severity', 'equalto', 'positive') | list %}
+
+  <section class="ds-rise" style="--ds-delay:410ms" aria-labelledby="insights-h">
+    <div class="ds-section__head">
+      <div>
+        <h2 class="ds-section__title" id="insights-h">
+          {% if actionable %}Worth your attention{% else %}Nothing needs attention{% endif %}
+        </h2>
+        <p class="ds-section__sub">
+          {% if actionable %}
+            {{ actionable|length }} observation{{ 's' if actionable|length != 1 }} — most consequential first
+          {% else %}
+            No concentration, allocation, or cash issues stand out right now
+          {% endif %}
+        </p>
+      </div>
+    </div>
+
+    {% if actionable %}
+    <ul class="inv-insights">
+      {% for item in actionable %}
+      <li class="ds-card inv-insight inv-insight--{{ item.severity }} ds-slide-in"
+          style="--ds-delay:{{ 430 + loop.index0 * 50 }}ms">
+        <span class="inv-insight__icon inv-insight__icon--{{ item.severity }}">{{ icon(item.icon, 16) }}</span>
+        <div>
+          <p class="inv-insight__title">
+            {{ item.title }}
+            <span class="ds-badge ds-badge--{{ {'critical':'danger','warning':'warn','info':'info'}[item.severity] }}">
+              {{ {'critical':'Act','warning':'Watch','info':'Note'}[item.severity] }}
+            </span>
+          </p>
+          <p class="inv-insight__detail">{{ item.detail }}</p>
+          <div class="inv-insight__why" id="why-{{ loop.index }}" hidden>{{ item.why }}</div>
+        </div>
+        <div class="inv-insight__side">
+          <button type="button" class="inv-insight__explain" data-why="why-{{ loop.index }}"
+                  aria-expanded="false" aria-controls="why-{{ loop.index }}">Why?</button>
+          {% if item.action_url %}
+          <a href="{{ item.action_url }}" class="ds-btn ds-btn--secondary ds-btn--sm">{{ item.action_label }}</a>
+          {% endif %}
+        </div>
+      </li>
+      {% endfor %}
+    </ul>
     {% endif %}
 
-    <!-- Net Worth KPI Tiles -->
-    <div class="grid grid-cols-2 gap-3 sm:gap-4 sm:grid-cols-4">
-        <!-- Net Worth -->
-        <div class="bg-gradient-to-br from-indigo-600 to-indigo-700 overflow-hidden shadow rounded-xl text-white sm:col-span-1">
-            <div class="px-5 py-5">
-                <p class="text-xs font-semibold text-indigo-200 uppercase tracking-wider">Net Worth</p>
-                <p class="mt-1 text-2xl sm:text-4xl font-bold">${{ "{:,.0f}".format(nw.net_worth) }}</p>
-                <p class="mt-1 text-xs text-indigo-200">Cash + Investments</p>
-            </div>
-        </div>
-        <!-- Cash -->
-        <div class="bg-white overflow-hidden shadow rounded-xl border-l-4 border-blue-400">
-            <div class="px-5 py-5">
-                <p class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Cash Accounts</p>
-                <p class="mt-1 text-2xl sm:text-4xl font-bold text-blue-600">${{ "{:,.0f}".format(nw.cash) }}</p>
-                <p class="mt-1 text-xs text-gray-400">Checking + Savings{% if nw.brokerage_cash %} + Sweep{% endif %}</p>
-            </div>
-        </div>
-        <!-- Portfolio -->
-        <div class="bg-white overflow-hidden shadow rounded-xl border-l-4 border-green-400">
-            <div class="px-5 py-5">
-                <p class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Investments</p>
-                <p class="mt-1 text-2xl sm:text-4xl font-bold text-green-600">${{ "{:,.0f}".format(nw.brokerage) }}</p>
-                <p class="mt-1 text-xs text-gray-400">{{ holdings|length }} holding{% if holdings|length != 1 %}s{% endif %}</p>
-            </div>
-        </div>
-        <!-- Crypto -->
-        <div class="bg-white overflow-hidden shadow rounded-xl border-l-4 border-orange-400">
-            <div class="px-5 py-5">
-                <p class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Crypto</p>
-                <p class="mt-1 text-2xl sm:text-4xl font-bold text-orange-500">${{ "{:,.0f}".format(nw.crypto) }}</p>
-                <p class="mt-1 text-xs text-gray-400">Digital assets</p>
-            </div>
-        </div>
+    {% if wins %}
+    <div style="margin-top: var(--sp-4)">
+      <p class="ds-eyebrow" style="margin-bottom: var(--sp-2)">Going well</p>
+      <div class="inv-wins">
+        {% for item in wins %}
+        <span class="inv-win">{{ icon(item.icon, 13) }}{{ item.title }}</span>
+        {% endfor %}
+      </div>
+    </div>
+    {% endif %}
+  </section>
+
+  {# ══════════════════════════════════════════════════════════════════════
+     LAYER 5 — Analytics
+     Collapsed by default. Every panel can be collapsed, pinned, hidden and
+     reordered; the arrangement is remembered per browser.
+     ══════════════════════════════════════════════════════════════════════ #}
+  <section aria-labelledby="analytics-h" id="invAnalytics">
+    <div class="ds-section__head">
+      <div>
+        <h2 class="ds-section__title" id="analytics-h">Analytics</h2>
+        <p class="ds-section__sub">Drag to reorder · pin to keep open · changes are remembered</p>
+      </div>
+      <div class="ds-row">
+        <button type="button" class="ds-btn ds-btn--ghost ds-btn--sm" id="invExpandAll">Expand all</button>
+        <button type="button" class="ds-btn ds-btn--ghost ds-btn--sm" id="invResetLayout">Reset layout</button>
+      </div>
     </div>
 
-    <!-- Cash Accounts -->
-    <div class="bg-white shadow sm:rounded-xl">
-        <div class="px-5 py-5">
-            <h3 class="text-base font-semibold text-gray-900 mb-4">Cash Accounts</h3>
-            {% if cash_synced %}
-            <div class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-                {% for a in synced_accounts %}
-                {% if a.account_type in ('checking', 'savings') %}
-                <div class="{% if a.account_type == 'checking' %}bg-blue-50 border-blue-100{% else %}bg-green-50 border-green-100{% endif %} rounded-lg p-4 border">
-                    <div class="flex items-center justify-between mb-1">
-                        <label class="block text-xs font-semibold {% if a.account_type == 'checking' %}text-blue-700{% else %}text-green-700{% endif %} uppercase tracking-wider">
-                            {{ a.name }}{% if a.mask %} ••{{ a.mask }}{% endif %}
-                        </label>
-                        <span class="w-2 h-2 rounded-full bg-green-500 inline-block" title="Synced"></span>
-                    </div>
-                    <p class="text-2xl font-bold text-gray-900">${{ "{:,.2f}".format(a.balance) }}</p>
-                    <p class="mt-1 text-xs text-gray-400 capitalize">{{ a.institution.replace('_',' ') }} · synced {{ a.last_synced_at or '—' }}</p>
-                </div>
-                {% endif %}
+    <div class="inv-panels" id="invPanels">
+
+      {# ── Performance ── #}
+      <section class="ds-card ds-card--flush inv-panel" data-panel="performance">
+        {{ panel_head('performance', 'Performance', 'Portfolio value over time', chart='invPerfChart') }}
+        <div class="inv-panel__body" id="inv-panel-performance" hidden>
+          <div class="inv-metrics">
+            <div class="inv-metric">
+              <p class="ds-eyebrow">Annualized return</p>
+              <p class="inv-metric__value ds-num">
+                {% if wealth.annualized_return is not none %}{{ '%+.2f'|format(wealth.annualized_return) }}%{% else %}—{% endif %}
+              </p>
+              <p class="inv-metric__note">
+                {% if wealth.annualized_return is not none %}Over {{ perf.span_days }} days of snapshots{% else %}Needs 120+ days of history{% endif %}
+              </p>
+            </div>
+            <div class="inv-metric">
+              <p class="ds-eyebrow">Max drawdown</p>
+              <p class="inv-metric__value ds-num {{ 'inv-metric__value--down' if wealth.drawdown.max_pct < 0 }}">
+                {{ '%.1f'|format(wealth.drawdown.max_pct) }}%
+              </p>
+              <p class="inv-metric__note">
+                {% if wealth.drawdown.peak %}{{ wealth.drawdown.peak.date }} → {{ wealth.drawdown.trough.date }}{% else %}No decline recorded{% endif %}
+              </p>
+            </div>
+            <div class="inv-metric">
+              <p class="ds-eyebrow">From all-time high</p>
+              <p class="inv-metric__value ds-num {{ 'inv-metric__value--down' if wealth.drawdown.current_pct < -0.05 }}">
+                {{ '%.1f'|format(wealth.drawdown.current_pct) }}%
+              </p>
+              <p class="inv-metric__note">Peak {{ (wealth.drawdown.all_time_high or 0)|money }}</p>
+            </div>
+            <div class="inv-metric">
+              <p class="ds-eyebrow">Volatility</p>
+              <p class="inv-metric__value ds-num">{{ '%.1f'|format(wealth.volatility.value) }}%</p>
+              <p class="inv-metric__note">{{ 'Annualized, measured' if wealth.volatility.measured else 'Estimated from asset mix' }}</p>
+            </div>
+          </div>
+          <div class="inv-chart inv-chart--tall"><canvas id="invPerfChart" role="img"
+               aria-label="Portfolio value over the recorded snapshot history"></canvas></div>
+          {{ basis_note('Measured from the daily net-worth snapshot written after each sync — not modelled. Windows longer than your history are disabled rather than estimated.') }}
+          {% if perf.sparse %}
+          {{ basis_note('Only ' ~ perf.points ~ ' snapshot' ~ ('s' if perf.points != 1 else '') ~
+                        ' recorded so far, over ' ~ perf.span_days ~ ' days. Early readings mostly
+                         capture accounts being connected rather than the market, so treat the
+                         swings above as provisional until the history fills in.') }}
+          {% endif %}
+        </div>
+      </section>
+
+      {# ── Allocation ── #}
+      <section class="ds-card ds-card--flush inv-panel" data-panel="allocation" id="allocation">
+        {{ panel_head('allocation', 'Allocation', 'Asset class, sector, region and market cap', chart='invAllocChart') }}
+        <div class="inv-panel__body" id="inv-panel-allocation" hidden>
+          <div class="ds-row ds-row--wrap" style="margin-bottom: var(--sp-4)" role="group" aria-label="Allocation dimension">
+            {% for key, label in [('asset_class','Asset class'), ('sector','Sector'),
+                                  ('region','Region'), ('market_cap','Market cap'),
+                                  ('account','Account')] %}
+            <button type="button" class="ds-chip" data-alloc="{{ key }}"
+                    aria-pressed="{{ 'true' if key == 'asset_class' else 'false' }}">{{ label }}</button>
+            {% endfor %}
+          </div>
+          <div class="inv-alloc">
+            <div class="inv-chart inv-chart--short"><canvas id="invAllocChart" role="img"
+                 aria-label="Portfolio allocation breakdown"></canvas></div>
+            <div id="invAllocList">{{ alloc_list(wealth.allocation.asset_class, 'invAllocChart') }}</div>
+          </div>
+          <p class="inv-basis" id="invAllocBasis">{{ icon('info', 13) }}<span>Asset classes come from the sync feed itself.</span></p>
+        </div>
+      </section>
+
+      {# ── Portfolio health ── #}
+      <section class="ds-card ds-card--flush inv-panel" data-panel="health">
+        {{ panel_head('health', 'Portfolio health', health.score|string ~ '/100 · ' ~ health.label) }}
+        <div class="inv-panel__body" id="inv-panel-health" hidden>
+          <ul class="inv-factors">
+            {% for f in health.factors %}
+            <li>
+              <div class="inv-factor__top">
+                <span class="inv-factor__label">{{ f.label }}</span>
+                <span class="ds-badge ds-badge--{{ {'good':'ok','ok':'info','poor':'danger'}[f.status] }}">
+                  {{ f.score }}<span class="ds-sr"> out of 100</span>
+                </span>
+              </div>
+              <div class="ds-progress">
+                <div class="ds-progress__fill {{ {'good':'','ok':'ds-progress__fill--warn','poor':'ds-progress__fill--danger'}[f.status] }}"
+                     data-fill="{{ f.score }}"></div>
+              </div>
+              <p class="inv-factor__detail">{{ f.detail }} <span class="inv-factor__weight">{{ f.weight }}% of score</span></p>
+            </li>
+            {% endfor %}
+          </ul>
+
+          {% if health.recommendations %}
+          <ul class="inv-recs">
+            {% for r in health.recommendations %}
+            <li class="inv-rec">
+              <span class="inv-insight__icon inv-insight__icon--info">{{ icon('target', 15) }}</span>
+              <div style="flex:1;min-width:0">
+                <p class="inv-rec__title">{{ r.title }}</p>
+                <p class="inv-rec__detail">{{ r.detail }}</p>
+              </div>
+              <span class="ds-badge ds-badge--ok">+{{ r.lift }} pts</span>
+            </li>
+            {% endfor %}
+          </ul>
+          {% endif %}
+        </div>
+      </section>
+
+      {# ── Risk ── #}
+      <section class="ds-card ds-card--flush inv-panel" data-panel="risk">
+        {{ panel_head('risk', 'Risk analysis', risk.label ~ ' · ' ~ risk.score|string ~ '/100') }}
+        <div class="inv-panel__body" id="inv-panel-risk" hidden>
+          <div class="inv-metrics">
+            <div class="inv-metric">
+              <p class="ds-eyebrow">Growth assets</p>
+              <p class="inv-metric__value ds-num">{{ '%.0f'|format(risk.growth_pct) }}%</p>
+              <p class="inv-metric__note">Of cash + investments</p>
+            </div>
+            <div class="inv-metric">
+              <p class="ds-eyebrow">Volatility</p>
+              <p class="inv-metric__value ds-num">{{ '%.1f'|format(risk.volatility) }}%</p>
+              <p class="inv-metric__note">{{ 'Measured' if risk.volatility_measured else 'Estimated' }}, annualized</p>
+            </div>
+            <div class="inv-metric">
+              <p class="ds-eyebrow">Max drawdown</p>
+              <p class="inv-metric__value ds-num">{{ '%.1f'|format(wealth.drawdown.max_pct) }}%</p>
+              <p class="inv-metric__note">Deepest recorded decline</p>
+            </div>
+            <div class="inv-metric">
+              <p class="ds-eyebrow">Top position</p>
+              <p class="inv-metric__value ds-num">{{ '%.0f'|format(conc.top1_pct) }}%</p>
+              <p class="inv-metric__note">{% if conc.largest %}{{ conc.largest.ticker }}{% else %}—{% endif %}</p>
+            </div>
+          </div>
+          <p class="inv-factor__detail" style="margin-bottom: var(--sp-5)">{{ risk.detail }}</p>
+
+          <ul class="inv-factors">
+            {% for f in wealth.diversification.factors %}
+            <li>
+              <div class="inv-factor__top">
+                <span class="inv-factor__label">{{ f.label }}</span>
+                <span class="ds-badge ds-badge--{{ {'good':'ok','ok':'info','poor':'danger'}[f.status] }}">{{ f.score }}</span>
+              </div>
+              <div class="ds-progress">
+                <div class="ds-progress__fill {{ {'good':'','ok':'ds-progress__fill--warn','poor':'ds-progress__fill--danger'}[f.status] }}"
+                     data-fill="{{ f.score }}"></div>
+              </div>
+              <p class="inv-factor__detail">{{ f.detail }}</p>
+            </li>
+            {% endfor %}
+          </ul>
+          {{ basis_note('Sharpe ratio and beta need a risk-free rate and an index series the app does not yet ingest, so they are left out rather than approximated.') }}
+          {% if perf.sparse %}
+          {{ basis_note('Max drawdown is measured over only ' ~ perf.points ~ ' snapshots
+                         spanning ' ~ perf.span_days ~ ' days, which is too short to
+                         characterise how this portfolio behaves in a real decline.') }}
+          {% endif %}
+        </div>
+      </section>
+
+      {# ── Benchmark ── #}
+      <section class="ds-card ds-card--flush inv-panel" data-panel="benchmark">
+        {{ panel_head('benchmark', 'Benchmark comparison', 'Against a modelled long-run reference', chart='invBenchChart') }}
+        <div class="inv-panel__body" id="inv-panel-benchmark" hidden>
+          <form method="GET" class="ds-row ds-row--wrap" style="margin-bottom: var(--sp-4)">
+            <label class="inv-control__label" for="benchmark">Reference</label>
+            <select name="benchmark" id="benchmark" class="inv-input" onchange="this.form.submit()">
+              {% for key, spec in benchmarks.items() %}
+              <option value="{{ key }}" {% if key == benchmark_key %}selected{% endif %}>
+                {{ spec.label }} ({{ spec.annual_pct }}%/yr)
+              </option>
+              {% endfor %}
+            </select>
+            <input type="hidden" name="horizon" value="{{ horizon }}">
+            <input type="hidden" name="contribution" value="{{ contribution }}">
+          </form>
+
+          {% if wealth.benchmark.available %}
+          <div class="inv-metrics">
+            <div class="inv-metric">
+              <p class="ds-eyebrow">Your portfolio</p>
+              <p class="inv-metric__value ds-num {{ 'inv-metric__value--up' if wealth.benchmark.portfolio_pct >= 0 else 'inv-metric__value--down' }}">
+                {{ '%+.2f'|format(wealth.benchmark.portfolio_pct) }}%
+              </p>
+              <p class="inv-metric__note">Over {{ wealth.benchmark.span_days }} days</p>
+            </div>
+            <div class="inv-metric">
+              <p class="ds-eyebrow">{{ wealth.benchmark.benchmark }} reference</p>
+              <p class="inv-metric__value ds-num">{{ '%+.2f'|format(wealth.benchmark.benchmark_pct) }}%</p>
+              <p class="inv-metric__note">Modelled, same period</p>
+            </div>
+            <div class="inv-metric">
+              <p class="ds-eyebrow">Difference</p>
+              <p class="inv-metric__value ds-num {{ 'inv-metric__value--up' if wealth.benchmark.excess_pct >= 0 else 'inv-metric__value--down' }}">
+                {{ '%+.2f'|format(wealth.benchmark.excess_pct) }}%
+              </p>
+              <p class="inv-metric__note">{{ 'Ahead of' if wealth.benchmark.excess_pct >= 0 else 'Behind' }} the reference</p>
+            </div>
+          </div>
+          <div class="inv-chart"><canvas id="invBenchChart" role="img"
+               aria-label="Portfolio growth indexed to 100 against a modelled benchmark reference line"></canvas></div>
+          {% endif %}
+          {{ basis_note(wealth.benchmark.basis) }}
+        </div>
+      </section>
+
+      {# ── Dividends ── #}
+      <section class="ds-card ds-card--flush inv-panel" data-panel="dividends">
+        {{ panel_head('dividends', 'Dividend & income', 'Estimated forward income', chart='invDivChart') }}
+        <div class="inv-panel__body" id="inv-panel-dividends" hidden>
+          <div class="inv-metrics">
+            <div class="inv-metric">
+              <p class="ds-eyebrow">Annual income</p>
+              <p class="inv-metric__value ds-num">{{ wealth.dividends.annual|money }}</p>
+              <p class="inv-metric__note">{{ wealth.dividends.payers }} paying position{{ 's' if wealth.dividends.payers != 1 }}</p>
+            </div>
+            <div class="inv-metric">
+              <p class="ds-eyebrow">Monthly average</p>
+              <p class="inv-metric__value ds-num">{{ wealth.dividends.monthly|money }}</p>
+              <p class="inv-metric__note">{{ wealth.dividends.quarterly|money }} a quarter</p>
+            </div>
+            <div class="inv-metric">
+              <p class="ds-eyebrow">Portfolio yield</p>
+              <p class="inv-metric__value ds-num">{{ '%.2f'|format(wealth.dividends.portfolio_yield) }}%</p>
+              <p class="inv-metric__note">Weighted across all holdings</p>
+            </div>
+            <div class="inv-metric">
+              <p class="ds-eyebrow">Reference coverage</p>
+              <p class="inv-metric__value ds-num">{{ '%.0f'|format(wealth.dividends.coverage) }}%</p>
+              <p class="inv-metric__note">Of value has a known yield</p>
+            </div>
+          </div>
+          {% if wealth.dividends.contributors %}
+          <div class="inv-chart inv-chart--short"><canvas id="invDivChart" role="img"
+               aria-label="Estimated annual dividend income by holding"></canvas></div>
+          {% endif %}
+          {{ basis_note(wealth.dividends.basis ~ ' A payment calendar needs declared ex-dividend dates, which the sync feed does not carry — so none is shown.') }}
+        </div>
+      </section>
+
+      {# ── Projection ── #}
+      <section class="ds-card ds-card--flush inv-panel" data-panel="projection">
+        {{ panel_head('projection', 'Forecast', 'Modelled growth with a confidence band', chart='invProjChart') }}
+        <div class="inv-panel__body" id="inv-panel-projection" hidden>
+          <form method="GET" class="inv-controls">
+            <input type="hidden" name="benchmark" value="{{ benchmark_key }}">
+            <div class="inv-control">
+              <label class="inv-control__label" for="horizon">Horizon</label>
+              <select name="horizon" id="horizon" class="inv-input">
+                {% for y in [5, 10, 15, 20, 25, 30] %}
+                <option value="{{ y }}" {% if y == horizon %}selected{% endif %}>{{ y }} years</option>
                 {% endfor %}
-                <div class="bg-gray-50 rounded-lg p-4 border border-gray-200 flex flex-col justify-center">
-                    <p class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Total Cash</p>
-                    <p class="text-2xl font-bold text-gray-800 mt-1">${{ "{:,.2f}".format(nw.cash) }}</p>
-                    <p class="mt-1 text-xs text-gray-400">Updates automatically</p>
-                </div>
+              </select>
             </div>
-            {% else %}
-            <div class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-                <!-- Checking (manual fallback — connect an institution to automate) -->
-                <div class="bg-blue-50 rounded-lg p-4 border border-blue-100">
-                    <label class="block text-xs font-semibold text-blue-700 uppercase tracking-wider mb-2">Checking</label>
-                    <div class="flex items-center gap-2">
-                        <span class="text-gray-500 text-lg font-medium">$</span>
-                        <input type="number" step="0.01" x-model.number="checking"
-                            class="flex-1 rounded-md border-gray-300 shadow-sm text-lg font-semibold text-gray-900 focus:ring-blue-500 focus:border-blue-500 bg-white">
-                    </div>
-                </div>
-                <!-- Savings -->
-                <div class="bg-blue-50 rounded-lg p-4 border border-blue-100">
-                    <label class="block text-xs font-semibold text-blue-700 uppercase tracking-wider mb-2">Savings</label>
-                    <div class="flex items-center gap-2">
-                        <span class="text-gray-500 text-lg font-medium">$</span>
-                        <input type="number" step="0.01" x-model.number="savings"
-                            class="flex-1 rounded-md border-gray-300 shadow-sm text-lg font-semibold text-gray-900 focus:ring-blue-500 focus:border-blue-500 bg-white">
-                    </div>
-                </div>
-                <!-- Total cash display -->
-                <div class="bg-gray-50 rounded-lg p-4 border border-gray-200 flex flex-col justify-center">
-                    <p class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Total Cash</p>
-                    <p class="text-2xl font-bold text-gray-800 mt-1" x-text="'$' + totalCash.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2})"></p>
-                </div>
-                <!-- Save button -->
-                <div class="flex items-center">
-                    <button @click="saveCash()"
-                        class="w-full px-4 py-3 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 transition-colors">
-                        Save Balances
-                    </button>
-                </div>
+            <div class="inv-control">
+              <label class="inv-control__label" for="contribution">Monthly contribution</label>
+              <input type="number" min="0" step="50" name="contribution" id="contribution"
+                     class="inv-input" value="{{ contribution|int }}" style="width:130px">
             </div>
-            <p class="mt-2 text-xs text-gray-400">
-                Tired of updating these by hand? <a href="/connections" class="text-violet-600 hover:text-violet-700 font-medium">Connect your bank</a> and balances will sync automatically.
-            </p>
+            <button type="submit" class="ds-btn ds-btn--secondary ds-btn--sm">Update</button>
+          </form>
+
+          <div class="inv-metrics">
+            <div class="inv-metric">
+              <p class="ds-eyebrow">Projected in {{ horizon }} years</p>
+              <p class="inv-metric__value ds-num">{{ wealth.projection.final.expected|money }}</p>
+              <p class="inv-metric__note">
+                {{ wealth.projection.final.low|money }} – {{ wealth.projection.final.high|money }} range
+              </p>
+            </div>
+            <div class="inv-metric">
+              <p class="ds-eyebrow">Inflation-adjusted</p>
+              <p class="inv-metric__value ds-num">{{ wealth.projection.final.real|money }}</p>
+              <p class="inv-metric__note">In today's dollars at {{ wealth.projection.assumptions.inflation_pct }}%</p>
+            </div>
+            <div class="inv-metric">
+              <p class="ds-eyebrow">You contribute</p>
+              <p class="inv-metric__value ds-num">{{ wealth.projection.final.contributed|money }}</p>
+              <p class="inv-metric__note">Starting balance plus deposits</p>
+            </div>
+            <div class="inv-metric">
+              <p class="ds-eyebrow">Growth</p>
+              <p class="inv-metric__value ds-num inv-metric__value--up">{{ wealth.projection.growth|money }}</p>
+              <p class="inv-metric__note">The compounding, not the deposits</p>
+            </div>
+          </div>
+          <div class="inv-chart"><canvas id="invProjChart" role="img"
+               aria-label="Projected portfolio value with an eighty percent confidence band"></canvas></div>
+          {{ basis_note(wealth.projection.basis ~ ' Return ' ~ wealth.projection.assumptions.annual_return_pct ~ '%/yr, volatility ' ~ wealth.projection.assumptions.volatility_pct ~ '%, inflation ' ~ wealth.projection.assumptions.inflation_pct ~ '%.') }}
+        </div>
+      </section>
+
+      {# ── Cash accounts (the original editor, preserved) ── #}
+      <section class="ds-card ds-card--flush inv-panel" data-panel="cash">
+        {{ panel_head('cash', 'Cash accounts', nw.cash|money ~ ' liquid') }}
+        <div class="inv-panel__body" id="inv-panel-cash" hidden>
+          {% if cash_synced %}
+          <div class="inv-accounts">
+            {% for a in synced_accounts %}{% if a.account_type in ('checking', 'savings') %}
+            <article class="ds-card ds-card--compact inv-account">
+              <div class="inv-account__top">
+                <span class="inv-account__mark">{{ a.name[:2]|upper }}</span>
+                <div style="flex:1;min-width:0">
+                  <p class="inv-account__name">{{ a.name }}{% if a.mask %} ••{{ a.mask }}{% endif %}</p>
+                  <p class="inv-account__inst">{{ a.institution.replace('_',' ')|title }} · {{ a.account_type|title }}</p>
+                </div>
+              </div>
+              <p class="inv-account__value ds-num">{{ a.balance|money(2) }}</p>
+              <p class="inv-account__foot"><span>Synced {{ a.last_synced_at or '—' }}</span></p>
+            </article>
+            {% endif %}{% endfor %}
+          </div>
+          {% else %}
+          <div class="inv-form">
+            <div class="inv-field">
+              <label class="inv-field__label" for="cashChecking">Checking</label>
+              <input type="number" step="0.01" id="cashChecking" class="inv-input" x-model.number="checking">
+            </div>
+            <div class="inv-field">
+              <label class="inv-field__label" for="cashSavings">Savings</label>
+              <input type="number" step="0.01" id="cashSavings" class="inv-input" x-model.number="savings">
+            </div>
+            <div class="inv-field">
+              <span class="inv-field__label">Total cash</span>
+              <p class="inv-metric__value ds-num" x-text="'$' + totalCash.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2})"></p>
+            </div>
+          </div>
+          <div class="inv-form__actions">
+            <button type="button" class="ds-btn ds-btn--primary ds-btn--sm" @click="saveCash()">Save balances</button>
+          </div>
+          <p class="inv-basis">{{ icon('info', 13) }}<span>Tired of updating these by hand?
+            <a href="/connections" style="color:var(--accent-ink);font-weight:var(--w-semi)">Connect your bank</a>
+            and balances sync automatically.</span></p>
+          {% endif %}
+        </div>
+      </section>
+
+      {# ── Legacy net-worth donut, kept because it answers a different
+             question from the portfolio-only allocation above. ── #}
+      {% if portfolio_by_class %}
+      <section class="ds-card ds-card--flush inv-panel" data-panel="networth">
+        {{ panel_head('networth', 'Net worth mix', 'Cash accounts alongside holdings', chart='portfolioDonut') }}
+        <div class="inv-panel__body" id="inv-panel-networth" hidden>
+          <div class="inv-alloc">
+            <div class="inv-chart inv-chart--short"><canvas id="portfolioDonut" role="img"
+                 aria-label="Net worth by cash account and asset class"></canvas></div>
+            <ul class="inv-alloc__list" data-swatches="portfolioDonut">
+              {% set total_all = nw.net_worth if nw.net_worth > 0 else 1 %}
+              {% for ac, val in portfolio_by_class.items() %}
+              <li class="inv-alloc__row">
+                <span class="inv-alloc__swatch" data-slot="{{ loop.index0 }}"></span>
+                <span class="inv-alloc__label">{{ ac }}</span>
+                <span class="inv-alloc__value ds-num">{{ val|money }}</span>
+                <span class="inv-alloc__pct ds-num">{{ '%.1f'|format(val / total_all * 100) }}%</span>
+              </li>
+              {% endfor %}
+            </ul>
+          </div>
+        </div>
+      </section>
+      {% endif %}
+
+    </div>
+
+    <div class="inv-hidden-tray" id="invHiddenTray" hidden>
+      <p class="ds-eyebrow">Hidden panels</p>
+      <div class="ds-row ds-row--wrap" id="invHiddenItems"></div>
+    </div>
+  </section>
+
+  {# ══════════════════════════════════════════════════════════════════════
+     LAYER 6a — Accounts
+     ══════════════════════════════════════════════════════════════════════ #}
+  {% if accounts %}
+  <section aria-labelledby="accounts-h">
+    <div class="ds-section__head">
+      <div>
+        <h2 class="ds-section__title" id="accounts-h">Accounts</h2>
+        <p class="ds-section__sub">{{ accounts|length }} investment account{{ 's' if accounts|length != 1 }} holding your positions</p>
+      </div>
+      <a href="/connections" class="ds-btn ds-btn--secondary ds-btn--sm">Manage connections</a>
+    </div>
+    <div class="inv-accounts">
+      {% for a in accounts %}
+      <article class="ds-card inv-account">
+        <div class="inv-account__top">
+          <span class="inv-account__mark">{{ (a.institution or a.name)[:2]|upper }}</span>
+          <div style="flex:1;min-width:0">
+            <p class="inv-account__name">{{ a.name }}{% if a.mask %} ••{{ a.mask }}{% endif %}</p>
+            <p class="inv-account__inst">{{ a.institution }}</p>
+          </div>
+          <span class="ds-badge ds-badge--{{ 'ok' if a.status == 'connected' else 'warn' if a.status in ('expired','manual') else 'danger' }}">
+            {{ 'Synced' if a.status == 'connected' else a.status|title }}
+          </span>
+        </div>
+        <p class="inv-account__value ds-num">{{ a.holdings_value|money }}</p>
+        {% if a.tickers %}
+        <div class="inv-account__tickers">
+          {% for t in a.tickers %}<span class="inv-account__chip">{{ t }}</span>{% endfor %}
+          {% if a.positions > a.tickers|length %}
+          <span class="inv-account__chip">+{{ a.positions - a.tickers|length }}</span>
+          {% endif %}
+        </div>
+        {% endif %}
+        <p class="inv-account__foot">
+          <span>{{ a.positions }} position{{ 's' if a.positions != 1 }}</span>
+          <span>{% if a.last_sync %}{{ a.last_sync }}{% else %}Manual{% endif %}</span>
+        </p>
+      </article>
+      {% endfor %}
+    </div>
+  </section>
+  {% endif %}
+
+  {# ══════════════════════════════════════════════════════════════════════
+     LAYER 6b — Holdings
+     ══════════════════════════════════════════════════════════════════════ #}
+  <section aria-labelledby="holdings-h" id="holdings">
+    <div class="ds-section__head">
+      <div>
+        <h2 class="ds-section__title" id="holdings-h">Holdings</h2>
+        <p class="ds-section__sub">Click any position for the full detail</p>
+      </div>
+    </div>
+
+    <div class="inv-holdings__bar">
+      <label class="ds-sr" for="invSearch">Filter holdings</label>
+      <input type="search" id="invSearch" class="inv-search" placeholder="Filter by ticker, name or sector…">
+      <div class="ds-row" role="group" aria-label="Holdings view">
+        <button type="button" class="ds-chip" data-view="cards" aria-pressed="true">Cards</button>
+        <button type="button" class="ds-chip" data-view="table" aria-pressed="false">Table</button>
+      </div>
+      <span class="ds-meta" id="invCount" role="status"></span>
+    </div>
+
+    {% if wealth.positions %}
+    {# Cards — the default. Each is one position with everything needed to
+       decide whether to open it. #}
+    <div class="inv-grid" id="invCards">
+      {% for p in wealth.positions %}
+      <button type="button" class="inv-pos" data-position="{{ loop.index0 }}"
+              data-search="{{ (p.ticker ~ ' ' ~ p.name ~ ' ' ~ p.sector ~ ' ' ~ p.account)|lower }}">
+        <span class="inv-pos__top">
+          <span class="inv-pos__mark" data-mark="{{ p.ticker }}">{{ p.ticker[:3] }}</span>
+          <span class="inv-pos__id">
+            <span class="inv-pos__ticker">
+              {{ p.ticker }}
+              {% if p.source == 'sync' %}<span class="inv-pos__synced" title="Synced automatically"></span>{% endif %}
+            </span>
+            <span class="inv-pos__name">{{ p.name }}</span>
+          </span>
+          <span class="inv-pos__figs">
+            <span class="inv-pos__value ds-num">{{ p.value|money }}</span>
+            {% if p.gain is not none %}
+            <span class="ds-delta {{ 'ds-delta--up' if p.gain >= 0 else 'ds-delta--down' }}" style="justify-content:flex-end">
+              <span aria-hidden="true">{{ '▲' if p.gain >= 0 else '▼' }}</span>
+              <span class="ds-num">{{ '%+.1f'|format(p.gain_pct) }}%</span>
+            </span>
             {% endif %}
-        </div>
+          </span>
+        </span>
+
+        <span class="inv-pos__meta">
+          <span class="inv-pos__weight">
+            <span class="ds-progress"><span class="ds-progress__fill ds-progress__fill--accent" data-fill="{{ [p.weight * 3, 100]|min }}"></span></span>
+            <span class="ds-num">{{ '%.1f'|format(p.weight) }}%</span>
+          </span>
+          <span class="ds-badge">{{ p.asset_class }}</span>
+          {% if p.sector_known %}<span class="ds-badge">{{ p.sector }}</span>{% endif %}
+        </span>
+      </button>
+      {% endfor %}
     </div>
 
-    <!-- Add Holding Form (manual holdings only) -->
-    <div x-show="showAddForm" x-transition class="bg-white shadow sm:rounded-xl">
-        <div class="px-5 py-5">
-            <h3 class="text-base font-semibold text-gray-900 mb-1">Add Manual Holding</h3>
-            <p class="text-xs text-gray-400 mb-4">For assets at institutions without a connection. Connected accounts sync holdings automatically.</p>
-            <div class="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-6">
-                <div>
-                    <label class="block text-xs font-medium text-gray-600 mb-1">Ticker / Symbol</label>
-                    <input x-model="newHolding.ticker" type="text" placeholder="AAPL"
-                        class="w-full rounded-md border-gray-300 shadow-sm text-sm focus:ring-indigo-500 focus:border-indigo-500 uppercase">
-                </div>
-                <div class="col-span-1 sm:col-span-2">
-                    <label class="block text-xs font-medium text-gray-600 mb-1">Name</label>
-                    <input x-model="newHolding.name" type="text" placeholder="Apple Inc."
-                        class="w-full rounded-md border-gray-300 shadow-sm text-sm focus:ring-indigo-500 focus:border-indigo-500">
-                </div>
-                <div>
-                    <label class="block text-xs font-medium text-gray-600 mb-1">Shares</label>
-                    <input x-model.number="newHolding.shares" type="number" step="0.000001" placeholder="10"
-                        class="w-full rounded-md border-gray-300 shadow-sm text-sm focus:ring-indigo-500 focus:border-indigo-500">
-                </div>
-                <div>
-                    <label class="block text-xs font-medium text-gray-600 mb-1">Current Value ($)</label>
-                    <input x-model.number="newHolding.current_value" type="number" step="0.01" placeholder="1500.00"
-                        class="w-full rounded-md border-gray-300 shadow-sm text-sm focus:ring-indigo-500 focus:border-indigo-500">
-                </div>
-                <div>
-                    <label class="block text-xs font-medium text-gray-600 mb-1">Asset Class</label>
-                    <select x-model="newHolding.asset_class"
-                        class="w-full rounded-md border-gray-300 shadow-sm text-sm focus:ring-indigo-500 focus:border-indigo-500">
-                        {% for ac in asset_classes %}
-                        <option value="{{ ac }}">{{ ac }}</option>
-                        {% endfor %}
-                    </select>
-                </div>
-            </div>
-            <div class="mt-3 flex gap-2 flex-wrap">
-                <input x-model="newHolding.account_name" type="text" placeholder="Broker / Exchange (e.g. Fidelity)"
-                    class="rounded-md border-gray-300 shadow-sm text-sm focus:ring-indigo-500 focus:border-indigo-500 w-64">
-                <button @click="addHolding()"
-                    class="px-4 py-2 bg-indigo-600 text-white text-sm font-medium rounded-md hover:bg-indigo-700 transition-colors">
-                    Save
-                </button>
-                <button @click="showAddForm = false; resetNew()"
-                    class="px-4 py-2 border border-gray-300 text-gray-700 text-sm font-medium rounded-md hover:bg-gray-50 transition-colors">
-                    Cancel
-                </button>
-            </div>
-            <p x-show="addError" x-text="addError" class="mt-2 text-sm text-red-600"></p>
-        </div>
+    {# Table — the same data for people who want density. #}
+    <div class="ds-card ds-card--flush inv-table-wrap ds-scroll" id="invTableWrap" hidden>
+      <table class="inv-table" id="holdingsTable">
+        <thead>
+          <tr>
+            <th><button type="button" class="inv-sort" data-sort="ticker">Ticker</button></th>
+            <th>Name</th>
+            <th>Class</th>
+            <th>Sector</th>
+            <th>Account</th>
+            <th class="is-num"><button type="button" class="inv-sort" data-sort="shares">Shares</button></th>
+            <th class="is-num">Avg cost</th>
+            <th class="is-num">Price</th>
+            <th class="is-num"><button type="button" class="inv-sort" data-sort="value">Value</button></th>
+            <th class="is-num"><button type="button" class="inv-sort" data-sort="gain">Gain / loss</button></th>
+            <th class="is-num">Weight</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody id="invTableBody">
+          {% for p in wealth.positions %}
+          <tr data-position="{{ loop.index0 }}"
+              data-search="{{ (p.ticker ~ ' ' ~ p.name ~ ' ' ~ p.sector ~ ' ' ~ p.account)|lower }}">
+            <td class="inv-table__ticker">{{ p.ticker }}</td>
+            <td>{{ p.name }}</td>
+            <td>{{ p.asset_class }}</td>
+            <td>{{ p.sector if p.sector_known else '—' }}</td>
+            <td>{{ p.account }}</td>
+            <td class="is-num ds-num">{% if p.shares %}{{ '%.4f'|format(p.shares) }}{% else %}—{% endif %}</td>
+            <td class="is-num ds-num">{% if p.avg_cost is not none %}{{ p.avg_cost|money(2) }}{% else %}—{% endif %}</td>
+            <td class="is-num ds-num">{% if p.price is not none %}{{ p.price|money(2) }}{% else %}—{% endif %}</td>
+            <td class="is-num ds-num">{{ p.value|money(2) }}</td>
+            <td class="is-num ds-num">
+              {% if p.gain is not none %}
+                <span class="ds-delta {{ 'ds-delta--up' if p.gain >= 0 else 'ds-delta--down' }}">
+                  {{ p.gain|money }} ({{ '%+.1f'|format(p.gain_pct) }}%)
+                </span>
+              {% else %}—{% endif %}
+            </td>
+            <td class="is-num ds-num">{{ '%.1f'|format(p.weight) }}%</td>
+            <td class="is-num">
+              {% if p.source == 'sync' %}
+                <span class="ds-meta">Synced</span>
+              {% else %}
+                <button type="button" class="ds-btn ds-btn--ghost ds-btn--sm"
+                        onclick="event.stopPropagation(); editHolding({{ p.id }})">Edit</button>
+              {% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+        <tfoot>
+          <tr>
+            <td colspan="8">Total portfolio</td>
+            <td class="is-num ds-num">{{ nw.investments|money(2) }}</td>
+            <td colspan="3"></td>
+          </tr>
+        </tfoot>
+      </table>
     </div>
-
-    <!-- Portfolio & Holdings -->
-    <div class="grid grid-cols-1 gap-6 lg:grid-cols-3">
-        <!-- Allocation donut + breakdown -->
-        <div class="bg-white shadow sm:rounded-xl">
-            <div class="px-5 py-5">
-                <h3 class="text-base font-semibold text-gray-900 mb-4">Allocation</h3>
-                {% if portfolio_by_class %}
-                <div style="height: 260px;">
-                    <canvas id="portfolioDonut"></canvas>
-                </div>
-                <div class="mt-4 space-y-2">
-                    {% set total_all = nw.net_worth if nw.net_worth > 0 else 1 %}
-                    {% for ac, val in portfolio_by_class.items() %}
-                    <div class="flex items-center justify-between text-sm">
-                        <div class="flex items-center gap-2">
-                            <span class="w-2.5 h-2.5 rounded-full inline-block"
-                                  style="background:{{ ['#6366f1','#3b82f6','#10b981','#f59e0b','#ef4444','#8b5cf6','#06b6d4','#f43f5e'][loop.index0 % 8] }}"></span>
-                            <span class="text-gray-600">{{ ac }}</span>
-                        </div>
-                        <span class="font-medium text-gray-900">
-                            ${{ "{:,.0f}".format(val) }}
-                            <span class="text-gray-400 font-normal text-xs">({{ "%.1f"|format(val / total_all * 100) }}%)</span>
-                        </span>
-                    </div>
-                    {% endfor %}
-                </div>
-                {% else %}
-                <p class="text-center text-sm text-gray-400 py-8">Connect an institution or add holdings to see allocation</p>
-                {% endif %}
-            </div>
-        </div>
-
-        <!-- Holdings Table -->
-        <div class="lg:col-span-2 bg-white shadow sm:rounded-xl overflow-hidden">
-            <div class="px-5 py-5">
-                <h3 class="text-base font-semibold text-gray-900 mb-4">Holdings</h3>
-                {% if holdings %}
-                <div class="overflow-x-auto">
-                    <table id="holdingsTable" class="min-w-full divide-y divide-gray-200">
-                        <thead class="bg-gray-50">
-                            <tr>
-                                <th class="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase">Ticker</th>
-                                <th class="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase">Name</th>
-                                <th class="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase">Class</th>
-                                <th class="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase">Account</th>
-                                <th class="px-3 py-3 text-right text-xs font-medium text-gray-500 uppercase">Shares</th>
-                                <th class="px-3 py-3 text-right text-xs font-medium text-gray-500 uppercase">Avg Cost</th>
-                                <th class="px-3 py-3 text-right text-xs font-medium text-gray-500 uppercase">Price</th>
-                                <th class="px-3 py-3 text-right text-xs font-medium text-gray-500 uppercase">Value</th>
-                                <th class="px-3 py-3 text-right text-xs font-medium text-gray-500 uppercase">Gain/Loss</th>
-                                <th class="px-3 py-3"></th>
-                            </tr>
-                        </thead>
-                        <tbody class="bg-white divide-y divide-gray-200">
-                            {% for h in holdings %}
-                            <tr class="hover:bg-gray-50">
-                                <td class="px-3 py-3 text-sm font-semibold text-gray-900">
-                                    {{ h.ticker }}
-                                    {% if h.source == 'sync' %}
-                                    <span class="ml-1 inline-block w-1.5 h-1.5 rounded-full bg-green-500 align-middle" title="Synced automatically{% if h.last_synced_at %} · {{ h.last_synced_at.strftime('%Y-%m-%d %H:%M') }}{% endif %}"></span>
-                                    {% endif %}
-                                </td>
-                                <td class="px-3 py-3 text-sm text-gray-700 max-w-[160px] truncate">{{ h.name }}</td>
-                                <td class="px-3 py-3">
-                                    <span class="px-2 py-0.5 text-xs rounded-full font-medium
-                                        {% if h.asset_class == 'Stock' %}bg-blue-100 text-blue-700
-                                        {% elif h.asset_class == 'ETF' %}bg-indigo-100 text-indigo-700
-                                        {% elif h.asset_class == 'Mutual Fund' %}bg-teal-100 text-teal-700
-                                        {% elif h.asset_class == 'Bond' %}bg-yellow-100 text-yellow-700
-                                        {% elif h.asset_class == 'Crypto' %}bg-orange-100 text-orange-700
-                                        {% elif h.asset_class == 'Cash' %}bg-gray-100 text-gray-600
-                                        {% else %}bg-purple-100 text-purple-700{% endif %}">
-                                        {{ h.asset_class }}
-                                    </span>
-                                </td>
-                                <td class="px-3 py-3 text-sm text-gray-500 max-w-[160px] truncate">{{ h.account_name }}</td>
-                                <td class="px-3 py-3 text-sm text-gray-700 text-right">
-                                    {% if h.shares > 0 %}{{ "{:,.4f}".format(h.shares) }}{% else %}—{% endif %}
-                                </td>
-                                <td class="px-3 py-3 text-sm text-gray-500 text-right">
-                                    {% if h.avg_cost is not none %}${{ "{:,.2f}".format(h.avg_cost) }}{% else %}—{% endif %}
-                                </td>
-                                <td class="px-3 py-3 text-sm text-gray-700 text-right">
-                                    {% if h.current_price is not none %}${{ "{:,.2f}".format(h.current_price) }}{% else %}—{% endif %}
-                                </td>
-                                <td class="px-3 py-3 text-sm font-semibold text-gray-900 text-right">${{ "{:,.2f}".format(h.current_value) }}</td>
-                                <td class="px-3 py-3 text-sm text-right whitespace-nowrap">
-                                    {% if h.gain_loss is not none %}
-                                    <span class="{% if h.gain_loss >= 0 %}text-green-600{% else %}text-red-500{% endif %} font-medium">
-                                        {{ '+' if h.gain_loss >= 0 }}{{ "{:,.0f}".format(h.gain_loss) }}
-                                        <span class="text-xs font-normal">({{ '+' if h.gain_pct >= 0 }}{{ "%.1f"|format(h.gain_pct) }}%)</span>
-                                    </span>
-                                    {% else %}<span class="text-gray-300">—</span>{% endif %}
-                                </td>
-                                <td class="px-3 py-3 text-right whitespace-nowrap">
-                                    {% if h.source == 'sync' %}
-                                    <span class="text-xs text-gray-400" title="Managed by sync — edit via Connections">Synced</span>
-                                    {% else %}
-                                    <button onclick='editHolding({{ h.id }}, {{ h.to_dict()|tojson }})'
-                                        class="text-xs text-indigo-500 hover:text-indigo-700 mr-2">Edit</button>
-                                    <button onclick='deleteHolding({{ h.id }})'
-                                        class="text-xs text-red-400 hover:text-red-600">Delete</button>
-                                    {% endif %}
-                                </td>
-                            </tr>
-                            {% endfor %}
-                        </tbody>
-                        <tfoot class="bg-gray-50">
-                            <tr>
-                                <td colspan="7" class="px-3 py-3 text-xs font-semibold text-gray-500 uppercase">Total Portfolio</td>
-                                <td class="px-3 py-3 text-sm font-bold text-gray-900 text-right">${{ "{:,.2f}".format(nw.investments) }}</td>
-                                <td colspan="2"></td>
-                            </tr>
-                        </tfoot>
-                    </table>
-                </div>
-                {% else %}
-                <p class="text-center text-sm text-gray-400 py-12">
-                    No holdings yet. <a href="/connections" class="text-violet-600 hover:text-violet-700 font-medium">Connect an institution</a> to sync them automatically, or add one manually.
-                </p>
-                {% endif %}
-            </div>
-        </div>
+    {% else %}
+    <div class="ds-card inv-empty">
+      No holdings yet. <a href="/connections">Connect an institution</a> to sync them
+      automatically, or add one by hand above.
     </div>
+    {% endif %}
+  </section>
 
-    <!-- Edit Modal (manual holdings only) -->
-    <div x-show="editModal" x-transition class="fixed inset-0 bg-black bg-opacity-30 z-50 flex items-center justify-center p-4">
-        <div class="bg-white rounded-xl shadow-xl max-w-md w-full p-6" @click.stop>
-            <h3 class="text-lg font-semibold text-gray-900 mb-4">Edit Holding</h3>
-            <div class="space-y-3">
-                <div class="grid grid-cols-2 gap-3">
-                    <div>
-                        <label class="block text-xs font-medium text-gray-600 mb-1">Ticker</label>
-                        <input x-model="editData.ticker" type="text" class="w-full rounded-md border-gray-300 shadow-sm text-sm">
-                    </div>
-                    <div>
-                        <label class="block text-xs font-medium text-gray-600 mb-1">Asset Class</label>
-                        <select x-model="editData.asset_class" class="w-full rounded-md border-gray-300 shadow-sm text-sm">
-                            {% for ac in asset_classes %}
-                            <option value="{{ ac }}">{{ ac }}</option>
-                            {% endfor %}
-                        </select>
-                    </div>
-                </div>
-                <div>
-                    <label class="block text-xs font-medium text-gray-600 mb-1">Name</label>
-                    <input x-model="editData.name" type="text" class="w-full rounded-md border-gray-300 shadow-sm text-sm">
-                </div>
-                <div class="grid grid-cols-2 gap-3">
-                    <div>
-                        <label class="block text-xs font-medium text-gray-600 mb-1">Shares</label>
-                        <input x-model.number="editData.shares" type="number" step="0.000001" class="w-full rounded-md border-gray-300 shadow-sm text-sm">
-                    </div>
-                    <div>
-                        <label class="block text-xs font-medium text-gray-600 mb-1">Current Value ($)</label>
-                        <input x-model.number="editData.current_value" type="number" step="0.01" class="w-full rounded-md border-gray-300 shadow-sm text-sm">
-                    </div>
-                </div>
-                <div>
-                    <label class="block text-xs font-medium text-gray-600 mb-1">Broker / Exchange</label>
-                    <input x-model="editData.account_name" type="text" class="w-full rounded-md border-gray-300 shadow-sm text-sm">
-                </div>
-            </div>
-            <div class="mt-5 flex gap-2 justify-end">
-                <button @click="editModal = false" class="px-4 py-2 border border-gray-300 text-gray-700 text-sm rounded-md hover:bg-gray-50">Cancel</button>
-                <button @click="saveEdit()" class="px-4 py-2 bg-indigo-600 text-white text-sm rounded-md hover:bg-indigo-700">Save</button>
-            </div>
-        </div>
+  {# ══════════════════════════════════════════════════════════════════════
+     Add holding — the original form, restyled
+     ══════════════════════════════════════════════════════════════════════ #}
+  <section class="ds-card" x-show="showAddForm" x-transition x-cloak>
+    <div class="ds-card__head">
+      <h3 class="ds-card__title">Add a manual holding</h3>
+      <button type="button" class="ds-btn ds-btn--icon" @click="showAddForm = false; resetNew()" aria-label="Close">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+      </button>
     </div>
+    <p class="ds-meta" style="margin-bottom: var(--sp-4)">
+      For assets at institutions without a connection. Connected accounts sync their holdings automatically.
+    </p>
+    <div class="inv-form">
+      <div class="inv-field">
+        <label class="inv-field__label" for="newTicker">Ticker</label>
+        <input id="newTicker" x-model="newHolding.ticker" type="text" placeholder="AAPL" class="inv-input" style="text-transform:uppercase">
+      </div>
+      <div class="inv-field inv-field--wide">
+        <label class="inv-field__label" for="newName">Name</label>
+        <input id="newName" x-model="newHolding.name" type="text" placeholder="Apple Inc." class="inv-input">
+      </div>
+      <div class="inv-field">
+        <label class="inv-field__label" for="newShares">Shares</label>
+        <input id="newShares" x-model.number="newHolding.shares" type="number" step="0.000001" placeholder="10" class="inv-input">
+      </div>
+      <div class="inv-field">
+        <label class="inv-field__label" for="newValue">Current value</label>
+        <input id="newValue" x-model.number="newHolding.current_value" type="number" step="0.01" placeholder="1500.00" class="inv-input">
+      </div>
+      <div class="inv-field">
+        <label class="inv-field__label" for="newClass">Asset class</label>
+        <select id="newClass" x-model="newHolding.asset_class" class="inv-input">
+          {% for ac in asset_classes %}<option value="{{ ac }}">{{ ac }}</option>{% endfor %}
+        </select>
+      </div>
+      <div class="inv-field inv-field--wide">
+        <label class="inv-field__label" for="newAccount">Broker / exchange</label>
+        <input id="newAccount" x-model="newHolding.account_name" type="text" placeholder="Fidelity" class="inv-input">
+      </div>
+    </div>
+    <div class="inv-form__actions">
+      <button type="button" class="ds-btn ds-btn--primary ds-btn--sm" @click="addHolding()">Save holding</button>
+      <button type="button" class="ds-btn ds-btn--ghost ds-btn--sm" @click="showAddForm = false; resetNew()">Cancel</button>
+    </div>
+    <p x-show="addError" x-text="addError" class="inv-error" x-cloak></p>
+  </section>
 
+  {# ══════════════════════════════════════════════════════════════════════
+     Edit holding modal (manual holdings only)
+     ══════════════════════════════════════════════════════════════════════ #}
+  <div class="inv-modal" x-show="editModal" x-cloak role="dialog" aria-modal="true" aria-labelledby="editTitle">
+    <div class="inv-modal__backdrop" @click="editModal = false"></div>
+    <div class="inv-modal__panel" style="width:min(520px,100%);max-height:88vh" @click.stop>
+      <div class="inv-modal__head">
+        <h2 class="inv-modal__title" id="editTitle">Edit holding</h2>
+        <button type="button" class="ds-btn ds-btn--icon" @click="editModal = false" aria-label="Close">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+        </button>
+      </div>
+      <div style="padding: var(--sp-5); overflow-y: auto">
+        <div class="inv-form">
+          <div class="inv-field">
+            <label class="inv-field__label" for="editTicker">Ticker</label>
+            <input id="editTicker" x-model="editData.ticker" type="text" class="inv-input">
+          </div>
+          <div class="inv-field">
+            <label class="inv-field__label" for="editClass">Asset class</label>
+            <select id="editClass" x-model="editData.asset_class" class="inv-input">
+              {% for ac in asset_classes %}<option value="{{ ac }}">{{ ac }}</option>{% endfor %}
+            </select>
+          </div>
+          <div class="inv-field inv-field--wide">
+            <label class="inv-field__label" for="editName">Name</label>
+            <input id="editName" x-model="editData.name" type="text" class="inv-input">
+          </div>
+          <div class="inv-field">
+            <label class="inv-field__label" for="editShares">Shares</label>
+            <input id="editShares" x-model.number="editData.shares" type="number" step="0.000001" class="inv-input">
+          </div>
+          <div class="inv-field">
+            <label class="inv-field__label" for="editValue">Current value</label>
+            <input id="editValue" x-model.number="editData.current_value" type="number" step="0.01" class="inv-input">
+          </div>
+          <div class="inv-field inv-field--wide">
+            <label class="inv-field__label" for="editAccount">Broker / exchange</label>
+            <input id="editAccount" x-model="editData.account_name" type="text" class="inv-input">
+          </div>
+        </div>
+        <div class="inv-form__actions">
+          <button type="button" class="ds-btn ds-btn--primary ds-btn--sm" @click="saveEdit()">Save</button>
+          <button type="button" class="ds-btn ds-btn--ghost ds-btn--sm" @click="editModal = false">Cancel</button>
+          <span style="flex:1"></span>
+          <button type="button" class="ds-btn ds-btn--danger ds-btn--sm" @click="deleteEdit()">Delete</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  {# ══════════════════════════════════════════════════════════════════════
+     Position detail — side sheet on desktop, bottom sheet on phones.
+     Filled by JS from the position data, never a navigation: leaving the
+     page loses the allocation context the reader was judging it against.
+     ══════════════════════════════════════════════════════════════════════ #}
+  <div class="inv-sheet" id="invSheet" hidden role="dialog" aria-modal="true" aria-labelledby="invSheetTitle">
+    <div class="inv-sheet__backdrop" data-close-sheet></div>
+    <div class="inv-sheet__panel">
+      <div class="inv-sheet__head">
+        <div>
+          <h2 class="inv-sheet__title" id="invSheetTitle"></h2>
+          <p class="inv-sheet__sub" id="invSheetSub"></p>
+        </div>
+        <button type="button" class="ds-btn ds-btn--icon" data-close-sheet aria-label="Close (Escape)">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+        </button>
+      </div>
+      <div class="inv-sheet__body" id="invSheetBody"></div>
+      <div class="inv-sheet__foot" id="invSheetFoot"></div>
+    </div>
+  </div>
+
+  {# ── Chart focus modal ── #}
+  <div class="inv-modal" id="invFocus" hidden role="dialog" aria-modal="true" aria-labelledby="invFocusTitle">
+    <div class="inv-modal__backdrop" data-close-focus></div>
+    <div class="inv-modal__panel">
+      <div class="inv-modal__head">
+        <h2 class="inv-modal__title" id="invFocusTitle"></h2>
+        <div class="ds-row">
+          <button type="button" class="ds-btn ds-btn--secondary ds-btn--sm" id="invFocusValues" aria-pressed="false">Show values</button>
+          <button type="button" class="ds-btn ds-btn--secondary ds-btn--sm" id="invFocusExport">Export PNG</button>
+          <button type="button" class="ds-btn ds-btn--icon" data-close-focus aria-label="Close (Escape)">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+          </button>
+        </div>
+      </div>
+      <div class="inv-modal__body"><canvas id="invFocusCanvas"></canvas></div>
+    </div>
+  </div>
+
+  <button type="button" class="inv-fab" id="invFab" aria-label="Ask the wealth copilot">
+    {{ icon('sparkle', 22) }}
+  </button>
 </div>
 
-{% if portfolio_by_class %}
-<script>
-window._initInvestments = function _initInvestments() {
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', _initInvestments); return;
-  }
-  var existing = document.getElementById('portfolioDonut');
-  if (existing && typeof Chart !== 'undefined' && Chart.getChart) {
-    var old = Chart.getChart(existing); if (old) old.destroy();
-  }
-  const portfolioData = {{ portfolio_by_class|tojson }};
-  const palette = ['#6366f1','#3b82f6','#10b981','#f59e0b','#ef4444','#8b5cf6','#06b6d4','#f43f5e'];
-  const canvas = document.getElementById('portfolioDonut');
-  const panelColor = getComputedStyle(document.documentElement).getPropertyValue('--panel').trim() || '#fff';
-  if (canvas && Object.keys(portfolioData).length > 0) {
-    new Chart(canvas, {
-      type: 'doughnut',
-      data: {
-        labels: Object.keys(portfolioData),
-        datasets: [{
-          data: Object.values(portfolioData),
-          backgroundColor: palette.slice(0, Object.keys(portfolioData).length),
-          borderWidth: 2,
-          borderColor: panelColor,
-        }]
-      },
-      options: {
-        responsive: true,
-        maintainAspectRatio: false,
-        plugins: {
-          legend: { display: false },
-          tooltip: {
-            callbacks: {
-              label: ctx => ctx.label + ': $' + ctx.raw.toLocaleString('en-US', {minimumFractionDigits:0, maximumFractionDigits:0})
-            }
-          }
-        }
-      }
-    });
-  }
-};
-window._initInvestments();
-
-document.removeEventListener('check:theme-changed', window._investThemeHandler);
-window._investThemeHandler = function() { window._initInvestments(); };
-document.addEventListener('check:theme-changed', window._investThemeHandler);
+<script id="invData" type="application/json">
+{{ {
+  'history': wealth.history,
+  'performance': wealth.performance,
+  'allocation': wealth.allocation,
+  'benchmark': wealth.benchmark,
+  'projection': wealth.projection,
+  'dividends': wealth.dividends,
+  'positions': wealth.positions,
+  'netWorthMix': portfolio_by_class,
+  'holdings': wealth.holdings
+}|tojson }}
 </script>
-{% endif %}
+<script src="{{ url_for('static', filename='js/investments.js') }}"></script>
 
 <script>
+/* The manual-holding forms stay on Alpine, matching how they already worked —
+   everything new on this page is plain JS in investments.js. */
 function investmentsApp(initChecking, initSavings, initInvestments) {
     return {
         checking: initChecking,
@@ -573,13 +1298,32 @@ function investmentsApp(initChecking, initSavings, initInvestments) {
                 showToast(d.error || 'Failed to update holding.', 'error');
             }
         },
+
+        async deleteEdit() {
+            if (!confirm('Delete this holding?')) return;
+            const resp = await fetch('/api/holdings/' + this.editId, { method: 'DELETE' });
+            if (resp.ok) {
+                showToast('Holding deleted.', 'success');
+                location.reload();
+            } else {
+                const d = await resp.json();
+                showToast(d.error || 'Failed to delete holding.', 'error');
+            }
+        },
     };
 }
 
-function editHolding(id, data) {
-    const app = Alpine.$data(document.querySelector('[x-data]'));
+/* Called from the table and from the detail sheet. Looks the holding up in
+   the same payload the rest of the page reads, so there is one source. */
+function editHolding(id) {
+    const node = document.getElementById('invData');
+    if (!node) return;
+    const holding = (JSON.parse(node.textContent).holdings || [])
+        .find(function (h) { return h.id === id; });
+    if (!holding) return;
+    const app = Alpine.$data(document.getElementById('inv'));
     app.editId = id;
-    app.editData = { ...data };
+    app.editData = Object.assign({}, holding);
     app.editModal = true;
 }
 
@@ -594,5 +1338,21 @@ async function deleteHolding(id) {
         showToast(d.error || 'Failed to delete holding.', 'error');
     }
 }
+
+/* Lift the Alpine hold now that investmentsApp exists — see the note on the
+   root element. Initialization is left to whoever runs next: the SPA router's
+   Alpine.initTree(main) after all scripts, or Alpine's own start-up walk on a
+   full page load. Calling initTree here would double-initialize on the SPA
+   path, since the router calls it again a moment later. */
+(function () {
+    const root = document.getElementById('inv');
+    if (!root || root.hasAttribute('x-data')) return;
+    root.removeAttribute('x-ignore');
+    // Alpine records the skip on the element itself the first time it walks
+    // past, and removing the attribute alone does not clear it — the router's
+    // later initTree would step over this subtree forever.
+    delete root._x_ignore;
+    root.setAttribute('x-data', root.getAttribute('data-alpine'));
+})();
 </script>
 {% endblock %}

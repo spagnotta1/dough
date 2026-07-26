@@ -2,141 +2,267 @@
 
 {% block title %}Budgets - Checkbook App{% endblock %}
 
-{% block content %}
-<style>
-/* Mobile-only layout — no effect ≥640px */
-@media (max-width: 640px) {
-  #budgetTable, #budgetTable tbody { display: block; min-width: 0 !important; }
-  #budgetTable thead { display: none; }
-  #budgetTable tbody tr {
-    display: grid;
-    grid-template-columns: 1fr auto;
-    column-gap: 10px; row-gap: 2px;
-    padding: 12px 4px;
-    border-bottom: 1px solid var(--border);
-  }
-  #budgetTable td { display: block; padding: 0 !important; border: none !important; white-space: normal !important; }
-  #budgetTable td:nth-child(1) { grid-column: 1; grid-row: 1; font-weight: 600; }        /* category */
-  #budgetTable td:nth-child(3) { grid-column: 2; grid-row: 1; text-align: right; font-size: .95rem; font-weight: 600; } /* limit */
-  #budgetTable td:nth-child(2) { grid-column: 1; grid-row: 2; font-size: .72rem; opacity: .6; } /* account */
-  #budgetTable td:nth-child(4) { grid-column: 2; grid-row: 2; text-align: right; }        /* actions */
-  #budgetTable td:nth-child(4) button { padding: 6px 4px; }
-  /* Inline edit rows keep their single full-width cell */
-  #budgetTable tr[id^="edit-"] td { grid-column: 1 / -1; }
-  #budgetTable tr[id^="edit-"] form { flex-wrap: wrap; row-gap: 8px; }
-  #budgetTable tr[id^="edit-"] input[name="monthly_limit"] { width: 100%; }
-  #budgetTable tr[id^="edit-"] select { flex: 1 1 100%; }
-}
-</style>
-<div class="space-y-6">
-    <!-- Add / Update form -->
-    <div class="bg-white shadow sm:rounded-lg px-4 py-5 sm:p-6">
-        <h3 class="text-lg leading-6 font-medium text-gray-900 mb-4">Add / Update Budget</h3>
-        <form method="POST" class="sm:flex sm:space-x-4 space-y-4 sm:space-y-0 items-end">
-            <input type="hidden" name="action" value="add">
-            <div class="flex-1">
-                <label class="block text-sm font-medium text-gray-700">Category</label>
-                <select name="category" required class="mt-1 block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm rounded-md">
-                    <option value="">-- select --</option>
-                    {% for cat in categories %}
-                    <option value="{{ cat }}">{{ cat }}</option>
-                    {% endfor %}
-                </select>
-            </div>
-            <div class="flex-1">
-                <label class="block text-sm font-medium text-gray-700">Account</label>
-                <select name="account_name" class="mt-1 block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm rounded-md">
-                    <option value="both">Both</option>
-                    {% for acct in accounts %}
-                    <option value="{{ acct }}">{{ acct }}</option>
-                    {% endfor %}
-                </select>
-            </div>
-            <div class="flex-1">
-                <label class="block text-sm font-medium text-gray-700">Monthly Limit ($)</label>
-                <input type="number" name="monthly_limit" min="0" step="0.01" required placeholder="e.g. 500.00"
-                       class="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm">
-            </div>
-            <div>
-                <button type="submit" class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-indigo-600 hover:bg-indigo-700">
-                    Save Budget
-                </button>
-            </div>
-        </form>
-    </div>
+{#
+  Budgets — cards, not rows.
 
-    <!-- Current budgets -->
-    <div class="bg-white shadow sm:rounded-lg">
-        <div class="px-4 py-5 sm:p-6">
-            <h3 class="text-lg leading-6 font-medium text-gray-900 mb-4">Current Budgets</h3>
-            {% if budgets %}
-            <div class="overflow-x-auto">
-            <table id="budgetTable" class="min-w-full divide-y divide-gray-200">
-                <thead class="bg-gray-50">
-                    <tr>
-                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Category</th>
-                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Account</th>
-                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Monthly Limit</th>
-                        <th class="px-6 py-3"></th>
-                    </tr>
-                </thead>
-                <tbody class="bg-white divide-y divide-gray-200">
-                    {% for budget in budgets %}
-                    <!-- Display row -->
-                    <tr id="display-{{ budget.id }}">
-                        <td class="px-6 py-4 text-sm font-medium text-gray-900">{{ budget.category }}</td>
-                        <td class="px-6 py-4 text-sm text-gray-500">{{ budget.account_name }}</td>
-                        <td class="px-6 py-4 text-sm text-gray-900">${{ "{:,.2f}".format(budget.monthly_limit) }}</td>
-                        <td class="px-6 py-4 text-right space-x-3">
-                            <button onclick="startEdit({{ budget.id }})" class="text-indigo-600 hover:text-indigo-800 text-sm font-medium">Edit</button>
-                            <form method="POST" class="inline">
-                                <input type="hidden" name="action" value="delete">
-                                <input type="hidden" name="budget_id" value="{{ budget.id }}">
-                                <button type="submit" class="text-red-600 hover:text-red-800 text-sm font-medium"
-                                        onclick="return confirm('Delete this budget?')">Delete</button>
-                            </form>
-                        </td>
-                    </tr>
-                    <!-- Inline edit row (hidden by default) -->
-                    <tr id="edit-{{ budget.id }}" class="hidden bg-indigo-50">
-                        <td class="px-6 py-3" colspan="4">
-                            <form method="POST" class="flex items-center space-x-3">
-                                <input type="hidden" name="action" value="add">
-                                <input type="hidden" name="category" value="{{ budget.category }}">
-                                <span class="text-sm font-medium text-gray-700 min-w-max">{{ budget.category }}</span>
-                                <select name="account_name" class="border-gray-300 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500 text-sm">
-                                    <option value="both" {% if budget.account_name == 'both' %}selected{% endif %}>Both</option>
-                                    {% for acct in accounts %}
-                                    <option value="{{ acct }}" {% if budget.account_name == acct %}selected{% endif %}>{{ acct }}</option>
-                                    {% endfor %}
-                                </select>
-                                <input type="number" name="monthly_limit" min="0" step="0.01"
-                                       value="{{ "%.2f"|format(budget.monthly_limit) }}"
-                                       class="w-32 border-gray-300 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500 text-sm">
-                                <button type="submit" class="px-3 py-1.5 text-sm font-medium text-white bg-indigo-600 rounded hover:bg-indigo-700">Save</button>
-                                <button type="button" onclick="cancelEdit({{ budget.id }})" class="px-3 py-1.5 text-sm font-medium text-gray-600 border border-gray-300 rounded hover:bg-gray-50">Cancel</button>
-                            </form>
-                        </td>
-                    </tr>
-                    {% endfor %}
-                </tbody>
-            </table>
-            </div>
-            {% else %}
-            <p class="text-sm text-gray-500">No budgets set yet. Add one above to start tracking spending limits.</p>
-            {% endif %}
-        </div>
+  A budget is a status ("am I over?"), and a status wants a shape. The old
+  page listed category / account / limit and left the reader to go and find
+  out what they had actually spent, which is the one thing they came for.
+#}
+
+{% block content %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/dashboard.css') }}">
+
+<div class="bud">
+
+  <header class="ds-section__head bud-head ds-rise">
+    <div>
+      <h1 class="bud-title">Budgets</h1>
+      <p class="ds-section__sub">Spending against your limits for {{ month_label }}</p>
     </div>
+    {% if budgets %}
+    <div class="bud-summary">
+      <div class="bud-summary__figures">
+        <span class="ds-num bud-summary__spent">{{ total_spent|money }}</span>
+        <span class="bud-summary__of">of {{ total_budgeted|money }} budgeted</span>
+      </div>
+      <div class="ds-progress" role="img"
+           aria-label="{{ total_spent|money }} spent of {{ total_budgeted|money }} budgeted, and the month is {{ month_progress }} percent through">
+        <div class="ds-progress__fill {{ 'ds-progress__fill--danger' if total_budgeted and total_spent > total_budgeted else '' }}"
+             data-fill="{{ [(total_spent / total_budgeted * 100) if total_budgeted else 0, 100]|min }}"></div>
+        <span class="ds-progress__pace" style="left:{{ month_progress }}%"></span>
+      </div>
+      <p class="ds-meta">{{ month_progress }}% through the month</p>
+    </div>
+    {% endif %}
+  </header>
+
+  {% if budget_status %}
+  <div class="dash-budget-grid ds-rise" style="--ds-delay:60ms">
+    {% for s in budget_status %}
+    {% set b = s.budget %}
+    <article class="ds-card dash-budget dash-budget--{{ s.state }}" id="display-{{ b.id }}">
+      <div class="dash-budget__head">
+        <h2 class="dash-budget__cat">{{ b.category }}</h2>
+        <span class="ds-badge ds-badge--{{ s.state }}">{{ s.pct|round|int }}%</span>
+      </div>
+
+      <p class="dash-budget__figures">
+        <b class="ds-num">{{ s.spent|money }}</b>
+        <span class="dash-budget__of">of {{ b.monthly_limit|money }}/mo</span>
+      </p>
+
+      {# The pace marker is what makes the bar readable mid-month: 70% spent
+         is fine on the 25th and alarming on the 8th. #}
+      <div class="ds-progress ds-progress--tall" role="img"
+           aria-label="{{ b.category }}: {{ s.pct|round|int }} percent of budget used, {{ month_progress }} percent through the month">
+        <div class="ds-progress__fill {{ 'ds-progress__fill--danger' if s.state=='danger' else 'ds-progress__fill--warn' if s.state=='warn' else '' }}"
+             data-fill="{{ [s.pct, 100]|min }}"></div>
+        <span class="ds-progress__pace" style="left:{{ month_progress }}%" title="Today"></span>
+      </div>
+
+      <p class="dash-budget__foot">
+        <span class="dash-budget__left">
+          {% if s.remaining >= 0 %}
+            <b class="ds-num">{{ s.remaining|money }}</b> left
+          {% else %}
+            <b class="ds-num">{{ (-s.remaining)|money }}</b> over
+          {% endif %}
+        </span>
+        {% if s.change_pct is not none and s.change_pct|abs >= 5 %}
+        <span class="dash-budget__trend {{ 'is-bad' if s.change_pct > 0 else 'is-good' }}">
+          <span aria-hidden="true">{{ '▲' if s.change_pct > 0 else '▼' }}</span>
+          {{ s.change_pct|abs }}% vs. last month
+        </span>
+        {% elif s.prior > 0 %}
+        <span class="dash-budget__trend">Steady vs. last month</span>
+        {% endif %}
+      </p>
+
+      <div class="bud-actions">
+        <span class="ds-badge">{{ b.account_name }}</span>
+        <span class="bud-actions__spacer"></span>
+        <a class="ds-btn ds-btn--ghost ds-btn--sm"
+           href="{{ url_for('transactions', category=b.category, type='outgo') }}"
+           aria-label="View {{ b.category }} transactions">View</a>
+        <button type="button" class="ds-btn ds-btn--ghost ds-btn--sm"
+                onclick="startEdit({{ b.id }})" aria-label="Edit {{ b.category }} budget">Edit</button>
+        <form method="POST" class="bud-inline">
+          <input type="hidden" name="action" value="delete">
+          <input type="hidden" name="budget_id" value="{{ b.id }}">
+          <button type="submit" class="ds-btn ds-btn--danger ds-btn--sm"
+                  aria-label="Delete {{ b.category }} budget"
+                  onclick="return confirm('Delete the {{ b.category }} budget?')">Delete</button>
+        </form>
+      </div>
+    </article>
+
+    {# Inline edit, replacing the card in place #}
+    <article class="ds-card dash-budget bud-edit" id="edit-{{ b.id }}" hidden>
+      <h2 class="dash-budget__cat">{{ b.category }}</h2>
+      <form method="POST" class="bud-edit__form">
+        <input type="hidden" name="action" value="add">
+        <input type="hidden" name="category" value="{{ b.category }}">
+        <label class="bud-field">
+          <span class="ds-eyebrow">Account</span>
+          <select name="account_name" class="dash-input">
+            <option value="both" {% if b.account_name == 'both' %}selected{% endif %}>Both</option>
+            {% for acct in accounts %}
+            <option value="{{ acct }}" {% if b.account_name == acct %}selected{% endif %}>{{ acct }}</option>
+            {% endfor %}
+          </select>
+        </label>
+        <label class="bud-field">
+          <span class="ds-eyebrow">Monthly limit</span>
+          <input type="number" name="monthly_limit" min="0" step="0.01"
+                 value="{{ "%.2f"|format(b.monthly_limit) }}" class="dash-input">
+        </label>
+        <div class="bud-edit__actions">
+          <button type="submit" class="ds-btn ds-btn--primary ds-btn--sm">Save</button>
+          <button type="button" class="ds-btn ds-btn--secondary ds-btn--sm" onclick="cancelEdit({{ b.id }})">Cancel</button>
+        </div>
+      </form>
+    </article>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  {# ── Add a budget ── #}
+  <section class="ds-card bud-add ds-rise" style="--ds-delay:120ms" aria-labelledby="add-budget-h">
+    <h2 class="ds-card__title" id="add-budget-h">
+      {% if budgets %}Add another budget{% else %}Set your first budget{% endif %}
+    </h2>
+    <p class="ds-meta bud-add__hint">
+      Pick a category and a monthly ceiling. Anything you spend in that category
+      counts against it, and the dashboard will flag it before you go over.
+    </p>
+    <form method="POST" class="bud-add__form">
+      <input type="hidden" name="action" value="add">
+      <label class="bud-field">
+        <span class="ds-eyebrow">Category</span>
+        <select name="category" required class="dash-input">
+          <option value="">Select a category…</option>
+          {% for cat in categories %}
+          <option value="{{ cat }}">{{ cat }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label class="bud-field">
+        <span class="ds-eyebrow">Account</span>
+        <select name="account_name" class="dash-input">
+          <option value="both">Both</option>
+          {% for acct in accounts %}
+          <option value="{{ acct }}">{{ acct }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label class="bud-field">
+        <span class="ds-eyebrow">Monthly limit</span>
+        <input type="number" name="monthly_limit" min="0" step="0.01" required
+               placeholder="500.00" class="dash-input">
+      </label>
+      <button type="submit" class="ds-btn ds-btn--primary">Save budget</button>
+    </form>
+  </section>
+
+  {% if not budgets %}
+  <p class="dash-empty bud-empty">No budgets yet — the dashboard will start
+    flagging overspending as soon as you set one.</p>
+  {% endif %}
 </div>
 
+<style>
+.bud { display: flex; flex-direction: column; gap: var(--sp-8); padding-bottom: var(--sp-12); }
+.bud-title {
+  font-size: var(--f-display);
+  font-weight: var(--w-semi);
+  letter-spacing: -.026em;
+  color: var(--ink-strong);
+  margin: 0;
+}
+.bud-head { align-items: flex-end; }
+.bud-summary { min-width: 240px; display: flex; flex-direction: column; gap: var(--sp-2); }
+.bud-summary__figures { display: flex; align-items: baseline; gap: var(--sp-2); }
+.bud-summary__spent { font-size: var(--f-xl); font-weight: var(--w-bold); color: var(--ink-strong); }
+.bud-summary__of { font-size: var(--f-xs); color: var(--ink-faint); }
+
+.bud-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-top: auto;
+  padding-top: var(--sp-3);
+  border-top: 1px solid var(--hairline);
+}
+.bud-actions__spacer { flex: 1; }
+.bud-actions .ds-btn--sm { padding: 0 var(--sp-2); }
+.bud-inline { display: flex; }
+
+.bud-edit[hidden] { display: none; }
+.bud-edit__form { display: flex; flex-direction: column; gap: var(--sp-3); }
+.bud-edit__actions { display: flex; gap: var(--sp-2); }
+
+.bud-field { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+.bud-field .dash-input { min-height: 40px; width: 100%; }
+
+.bud-add__hint { max-width: 62ch; margin: var(--sp-2) 0 var(--sp-5); }
+/* Explicit tracks rather than auto-fit: with a trailing `auto` for the
+   button, auto-fit resolved to a single column and stacked the whole form. */
+.bud-add__form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr) auto;
+  gap: var(--sp-4);
+  align-items: end;
+  max-width: 900px;
+}
+.bud-add__form .ds-btn { min-height: 40px; }
+.bud-empty { text-align: center; padding: var(--sp-6) 0; }
+
+@media (max-width: 860px) {
+  .bud-add__form { grid-template-columns: 1fr 1fr; }
+  .bud-add__form .ds-btn { grid-column: 1 / -1; }
+}
+@media (max-width: 640px) {
+  .bud-add__form { grid-template-columns: 1fr; }
+  .bud-add__form .ds-btn { width: 100%; }
+  .bud-head { align-items: flex-start; }
+  .bud-summary { width: 100%; }
+}
+</style>
+
 <script>
-function startEdit(id) {
-    document.getElementById('display-' + id).classList.add('hidden');
-    document.getElementById('edit-' + id).classList.remove('hidden');
-}
-function cancelEdit(id) {
-    document.getElementById('edit-' + id).classList.add('hidden');
-    document.getElementById('display-' + id).classList.remove('hidden');
-}
+(function () {
+  // Progress bars start at zero and fill on reveal — the same behavior the
+  // dashboard uses, kept here because this page does not load dashboard.js.
+  function fillBars() {
+    document.querySelectorAll('.bud [data-fill]').forEach(function (el) {
+      var pct = parseFloat(el.getAttribute('data-fill'));
+      if (!isFinite(pct)) return;
+      requestAnimationFrame(function () {
+        requestAnimationFrame(function () {
+          el.style.width = Math.max(0, Math.min(100, pct)) + '%';
+        });
+      });
+    });
+  }
+
+  window.startEdit = function (id) {
+    document.getElementById('display-' + id).hidden = true;
+    var edit = document.getElementById('edit-' + id);
+    edit.hidden = false;
+    var first = edit.querySelector('select, input');
+    if (first) first.focus();
+  };
+  window.cancelEdit = function (id) {
+    document.getElementById('edit-' + id).hidden = true;
+    var card = document.getElementById('display-' + id);
+    card.hidden = false;
+    var btn = card.querySelector('button');
+    if (btn) btn.focus();
+  };
+
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', fillBars);
+  else fillBars();
+})();
 </script>
 {% endblock %}

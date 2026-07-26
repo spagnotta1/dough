@@ -1,0 +1,651 @@
+/* ══════════════════════════════════════════════════════════════════════════
+   Check — Design System
+   ──────────────────────────────────────────────────────────────────────────
+   One token layer for the whole app. Everything visual downstream should
+   read from these custom properties rather than hardcoding a value, so a
+   change here moves the entire product at once.
+
+   The app ships 17 user-selectable themes whose panels range from #ffffff
+   to #000000. Four base variables carry the theme (--bg / --fg / --panel /
+   --border, set on :root by base.html) and everything in this file is
+   derived from them. The one thing that cannot be derived is whether the
+   theme is light or dark — CSS cannot read the luminance of a variable —
+   so base.html stamps html[data-scheme="light"|"dark"] and the semantic
+   status ramps below switch on it. That is what keeps green-on-white
+   readable without making green-on-black muddy.
+   ══════════════════════════════════════════════════════════════════════════ */
+
+:root {
+  /* ── Spacing — 4px base, the only gaps that should ever appear ───────── */
+  --sp-1: .25rem;   --sp-2: .5rem;    --sp-3: .75rem;   --sp-4: 1rem;
+  --sp-5: 1.25rem;  --sp-6: 1.5rem;   --sp-7: 1.75rem;  --sp-8: 2rem;
+  --sp-10: 2.5rem;  --sp-12: 3rem;    --sp-16: 4rem;
+
+  /* ── Radius ─────────────────────────────────────────────────────────── */
+  --r-xs: 6px;   --r-sm: 9px;   --r-md: 13px;  --r-lg: 17px;
+  --r-xl: 22px;  --r-2xl: 28px; --r-full: 999px;
+
+  /* ── Type scale ─────────────────────────────────────────────────────── */
+  --f-hero:    clamp(2.1rem, 1.35rem + 2.6vw, 3.05rem);
+  --f-display: clamp(1.6rem, 1.15rem + 1.6vw, 2.15rem);
+  --f-xl:      1.35rem;
+  --f-lg:      1.075rem;
+  --f-md:      .9375rem;
+  --f-sm:      .8125rem;
+  --f-xs:      .75rem;
+  --f-micro:   .6875rem;
+
+  --lh-tight: 1.1;
+  --lh-snug:  1.32;
+  --lh-body:  1.55;
+
+  --w-normal: 450;
+  --w-medium: 530;
+  --w-semi:   620;
+  --w-bold:   700;
+
+  --track-caps: .075em;   /* uppercase eyebrow labels */
+  --track-tight: -.021em; /* large numerals */
+
+  --font-sans: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI",
+               Inter, Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-num:  ui-sans-serif, -apple-system, "Segoe UI", Inter, Roboto, sans-serif;
+
+  /* ── Text emphasis ladder ───────────────────────────────────────────── */
+  --ink:        var(--fg);
+  --ink-strong: color-mix(in srgb, var(--fg) 96%, transparent);
+  --ink-body:   color-mix(in srgb, var(--fg) 80%, transparent);
+  --ink-muted:  color-mix(in srgb, var(--fg) 62%, transparent);
+  --ink-faint:  color-mix(in srgb, var(--fg) 46%, transparent);
+  --ink-ghost:  color-mix(in srgb, var(--fg) 30%, transparent);
+
+  /* ── Surfaces ───────────────────────────────────────────────────────── */
+  --surface-page:   var(--bg);
+  --surface:        var(--panel);
+  --surface-raised: color-mix(in srgb, var(--panel) 94%, var(--fg));
+  --surface-sunken: color-mix(in srgb, var(--panel) 80%, var(--bg));
+  --surface-hover:  color-mix(in srgb, var(--panel) 93%, var(--fg));
+  --surface-active: color-mix(in srgb, var(--panel) 88%, var(--fg));
+
+  --hairline:       color-mix(in srgb, var(--border) 68%, transparent);
+  --hairline-firm:  var(--border);
+
+  /* ── Elevation ──────────────────────────────────────────────────────── */
+  --shadow-color: 220 12% 8%;
+  --shadow-a: .05;  /* ambient */
+  --shadow-d: .07;  /* direct  */
+
+  --e-0: none;
+  --e-1: 0 1px 2px hsl(var(--shadow-color) / var(--shadow-a));
+  --e-2: 0 1px 2px hsl(var(--shadow-color) / var(--shadow-a)),
+         0 3px 8px -2px hsl(var(--shadow-color) / var(--shadow-d));
+  --e-3: 0 1px 2px hsl(var(--shadow-color) / var(--shadow-a)),
+         0 8px 20px -6px hsl(var(--shadow-color) / var(--shadow-d));
+  --e-4: 0 2px 4px hsl(var(--shadow-color) / var(--shadow-a)),
+         0 16px 36px -10px hsl(var(--shadow-color) / calc(var(--shadow-d) * 1.25));
+  --e-5: 0 4px 8px hsl(var(--shadow-color) / var(--shadow-a)),
+         0 28px 64px -14px hsl(var(--shadow-color) / calc(var(--shadow-d) * 1.6));
+
+  /* ── Motion ─────────────────────────────────────────────────────────── */
+  --dur-1: 90ms;    /* state flips: hover, press           */
+  --dur-2: 160ms;   /* small reveals                        */
+  --dur-3: 240ms;   /* card / panel transitions             */
+  --dur-4: 380ms;   /* entrances, expands                   */
+  --dur-5: 620ms;   /* value count-ups, progress fills      */
+
+  --ease-out:   cubic-bezier(.22, 1, .36, 1);
+  --ease-inout: cubic-bezier(.65, 0, .35, 1);
+  --ease-spring:cubic-bezier(.34, 1.42, .64, 1);
+
+  /* ── Semantic status — light-theme ramp (default) ───────────────────── */
+  /* -ink  : passes AA on a light panel for text
+     -mark : chart/graphic fills, no text-contrast requirement
+     -bg   : tinted surface behind the pair                                */
+  --ok-ink:     #15803d;  --ok-mark:     #16a34a;
+  --warn-ink:   #a1620a;  --warn-mark:   #f59e0b;
+  --danger-ink: #b91c1c;  --danger-mark: #ef4444;
+  --info-ink:   #1d4ed8;  --info-mark:   #3b82f6;
+  --ai-ink:     #6d28d9;  --ai-mark:     #8b5cf6;
+
+  --ok-bg:     color-mix(in srgb, var(--ok-mark)     11%, var(--panel));
+  --warn-bg:   color-mix(in srgb, var(--warn-mark)   13%, var(--panel));
+  --danger-bg: color-mix(in srgb, var(--danger-mark) 11%, var(--panel));
+  --info-bg:   color-mix(in srgb, var(--info-mark)   11%, var(--panel));
+  --ai-bg:     color-mix(in srgb, var(--ai-mark)     11%, var(--panel));
+
+  /* ── Accent — follows the theme's own accent (--red) ────────────────── */
+  --accent:      var(--red, #7c3aed);
+  --accent-ink:  var(--red, #7c3aed);
+  --accent-bg:   color-mix(in srgb, var(--red, #7c3aed) 12%, var(--panel));
+  --accent-on:   #ffffff;
+
+  /* ── Focus ──────────────────────────────────────────────────────────── */
+  --focus-ring: 0 0 0 2px var(--panel), 0 0 0 4px var(--accent);
+
+  /* ── Layout ─────────────────────────────────────────────────────────── */
+  --page-max: 1400px;
+  --tap-min: 44px;   /* WCAG 2.2 AA target size */
+}
+
+/* ── Dark ramp ─────────────────────────────────────────────────────────
+   Saturated mid-tones go muddy on a dark panel; these are lightened so
+   they clear 4.5:1 against panels down to #000. Shadows get deeper and
+   less transparent, because a soft shadow is invisible on black — the
+   separation there comes from the top highlight on .ds-card instead.  */
+html[data-scheme="dark"] {
+  --shadow-color: 0 0% 0%;
+  --shadow-a: .28;
+  --shadow-d: .38;
+
+  --ok-ink:     #4ade80;  --ok-mark:     #22c55e;
+  --warn-ink:   #fbbf24;  --warn-mark:   #f59e0b;
+  --danger-ink: #f87171;  --danger-mark: #ef4444;
+  --info-ink:   #60a5fa;  --info-mark:   #3b82f6;
+  --ai-ink:     #c4b5fd;  --ai-mark:     #a78bfa;
+
+  --ok-bg:     color-mix(in srgb, var(--ok-mark)     16%, var(--panel));
+  --warn-bg:   color-mix(in srgb, var(--warn-mark)   16%, var(--panel));
+  --danger-bg: color-mix(in srgb, var(--danger-mark) 16%, var(--panel));
+  --info-bg:   color-mix(in srgb, var(--info-mark)   16%, var(--panel));
+  --ai-bg:     color-mix(in srgb, var(--ai-mark)     16%, var(--panel));
+
+  --surface-raised: color-mix(in srgb, var(--panel) 92%, var(--fg));
+  --surface-sunken: color-mix(in srgb, var(--panel) 88%, black);
+  --accent-on: #ffffff;
+}
+
+/* Themes whose accent is too dark/light to carry white text handle it via
+   --accent-on, stamped by base.html alongside data-scheme. */
+
+/* ══════════════════════════════════════════════════════════════════════════
+   Primitives
+   ══════════════════════════════════════════════════════════════════════════ */
+
+/* ── Numerals ──────────────────────────────────────────────────────────
+   Money must never jitter as it counts up or re-renders, so every figure
+   is tabular. */
+.ds-num {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1, "cv01" 1;
+  letter-spacing: var(--track-tight);
+}
+
+/* ── Eyebrow label ─────────────────────────────────────────────────────── */
+.ds-eyebrow {
+  font-size: var(--f-micro);
+  font-weight: var(--w-semi);
+  text-transform: uppercase;
+  letter-spacing: var(--track-caps);
+  color: var(--ink-faint);
+  margin: 0;
+}
+
+.ds-meta {
+  font-size: var(--f-xs);
+  color: var(--ink-faint);
+  margin: 0;
+  line-height: var(--lh-snug);
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   Card
+   Three sizes carry the hierarchy: hero (the financial snapshot), the
+   default (most content), and compact (dense lists / secondary tiles).
+   ══════════════════════════════════════════════════════════════════════════ */
+
+.ds-card {
+  position: relative;
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-lg);
+  box-shadow: var(--e-2);
+  padding: var(--sp-5);
+  transition: box-shadow var(--dur-3) var(--ease-out),
+              transform  var(--dur-3) var(--ease-out),
+              border-color var(--dur-3) var(--ease-out);
+}
+
+/* A 1px inner highlight along the top edge. On dark themes this is what
+   actually separates a card from the page — the drop shadow cannot. */
+.ds-card::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--fg) 7%, transparent);
+}
+
+.ds-card--flush   { padding: 0; overflow: hidden; }
+.ds-card--compact { padding: var(--sp-4); border-radius: var(--r-md); }
+.ds-card--hero {
+  padding: var(--sp-6) var(--sp-7);
+  border-radius: var(--r-xl);
+  box-shadow: var(--e-3);
+}
+
+/* Only cards that actually do something on click get the lift. */
+.ds-card--interactive { cursor: pointer; }
+.ds-card--interactive:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--e-4);
+  border-color: color-mix(in srgb, var(--border) 60%, var(--fg) 12%);
+}
+.ds-card--interactive:active { transform: translateY(0); box-shadow: var(--e-2); }
+
+/* Gradient wash — used sparingly, on the hero and the copilot only. */
+.ds-card--wash {
+  background:
+    radial-gradient(120% 140% at 0% 0%,
+      color-mix(in srgb, var(--accent) 9%, transparent) 0%, transparent 58%),
+    var(--surface);
+}
+.ds-card--wash-ai {
+  background:
+    radial-gradient(115% 150% at 100% 0%,
+      color-mix(in srgb, var(--ai-mark) 12%, transparent) 0%, transparent 60%),
+    radial-gradient(90% 120% at 0% 100%,
+      color-mix(in srgb, var(--info-mark) 8%, transparent) 0%, transparent 55%),
+    var(--surface);
+}
+
+/* Status-toned cards */
+.ds-card--ok     { background: var(--ok-bg);     border-color: color-mix(in srgb, var(--ok-mark) 32%, var(--border)); }
+.ds-card--warn   { background: var(--warn-bg);   border-color: color-mix(in srgb, var(--warn-mark) 32%, var(--border)); }
+.ds-card--danger { background: var(--danger-bg); border-color: color-mix(in srgb, var(--danger-mark) 32%, var(--border)); }
+
+/* Card header — title left, actions right */
+.ds-card__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-3);
+  margin-bottom: var(--sp-4);
+}
+.ds-card__title {
+  font-size: var(--f-sm);
+  font-weight: var(--w-semi);
+  color: var(--ink-body);
+  margin: 0;
+  letter-spacing: -.005em;
+}
+.ds-card__actions { display: flex; align-items: center; gap: var(--sp-1); flex-shrink: 0; }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   Buttons
+   ══════════════════════════════════════════════════════════════════════════ */
+
+.ds-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-2);
+  min-height: 36px;
+  padding: 0 var(--sp-4);
+  border-radius: var(--r-sm);
+  border: 1px solid transparent;
+  font-family: inherit;
+  font-size: var(--f-sm);
+  font-weight: var(--w-semi);
+  line-height: 1;
+  text-decoration: none;
+  white-space: nowrap;
+  cursor: pointer;
+  background: transparent;
+  color: var(--ink-body);
+  transition: background var(--dur-1) var(--ease-out),
+              color var(--dur-1) var(--ease-out),
+              border-color var(--dur-1) var(--ease-out),
+              box-shadow var(--dur-2) var(--ease-out),
+              transform var(--dur-1) var(--ease-out);
+}
+.ds-btn:active { transform: scale(.975); }
+
+.ds-btn--primary {
+  background: var(--accent);
+  color: var(--accent-on);
+  box-shadow: var(--e-1);
+}
+.ds-btn--primary:hover {
+  background: color-mix(in srgb, var(--accent) 86%, var(--fg));
+  box-shadow: var(--e-2);
+}
+
+.ds-btn--secondary {
+  background: var(--surface);
+  border-color: var(--hairline-firm);
+  color: var(--ink-body);
+}
+.ds-btn--secondary:hover { background: var(--surface-hover); border-color: color-mix(in srgb, var(--border) 60%, var(--fg) 14%); }
+
+.ds-btn--ghost { color: var(--ink-muted); }
+.ds-btn--ghost:hover { background: color-mix(in srgb, var(--fg) 7%, transparent); color: var(--ink); }
+
+.ds-btn--danger { color: var(--danger-ink); }
+.ds-btn--danger:hover { background: var(--danger-bg); }
+
+.ds-btn--sm { min-height: 30px; padding: 0 var(--sp-3); font-size: var(--f-xs); }
+.ds-btn--lg { min-height: 44px; padding: 0 var(--sp-5); font-size: var(--f-md); }
+
+/* Icon-only. Visually 30px, but the hit area is padded out to 44px with a
+   pseudo-element so it still satisfies WCAG 2.2 target size. */
+.ds-btn--icon {
+  min-height: 30px;
+  width: 30px;
+  padding: 0;
+  border-radius: var(--r-xs);
+  color: var(--ink-faint);
+  position: relative;
+}
+.ds-btn--icon::after {
+  content: "";
+  position: absolute;
+  left: 50%; top: 50%;
+  width: var(--tap-min); height: var(--tap-min);
+  transform: translate(-50%, -50%);
+}
+.ds-btn--icon:hover { color: var(--ink); background: color-mix(in srgb, var(--fg) 8%, transparent); }
+.ds-btn--icon[aria-pressed="true"] {
+  color: var(--accent);
+  background: var(--accent-bg);
+}
+
+.ds-btn:disabled, .ds-btn[aria-disabled="true"] {
+  opacity: .45;
+  cursor: not-allowed;
+  transform: none;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   Chips — filter pills and AI suggestion pills
+   ══════════════════════════════════════════════════════════════════════════ */
+
+.ds-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+  min-height: 30px;
+  padding: 0 var(--sp-3);
+  border-radius: var(--r-full);
+  border: 1px solid var(--hairline-firm);
+  background: transparent;
+  color: var(--ink-muted);
+  font-family: inherit;
+  font-size: var(--f-xs);
+  font-weight: var(--w-medium);
+  line-height: 1;
+  white-space: nowrap;
+  text-decoration: none;
+  cursor: pointer;
+  transition: background var(--dur-1) var(--ease-out),
+              color var(--dur-1) var(--ease-out),
+              border-color var(--dur-1) var(--ease-out),
+              transform var(--dur-1) var(--ease-out);
+}
+.ds-chip:hover {
+  background: color-mix(in srgb, var(--fg) 6%, transparent);
+  color: var(--ink);
+  border-color: color-mix(in srgb, var(--border) 55%, var(--fg) 18%);
+}
+.ds-chip:active { transform: scale(.97); }
+.ds-chip[aria-pressed="true"], .ds-chip--active {
+  background: var(--accent-bg);
+  border-color: var(--accent);
+  color: var(--accent-ink);
+  font-weight: var(--w-semi);
+}
+.ds-chip--ai {
+  border-color: color-mix(in srgb, var(--ai-mark) 34%, var(--border));
+  color: var(--ai-ink);
+}
+.ds-chip--ai:hover {
+  background: var(--ai-bg);
+  border-color: var(--ai-mark);
+  color: var(--ai-ink);
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   Badges — compact status statements
+   ══════════════════════════════════════════════════════════════════════════ */
+
+.ds-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px var(--sp-2);
+  border-radius: var(--r-xs);
+  font-size: var(--f-micro);
+  font-weight: var(--w-semi);
+  line-height: 1.35;
+  letter-spacing: .01em;
+  white-space: nowrap;
+  background: color-mix(in srgb, var(--fg) 8%, transparent);
+  color: var(--ink-muted);
+}
+.ds-badge--ok     { background: var(--ok-bg);     color: var(--ok-ink); }
+.ds-badge--warn   { background: var(--warn-bg);   color: var(--warn-ink); }
+.ds-badge--danger { background: var(--danger-bg); color: var(--danger-ink); }
+.ds-badge--info   { background: var(--info-bg);   color: var(--info-ink); }
+.ds-badge--ai     { background: var(--ai-bg);     color: var(--ai-ink); }
+.ds-badge--pill   { border-radius: var(--r-full); padding: 3px var(--sp-3); }
+
+/* Value deltas: ▲ 4.2%  /  ▼ $312 */
+.ds-delta {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 3px;
+  font-size: var(--f-xs);
+  font-weight: var(--w-semi);
+  font-variant-numeric: tabular-nums;
+}
+.ds-delta--up   { color: var(--ok-ink); }
+.ds-delta--down { color: var(--danger-ink); }
+.ds-delta--flat { color: var(--ink-faint); }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   Progress
+   ══════════════════════════════════════════════════════════════════════════ */
+
+.ds-progress {
+  position: relative;
+  height: 6px;
+  border-radius: var(--r-full);
+  background: color-mix(in srgb, var(--fg) 11%, transparent);
+  overflow: hidden;
+}
+.ds-progress--tall { height: 9px; }
+.ds-progress__fill {
+  height: 100%;
+  border-radius: inherit;
+  background: var(--ok-mark);
+  /* Starts at 0 and is set by JS on reveal, so the fill animates in. */
+  width: 0;
+  transition: width var(--dur-5) var(--ease-out), background-color var(--dur-3) var(--ease-out);
+}
+.ds-progress__fill--warn   { background: var(--warn-mark); }
+.ds-progress__fill--danger { background: var(--danger-mark); }
+.ds-progress__fill--accent { background: var(--accent); }
+
+/* A marker for "where you should be by now" on a budget bar. */
+.ds-progress__pace {
+  position: absolute;
+  top: -2px; bottom: -2px;
+  width: 2px;
+  border-radius: 1px;
+  background: color-mix(in srgb, var(--fg) 45%, transparent);
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   Skeletons
+   ══════════════════════════════════════════════════════════════════════════ */
+
+.ds-skeleton {
+  position: relative;
+  overflow: hidden;
+  border-radius: var(--r-xs);
+  background: color-mix(in srgb, var(--fg) 9%, transparent);
+}
+.ds-skeleton::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background: linear-gradient(90deg,
+    transparent,
+    color-mix(in srgb, var(--fg) 7%, transparent),
+    transparent);
+  animation: ds-shimmer 1.35s var(--ease-inout) infinite;
+}
+@keyframes ds-shimmer { to { transform: translateX(100%); } }
+
+.ds-skeleton--text  { height: .7em; margin: .25em 0; }
+.ds-skeleton--line  { height: 10px; }
+.ds-skeleton--value { height: 28px; width: 62%; border-radius: var(--r-sm); }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   Focus — one visible ring everywhere, keyboard only
+   ══════════════════════════════════════════════════════════════════════════ */
+
+:where(a, button, input, select, textarea, summary, [tabindex]):focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+  border-radius: var(--r-xs);
+}
+.ds-card:focus-visible, .ds-card--interactive:focus-visible { border-radius: var(--r-lg); }
+
+/* Skip link */
+.ds-skip {
+  position: absolute;
+  left: var(--sp-3);
+  top: -60px;
+  z-index: 10000;
+  padding: var(--sp-3) var(--sp-4);
+  background: var(--accent);
+  color: var(--accent-on);
+  border-radius: var(--r-sm);
+  font-size: var(--f-sm);
+  font-weight: var(--w-semi);
+  transition: top var(--dur-2) var(--ease-out);
+}
+.ds-skip:focus { top: var(--sp-3); }
+
+/* Visually hidden but announced */
+.ds-sr {
+  position: absolute;
+  width: 1px; height: 1px;
+  padding: 0; margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   Entrance motion
+   Sections fade up in sequence on first paint. Each element sets
+   --ds-delay; nothing runs longer than ~500ms total so the page never
+   feels like it is waiting on an animation.
+   ══════════════════════════════════════════════════════════════════════════ */
+
+.ds-rise {
+  animation: ds-rise var(--dur-4) var(--ease-out) both;
+  animation-delay: var(--ds-delay, 0ms);
+}
+@keyframes ds-rise {
+  from { opacity: 0; transform: translateY(10px); }
+  to   { opacity: 1; transform: none; }
+}
+
+.ds-fade { animation: ds-fade var(--dur-3) var(--ease-out) both; animation-delay: var(--ds-delay, 0ms); }
+@keyframes ds-fade { from { opacity: 0; } to { opacity: 1; } }
+
+/* Notifications slide in from the side they are anchored to. */
+.ds-slide-in { animation: ds-slide-in var(--dur-4) var(--ease-out) both; animation-delay: var(--ds-delay, 0ms); }
+@keyframes ds-slide-in {
+  from { opacity: 0; transform: translateX(-10px); }
+  to   { opacity: 1; transform: none; }
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   Reduced motion — honour the OS setting completely.
+   Animations are removed rather than shortened; anything that only exists
+   as motion (shimmer, sheen) is replaced with a static equivalent.
+   ══════════════════════════════════════════════════════════════════════════ */
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: .001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: .001ms !important;
+    scroll-behavior: auto !important;
+  }
+  .ds-skeleton::after { display: none; }
+  .ds-card--interactive:hover { transform: none; }
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   Layout helpers
+   ══════════════════════════════════════════════════════════════════════════ */
+
+.ds-stack   { display: flex; flex-direction: column; }
+.ds-stack-2 { gap: var(--sp-2); }
+.ds-stack-3 { gap: var(--sp-3); }
+.ds-stack-4 { gap: var(--sp-4); }
+.ds-stack-5 { gap: var(--sp-5); }
+.ds-stack-6 { gap: var(--sp-6); }
+.ds-stack-8 { gap: var(--sp-8); }
+
+.ds-row { display: flex; align-items: center; gap: var(--sp-3); }
+.ds-row--between { justify-content: space-between; }
+.ds-row--wrap { flex-wrap: wrap; }
+
+.ds-divider { height: 1px; background: var(--hairline); border: 0; margin: 0; }
+
+/* Section heading — the seam between dashboard layers */
+.ds-section__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--sp-4);
+  flex-wrap: wrap;
+  margin-bottom: var(--sp-4);
+}
+.ds-section__title {
+  font-size: var(--f-lg);
+  font-weight: var(--w-semi);
+  color: var(--ink-strong);
+  letter-spacing: -.014em;
+  margin: 0;
+}
+.ds-section__sub {
+  font-size: var(--f-sm);
+  color: var(--ink-faint);
+  margin: 3px 0 0;
+  line-height: var(--lh-snug);
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   Scrollbars — slim, themed, out of the way
+   ══════════════════════════════════════════════════════════════════════════ */
+
+.ds-scroll { scrollbar-width: thin; scrollbar-color: color-mix(in srgb, var(--fg) 22%, transparent) transparent; }
+.ds-scroll::-webkit-scrollbar { width: 9px; height: 9px; }
+.ds-scroll::-webkit-scrollbar-track { background: transparent; }
+.ds-scroll::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--fg) 18%, transparent);
+  border-radius: var(--r-full);
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+.ds-scroll::-webkit-scrollbar-thumb:hover { background: color-mix(in srgb, var(--fg) 32%, transparent); background-clip: content-box; }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   Touch targets — phones only, so desktop density is untouched
+   ══════════════════════════════════════════════════════════════════════════ */
+
+@media (max-width: 640px) {
+  .ds-btn  { min-height: var(--tap-min); }
+  .ds-chip { min-height: 36px; padding: 0 var(--sp-4); }
+  .ds-btn--sm { min-height: 38px; }
+  .ds-btn--icon { min-height: 38px; width: 38px; }
+}
