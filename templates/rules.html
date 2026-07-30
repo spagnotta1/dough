@@ -1,291 +1,261 @@
 {% extends "base.html" %}
 
-{% block title %}Category Rules - Checkbook App{% endblock %}
+{% block title %}Category Rules · Dough{% endblock %}
 
 {% block content %}
-<div class="space-y-6">
+{# Phase 9 Wave 1d. The page is in MIGRATED, so test_ui_invariants.py holds it
+   to the cross-cutting rules: no inline <style>, no literal colours, no
+   Tailwind utilities, .ds-table, .ds-field/.ds-input, showToast() over alert().
 
-    <!-- ── AI Rule Suggestions ── -->
-    <div class="bg-white shadow sm:rounded-lg">
-        <div class="px-4 py-5 sm:p-6">
-            <div class="flex items-start justify-between gap-4 mb-4">
-                <div>
-                    <h3 class="text-lg font-medium text-gray-900 flex items-center gap-2">
-                        <svg class="h-5 w-5 text-violet-500" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
-                            <path stroke-linecap="round" stroke-linejoin="round" d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09z"/>
-                        </svg>
-                        AI Rule Suggestions
-                    </h3>
-                    <p class="mt-1 text-sm text-gray-500">
-                        Analyze your uncategorized transactions and let Claude suggest rules.
-                        {% if uncategorized_count > 0 %}
-                        <span class="font-medium text-violet-600">{{ uncategorized_count }} uncategorized transaction{{ 's' if uncategorized_count != 1 }} ready to analyze.</span>
-                        {% else %}
-                        <span class="text-green-600 font-medium">All transactions are categorized!</span>
-                        {% endif %}
-                    </p>
-                </div>
-            </div>
+   The script stays inline rather than moving to static/js/rules.js, and that is
+   a deliberate difference from chat.html. Half the markup on this page is built
+   by JavaScript — every AI suggestion card — and the invariants read the
+   *template*. Move the script to a file under static/ and the Tailwind check
+   stops seeing the markup it most needs to see. It also needs two server-side
+   values (the model catalogue and the current category list), which a file
+   under static/ is served as-is and never rendered by Jinja could not receive
+   without a data island.
 
-            <!-- Controls row -->
-            <div class="flex flex-wrap items-center gap-3 mb-4">
-                <!-- Inline model picker -->
-                <div class="flex items-center gap-1 bg-gray-100 rounded-lg p-1" id="ai-model-picker">
-                    <button class="ai-model-btn active" data-model="claude-haiku-4-5-20251001" title="Fastest, cheapest">Haiku</button>
-                    <button class="ai-model-btn" data-model="claude-sonnet-4-6" title="Balanced">Sonnet</button>
-                    <button class="ai-model-btn" data-model="claude-opus-4-8" title="Most capable">Opus</button>
-                </div>
-                <span id="ai-model-desc" class="text-xs text-gray-400 italic">Fastest &amp; most affordable</span>
+   Linked stylesheet, not an inline <style>: SPA navigation replaces <main>
+   only, so a <link> in <head> would never arrive on a client-side navigation
+   to this page. #}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/rules.css') }}">
 
-                <button id="ai-analyze-btn" onclick="runAISuggest()"
-                        {% if uncategorized_count == 0 %}disabled{% endif %}
-                        class="inline-flex items-center gap-2 px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-violet-600 hover:bg-violet-700 disabled:opacity-40 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-violet-500 transition-colors">
-                    <svg id="ai-analyze-icon" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
-                        <path stroke-linecap="round" stroke-linejoin="round" d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09z"/>
-                    </svg>
-                    <span id="ai-analyze-label">Analyze &amp; Suggest Rules</span>
-                </button>
-            </div>
+<div id="rules-page" class="ds-stack ds-stack-6">
 
-            <!-- Suggestions output -->
-            <div id="ai-suggestions-area" class="hidden">
-                <!-- Summary bar -->
-                <div class="flex items-center justify-between mb-3">
-                    <p id="ai-summary" class="text-sm font-medium text-gray-700"></p>
-                    <div class="flex gap-2">
-                        <button id="ai-accept-all-btn" onclick="acceptAllSuggestions()"
-                                class="text-sm px-3 py-1.5 rounded-md bg-green-600 hover:bg-green-700 text-white font-medium transition-colors">
-                            ✓ Accept All
-                        </button>
-                        <button onclick="clearSuggestions()"
-                                class="text-sm px-3 py-1.5 rounded-md border border-gray-300 text-gray-600 hover:bg-gray-50 transition-colors">
-                            Clear
-                        </button>
-                    </div>
-                </div>
+  <!-- ── AI rule suggestions ─────────────────────────────────────────────── -->
+  <section class="ds-card ds-card--wash-ai" aria-labelledby="aiRulesHeading">
+    <div class="ds-card__head">
+      <div>
+        <h2 id="aiRulesHeading" class="ds-section__title">AI Rule Suggestions</h2>
+        <p class="ds-section__sub">
+          Analyse your uncategorised transactions and let Dough suggest rules.
+          {% if uncategorized_count > 0 %}
+          <strong>{{ uncategorized_count }} uncategorised transaction{{ 's' if uncategorized_count != 1 }} ready to analyse.</strong>
+          {% else %}
+          Everything is categorised.
+          {% endif %}
+        </p>
+      </div>
+    </div>
 
-                <!-- Cards grid -->
-                <div id="ai-cards" class="grid grid-cols-1 gap-3 sm:grid-cols-2"></div>
-            </div>
+    <div class="rules-ai__controls">
+      {# Rendered from dough/ai/catalog.py, not hardcoded: this list and
+         chat's used to be separate copies that disagreed with each other and
+         with the server. aria-pressed carries the selection, so the CSS and
+         the screen reader read the same state — see rules.css. #}
+      <div class="rules-seg" id="ai-model-picker" role="group" aria-label="Model">
+        {% for m in ai_models %}
+        <button type="button" class="rules-seg__btn" data-model="{{ m.id }}"
+                aria-pressed="{{ 'true' if loop.first else 'false' }}"
+                title="{{ m.short_description }}">{{ m.label }}</button>
+        {% endfor %}
+      </div>
+      <span id="ai-model-desc" class="ds-meta">{{ ai_models[0].short_description }}</span>
 
-            <!-- Error display -->
-            <div id="ai-error" class="hidden mt-3 p-3 rounded-md bg-red-50 border border-red-200 text-sm text-red-700"></div>
+      <button id="ai-analyze-btn" type="button" class="ds-btn ds-btn--primary"
+              onclick="runAISuggest()"
+              {% if uncategorized_count == 0 %}disabled{% endif %}>
+        <svg id="ai-analyze-icon" width="16" height="16" viewBox="0 0 24 24" fill="none"
+             stroke="currentColor" stroke-width="1.5" aria-hidden="true">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09z"/>
+        </svg>
+        <span id="ai-analyze-label">Analyse &amp; suggest rules</span>
+      </button>
+    </div>
+
+    <div id="ai-suggestions-area" hidden>
+      <div class="ds-row ds-row--between">
+        <p id="ai-summary" class="ds-meta"></p>
+        <div class="ds-row">
+          <button id="ai-accept-all-btn" type="button" class="ds-btn ds-btn--sm ds-btn--primary"
+                  onclick="acceptAllSuggestions()">Accept all</button>
+          <button type="button" class="ds-btn ds-btn--sm ds-btn--secondary"
+                  onclick="clearSuggestions()">Clear</button>
         </div>
+      </div>
+
+      <div id="ai-cards" class="rules-ai__cards"></div>
     </div>
 
-    <style>
-    .ai-model-btn {
-        padding: 4px 12px;
-        border-radius: 6px;
-        border: none;
-        background: none;
-        font-size: .75rem;
-        font-weight: 500;
-        color: var(--fg, #6b7280);
-        cursor: pointer;
-        transition: background .12s, color .12s;
-        white-space: nowrap;
-    }
-    .ai-model-btn.active {
-        background: var(--panel, #fff);
-        color: var(--red, #7c3aed);
-        box-shadow: 0 1px 3px rgba(0,0,0,.12);
-        font-weight: 600;
-    }
-    .ai-model-btn:hover:not(.active) { background: rgba(0,0,0,.05); }
+    <div id="ai-error" class="ds-card ds-card--danger ds-card--compact" role="alert" hidden></div>
+  </section>
 
-    .suggestion-card {
-        border: 1px solid var(--border, #e5e7eb);
-        border-radius: 10px;
-        padding: 14px;
-        background: var(--panel, #fff);
-        transition: opacity .2s, border-color .2s;
-    }
-    .suggestion-card.accepted {
-        border-color: #22c55e;
-        background: color-mix(in srgb, #22c55e 5%, var(--panel, #fff));
-        opacity: .75;
-    }
-    .suggestion-card.skipped { display: none; }
-
-    .ai-spin { animation: ai-spin .8s linear infinite; }
-    @keyframes ai-spin { to { transform: rotate(360deg); } }
-
-    /* Mobile-only layout — no effect ≥640px */
-    @media (max-width: 640px) {
-      .ai-model-btn { padding: 8px 14px; }
-      #ai-analyze-btn { width: 100%; justify-content: center; padding-top: 11px; padding-bottom: 11px; }
-
-      #rulesTable, #rulesTable tbody { display: block; min-width: 0 !important; }
-      #rulesTable thead { display: none; }
-      #rulesTable tbody tr {
-        display: grid;
-        grid-template-columns: 1fr auto;
-        column-gap: 10px; row-gap: 4px;
-        padding: 12px 4px;
-        border-bottom: 1px solid var(--border);
-        cursor: default !important;
-      }
-      #rulesTable td { display: block; padding: 0 !important; border: none !important; white-space: normal !important; }
-      #rulesTable td:nth-child(1) { display: none; }  /* drag handle — no touch drag */
-      #rulesTable td:nth-child(2) { grid-column: 1; grid-row: 1; font-weight: 600; }
-      #rulesTable td:nth-child(4) { grid-column: 2; grid-row: 1; text-align: right !important; }
-      #rulesTable td:nth-child(4)::after { content: ' txns'; font-size: .7rem; color: var(--fg); opacity: .5; }
-      #rulesTable td:nth-child(3) { grid-column: 1 / -1; grid-row: 2; }
-      #rulesTable td:nth-child(5) { grid-column: 1 / -1; grid-row: 3; text-align: right; }
-      #rulesTable td:nth-child(5) button { padding: 6px 4px; }
-    }
-    </style>
-
-    <!-- Add New Rule -->
-    <div class="bg-white shadow px-4 py-5 sm:rounded-lg sm:p-6">
-        <h3 class="text-lg leading-6 font-medium text-gray-900">Add New Rule</h3>
-        <p class="mt-1 text-sm text-gray-500">Keywords wrapped in <code class="bg-gray-100 px-1 rounded">/…/</code> are treated as regex patterns (e.g. <code class="bg-gray-100 px-1 rounded">/amazon|amzn/</code>).</p>
-        <form method="POST" class="mt-5 space-y-4" id="addRuleForm">
-            <input type="hidden" name="action" value="add">
-            <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                <div>
-                    <label for="category" class="block text-sm font-medium text-gray-700">Category</label>
-                    <input type="text" name="category" id="category" required
-                           class="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm">
-                </div>
-                <div>
-                    <label for="keyword" class="block text-sm font-medium text-gray-700">Keyword / Pattern</label>
-                    <input type="text" name="keyword" id="keyword" required
-                           oninput="schedulePreview()"
-                           class="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm"
-                           placeholder="e.g. STARBUCKS or /starbucks|sbux/">
-                </div>
-            </div>
-
-            <!-- Test-rule preview (RU1) -->
-            <div id="previewBox" class="hidden rounded-md border border-indigo-200 bg-indigo-50 p-3">
-                <p class="text-xs font-semibold text-indigo-700 mb-2">Matching transactions (preview — up to 10):</p>
-                <div id="previewBody" class="space-y-1"></div>
-            </div>
-            <div id="previewNone" class="hidden text-xs text-gray-400">No existing transactions match this keyword.</div>
-
-            <div>
-                <button type="submit" class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500">
-                    Add Rule
-                </button>
-            </div>
-        </form>
+  <!-- ── Add a rule ──────────────────────────────────────────────────────── -->
+  <section class="ds-card" aria-labelledby="addRuleHeading">
+    <div class="ds-card__head">
+      <div>
+        <h2 id="addRuleHeading" class="ds-section__title">Add a rule</h2>
+        <p class="ds-section__sub">
+          A keyword wrapped in slashes is treated as a regular expression —
+          <code>/amazon|amzn/</code> matches either.
+        </p>
+      </div>
     </div>
 
-    <!-- Existing Rules with drag-to-reorder (RU2) + usage stats (RU4) -->
-    <div class="bg-white shadow sm:rounded-lg">
-        <div class="px-4 py-5 sm:p-6">
-            <div class="flex items-center justify-between mb-4">
-                <div>
-                    <h3 class="text-lg leading-6 font-medium text-gray-900">Existing Rules</h3>
-                    <p class="text-sm text-gray-500 mt-1">Drag rows to reorder — rules higher in the list take priority.</p>
-                </div>
-            </div>
-            <div class="overflow-x-auto">
-                <table id="rulesTable" class="min-w-full divide-y divide-gray-200">
-                    <thead class="bg-gray-50">
-                        <tr>
-                            <th class="px-3 py-3 w-6"></th>
-                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Category</th>
-                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Keywords / Patterns</th>
-                            <th class="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">Transactions</th>
-                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
-                        </tr>
-                    </thead>
-                    <tbody class="bg-white divide-y divide-gray-200" id="rulesBody">
-                        {% for category, keywords in rules.items() %}
-                        <tr class="hover:bg-gray-50 cursor-grab active:cursor-grabbing" draggable="true"
-                            data-category="{{ category }}">
-                            <td class="px-3 py-4 text-gray-300 select-none">
-                                <svg class="h-4 w-4" fill="currentColor" viewBox="0 0 20 20">
-                                    <path d="M7 2a2 2 0 1 0 0 4 2 2 0 0 0 0-4zm6 0a2 2 0 1 0 0 4 2 2 0 0 0 0-4zM7 8a2 2 0 1 0 0 4 2 2 0 0 0 0-4zm6 0a2 2 0 1 0 0 4 2 2 0 0 0 0-4zm-6 6a2 2 0 1 0 0 4 2 2 0 0 0 0-4zm6 0a2 2 0 1 0 0 4 2 2 0 0 0 0-4z"/>
-                                </svg>
-                            </td>
-                            <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">{{ category }}</td>
-                            <td class="px-6 py-4 text-sm text-gray-500">
-                                {% for keyword in keywords %}
-                                <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-indigo-100 text-indigo-800 mr-2 mb-2">
-                                    {{ keyword }}
-                                    <form method="POST" class="inline ml-1">
-                                        <input type="hidden" name="action" value="remove">
-                                        <input type="hidden" name="category" value="{{ category }}">
-                                        <input type="hidden" name="keyword" value="{{ keyword }}">
-                                        <button type="submit" class="text-indigo-400 hover:text-indigo-900 ml-0.5">
-                                            <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
-                                            </svg>
-                                        </button>
-                                    </form>
-                                </span>
-                                {% endfor %}
-                            </td>
-                            <td class="px-6 py-4 whitespace-nowrap text-sm text-center text-gray-500">
-                                <a href="{{ url_for('transactions', category=category) }}"
-                                   class="text-indigo-600 hover:text-indigo-900 font-medium">
-                                    {{ rule_stats.get(category, 0) }}
-                                </a>
-                            </td>
-                            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                                <form method="POST" class="inline">
-                                    <input type="hidden" name="action" value="remove">
-                                    <input type="hidden" name="category" value="{{ category }}">
-                                    <button type="submit"
-                                            onclick="return confirm('Delete entire {{ category }} category and all its keywords?')"
-                                            class="text-red-600 hover:text-red-900 font-medium">
-                                        Delete Category
-                                    </button>
-                                </form>
-                            </td>
-                        </tr>
-                        {% endfor %}
-                    </tbody>
-                </table>
-            </div>
+    <form method="POST" id="addRuleForm" class="ds-stack ds-stack-4">
+      {{ csrf_field() }}
+      <input type="hidden" name="action" value="add">
+
+      <div class="rules-form__grid">
+        <div class="ds-field">
+          <label class="ds-label" for="category">Category</label>
+          <input class="ds-input" type="text" name="category" id="category" required>
         </div>
+        <div class="ds-field">
+          <label class="ds-label" for="keyword">Keyword or pattern</label>
+          <input class="ds-input" type="text" name="keyword" id="keyword" required
+                 oninput="schedulePreview()" autocomplete="off"
+                 aria-describedby="previewBox"
+                 placeholder="STARBUCKS, or /starbucks|sbux/">
+        </div>
+      </div>
+
+      {# What this rule would catch, before it is saved. Adding a rule
+         retroactively recategorises matching transactions, so seeing the
+         damage first is the difference between a tool and a gamble. #}
+      <div id="previewBox" class="ds-card ds-card--wash ds-card--compact" hidden>
+        <p class="ds-eyebrow">Would match — first 10</p>
+        <div id="previewBody"></div>
+      </div>
+      <p id="previewNone" class="ds-hint" hidden>No existing transactions match this keyword.</p>
+
+      <div>
+        <button type="submit" class="ds-btn ds-btn--primary">Add rule</button>
+      </div>
+    </form>
+  </section>
+
+  <!-- ── Existing rules ──────────────────────────────────────────────────── -->
+  <section class="ds-card" aria-labelledby="existingRulesHeading">
+    <div class="ds-card__head">
+      <div>
+        <h2 id="existingRulesHeading" class="ds-section__title">Existing rules</h2>
+        <p class="ds-section__sub">Drag a row to reorder — rules higher in the list win.</p>
+      </div>
     </div>
+
+    {% if rules %}
+    <div class="ds-table-wrap ds-scroll">
+      <table id="rulesTable" class="ds-table ds-table--hover">
+        <thead>
+          <tr>
+            <th scope="col"><span class="ds-sr">Reorder</span></th>
+            <th scope="col">Category</th>
+            <th scope="col">Keywords &amp; patterns</th>
+            <th scope="col" class="ds-table__num">Transactions</th>
+            <th scope="col"><span class="ds-sr">Actions</span></th>
+          </tr>
+        </thead>
+        <tbody id="rulesBody">
+          {% for category, keywords in rules.items() %}
+          <tr class="rules-row" draggable="true" data-category="{{ category }}">
+            <td class="rules-grip" aria-hidden="true">
+              <svg width="16" height="16" viewBox="0 0 20 20" fill="currentColor">
+                <path d="M7 2a2 2 0 1 0 0 4 2 2 0 0 0 0-4zm6 0a2 2 0 1 0 0 4 2 2 0 0 0 0-4zM7 8a2 2 0 1 0 0 4 2 2 0 0 0 0-4zm6 0a2 2 0 1 0 0 4 2 2 0 0 0 0-4zm-6 6a2 2 0 1 0 0 4 2 2 0 0 0 0-4zm6 0a2 2 0 1 0 0 4 2 2 0 0 0 0-4z"/>
+              </svg>
+            </td>
+            <td class="rules-cell--category">{{ category }}</td>
+            <td class="rules-cell--keywords">
+              <div class="rules-keywords">
+                {% for keyword in keywords %}
+                <span class="ds-chip rules-keyword">
+                  {{ keyword }}
+                  <form method="POST">
+                    {{ csrf_field() }}
+                    <input type="hidden" name="action" value="remove">
+                    <input type="hidden" name="category" value="{{ category }}">
+                    <input type="hidden" name="keyword" value="{{ keyword }}">
+                    <button type="submit" class="rules-keyword__x"
+                            aria-label="Remove keyword {{ keyword }} from {{ category }}">
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none"
+                           stroke="currentColor" stroke-width="2.4" aria-hidden="true">
+                        <path stroke-linecap="round" d="M6 18L18 6M6 6l12 12"/>
+                      </svg>
+                    </button>
+                  </form>
+                </span>
+                {% endfor %}
+              </div>
+            </td>
+            <td class="ds-table__num rules-cell--count">
+              <a href="{{ url_for('transactions.index', category=category) }}">{{ rule_stats.get(category, 0) }}</a>
+            </td>
+            <td class="rules-cell--actions">
+              <form method="POST">
+                {{ csrf_field() }}
+                <input type="hidden" name="action" value="remove">
+                <input type="hidden" name="category" value="{{ category }}">
+                <button type="submit" class="ds-btn ds-btn--sm ds-btn--danger"
+                        onclick="return confirm('Delete the {{ category }} category and all its keywords?')">
+                  Delete category
+                </button>
+              </form>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <div class="ds-empty">
+      <p class="ds-empty__title">No rules yet</p>
+      <p class="ds-empty__body">
+        Add one above, or let Dough read your uncategorised transactions and propose some.
+      </p>
+    </div>
+    {% endif %}
+  </section>
 </div>
 
 <script>
-// ── AI Suggestions ────────────────────────────────────────────────────────────
-const AI_MODEL_DESCS = {
-    'claude-haiku-4-5-20251001': 'Fastest & most affordable',
-    'claude-sonnet-4-6':         'Balanced speed and accuracy',
-    'claude-opus-4-8':           'Deepest reasoning, highest cost',
-};
-let aiSelectedModel   = 'claude-haiku-4-5-20251001';
-let aiSuggestions     = [];
+// ── AI suggestions ───────────────────────────────────────────────────────────
+// From dough/ai/catalog.py, the same source as the buttons above.
+const AI_MODELS = {{ ai_models|tojson }};
+const AI_MODEL_DESCS = Object.fromEntries(
+    AI_MODELS.map(function (m) { return [m.id, m.short_description]; }));
+// This picker has always defaulted to the fastest model rather than the app-wide
+// default: rule suggestion runs over up to 200 descriptions and the cheap model
+// is the sensible starting point for a button the user presses repeatedly.
+let aiSelectedModel = AI_MODELS[0].id;
+let aiSuggestions   = [];
 
-// Model picker
-document.querySelectorAll('.ai-model-btn').forEach(function(btn) {
-    btn.addEventListener('click', function() {
-        document.querySelectorAll('.ai-model-btn').forEach(function(b){ b.classList.remove('active'); });
-        btn.classList.add('active');
+var segButtons = document.querySelectorAll('.rules-seg__btn');
+segButtons.forEach(function (btn) {
+    btn.addEventListener('click', function () {
+        segButtons.forEach(function (b) { b.setAttribute('aria-pressed', 'false'); });
+        btn.setAttribute('aria-pressed', 'true');
         aiSelectedModel = btn.dataset.model;
         document.getElementById('ai-model-desc').textContent = AI_MODEL_DESCS[aiSelectedModel] || '';
     });
 });
 
-function escHtml(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+function esc(s) {
+    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+                    .replace(/"/g, '&quot;');
+}
+
+function show(id, on) { document.getElementById(id).hidden = !on; }
 
 function setAnalyzing(on) {
-    var btn   = document.getElementById('ai-analyze-btn');
-    var icon  = document.getElementById('ai-analyze-icon');
-    var label = document.getElementById('ai-analyze-label');
-    btn.disabled = on;
-    if (on) {
-        icon.classList.add('ai-spin');
-        label.textContent = 'Analyzing…';
-    } else {
-        icon.classList.remove('ai-spin');
-        label.textContent = 'Analyze & Suggest Rules';
-    }
+    document.getElementById('ai-analyze-btn').disabled = on;
+    // The spinner is the design system's, so it turns at the same rate as every
+    // other pending thing in the product.
+    document.getElementById('ai-analyze-icon').classList.toggle('ds-spin', on);
+    document.getElementById('ai-analyze-label').textContent =
+        on ? 'Analysing…' : 'Analyse & suggest rules';
+}
+
+function failAI(message) {
+    var box = document.getElementById('ai-error');
+    box.textContent = message;
+    box.hidden = false;
 }
 
 async function runAISuggest() {
     setAnalyzing(true);
-    document.getElementById('ai-suggestions-area').classList.add('hidden');
-    document.getElementById('ai-error').classList.add('hidden');
+    show('ai-suggestions-area', false);
+    show('ai-error', false);
     document.getElementById('ai-cards').innerHTML = '';
 
     try {
@@ -295,19 +265,14 @@ async function runAISuggest() {
             body: JSON.stringify({model: aiSelectedModel})
         });
         var data = await res.json();
-
         if (!res.ok || data.error) {
-            document.getElementById('ai-error').textContent = data.error || 'Unknown error.';
-            document.getElementById('ai-error').classList.remove('hidden');
+            failAI(data.error || 'Something went wrong. Please try again.');
             return;
         }
-
         aiSuggestions = data.suggestions || [];
         renderSuggestions();
-
-    } catch(e) {
-        document.getElementById('ai-error').textContent = 'Network error — please try again.';
-        document.getElementById('ai-error').classList.remove('hidden');
+    } catch (e) {
+        failAI('Could not reach the server. Please try again.');
     } finally {
         setAnalyzing(false);
     }
@@ -316,126 +281,140 @@ async function runAISuggest() {
 var existingCategories = {{ rules.keys()|list|tojson }};
 
 function renderSuggestions() {
-    var area  = document.getElementById('ai-suggestions-area');
     var cards = document.getElementById('ai-cards');
     var sumEl = document.getElementById('ai-summary');
     cards.innerHTML = '';
 
     if (aiSuggestions.length === 0) {
-        sumEl.textContent = 'No suggestions — all uncategorized descriptions may be too ambiguous.';
-        area.classList.remove('hidden');
-        document.getElementById('ai-accept-all-btn').style.display = 'none';
+        sumEl.textContent = 'No suggestions — the remaining descriptions may be too ambiguous.';
+        document.getElementById('ai-accept-all-btn').hidden = true;
+        show('ai-suggestions-area', true);
         return;
     }
 
-    sumEl.textContent = aiSuggestions.length + ' suggestion' + (aiSuggestions.length !== 1 ? 's' : '') + ' found:';
-    document.getElementById('ai-accept-all-btn').style.display = '';
+    sumEl.textContent = aiSuggestions.length +
+        (aiSuggestions.length === 1 ? ' suggestion' : ' suggestions') + ':';
+    document.getElementById('ai-accept-all-btn').hidden = false;
 
-    aiSuggestions.forEach(function(s, i) {
-        var isNew      = existingCategories.indexOf(s.category) === -1;
-        var catBadge   = isNew
-            ? '<span class="text-xs px-2 py-0.5 rounded-full bg-violet-100 text-violet-700 font-medium">new category</span>'
-            : '<span class="text-xs px-2 py-0.5 rounded-full bg-gray-100 text-gray-600">existing</span>';
+    aiSuggestions.forEach(function (s, i) {
+        var isNew = existingCategories.indexOf(s.category) === -1;
+        var catBadge = isNew
+            ? '<span class="ds-badge ds-badge--ai">new category</span>'
+            : '<span class="ds-badge">existing</span>';
         var matchBadge = s.uncat_count > 0
-            ? '<span class="text-xs px-2 py-0.5 rounded-full bg-green-100 text-green-700 font-semibold">' + s.uncat_count + ' uncategorized</span>'
-            : '<span class="text-xs px-2 py-0.5 rounded-full bg-gray-100 text-gray-500">' + s.total_count + ' total</span>';
-        var examples   = s.examples && s.examples.length
-            ? '<p class="text-xs text-gray-400 mt-1 truncate" title="' + escHtml(s.examples.join(' · ')) + '">e.g. ' + escHtml(s.examples.slice(0,2).join(' · ')) + '</p>'
+            ? '<span class="ds-badge ds-badge--ok">' + s.uncat_count + ' uncategorised</span>'
+            : '<span class="ds-badge">' + s.total_count + ' total</span>';
+        var examples = s.examples && s.examples.length
+            ? '<p class="rules-sugg__examples" title="' + esc(s.examples.join(' · ')) + '">' +
+              'e.g. ' + esc(s.examples.slice(0, 2).join(' · ')) + '</p>'
             : '';
 
         var card = document.createElement('div');
-        card.className   = 'suggestion-card';
+        card.className   = 'ds-card ds-card--compact rules-sugg';
         card.dataset.idx = i;
-        card.innerHTML   =
-            '<div class="flex items-start justify-between gap-3">' +
-              '<div class="flex-1 min-w-0">' +
-                '<div class="flex flex-wrap items-center gap-1.5 mb-1">' +
-                  '<span class="text-sm font-semibold text-gray-900">' + escHtml(s.category) + '</span>' +
+        card.innerHTML =
+            '<div class="rules-sugg__row">' +
+              '<div class="rules-sugg__main">' +
+                '<div class="rules-sugg__badges">' +
+                  '<span class="rules-sugg__name">' + esc(s.category) + '</span>' +
                   catBadge + matchBadge +
                 '</div>' +
-                '<code class="block text-xs bg-gray-100 text-gray-700 px-2 py-1 rounded font-mono mb-1 break-all">' + escHtml(s.keyword) + '</code>' +
-                '<p class="text-xs text-gray-500 italic">' + escHtml(s.reason) + '</p>' +
+                '<code class="rules-sugg__pattern">' + esc(s.keyword) + '</code>' +
+                '<p class="rules-sugg__reason">' + esc(s.reason) + '</p>' +
                 examples +
               '</div>' +
-              '<div class="flex flex-col gap-1.5 flex-shrink-0 pt-0.5">' +
-                '<button onclick="acceptSuggestion(' + i + ', this)" class="text-xs px-3 py-1.5 rounded-md bg-green-600 hover:bg-green-700 text-white font-medium transition-colors whitespace-nowrap">✓ Accept</button>' +
-                '<button onclick="skipSuggestion(' + i + ')" class="text-xs px-3 py-1.5 rounded-md border border-gray-200 text-gray-500 hover:bg-gray-50 transition-colors">Skip</button>' +
+              '<div class="rules-sugg__actions">' +
+                '<button type="button" class="ds-btn ds-btn--sm ds-btn--primary" ' +
+                  'data-accept="' + i + '">Accept</button>' +
+                '<button type="button" class="ds-btn ds-btn--sm ds-btn--ghost" ' +
+                  'data-skip="' + i + '">Skip</button>' +
               '</div>' +
             '</div>';
         cards.appendChild(card);
     });
 
-    area.classList.remove('hidden');
+    show('ai-suggestions-area', true);
 }
+
+// Delegated, so the handlers survive re-rendering and nothing has to be
+// re-bound. One listener on the container that outlives every card in it.
+document.getElementById('ai-cards').addEventListener('click', function (e) {
+    var accept = e.target.closest('[data-accept]');
+    if (accept) { acceptSuggestion(Number(accept.dataset.accept), accept); return; }
+    var skip = e.target.closest('[data-skip]');
+    if (skip) skipSuggestion(Number(skip.dataset.skip));
+});
 
 async function acceptSuggestion(idx, btn) {
     var s = aiSuggestions[idx];
     if (!s) return;
-    var card = document.querySelector('.suggestion-card[data-idx="' + idx + '"]');
+    var card = document.querySelector('.rules-sugg[data-idx="' + idx + '"]');
     btn.disabled = true;
-    btn.textContent = '…';
+    btn.textContent = 'Saving…';
 
     try {
-        var res  = await fetch('/rules/ai-apply', {
+        var res = await fetch('/rules/ai-apply', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({category: s.category, keyword: s.keyword})
         });
         var data = await res.json();
-
         if (!res.ok || data.error) {
-            btn.textContent = '✗ Error';
-            btn.classList.add('bg-red-600');
+            btn.disabled = false;
+            btn.textContent = 'Retry';
+            showToast(data.error || 'Could not save that rule.', 'error');
             return;
         }
 
-        // Mark card accepted
-        card.classList.add('accepted');
-        card.querySelector('.flex.flex-col').innerHTML =
-            '<span class="text-xs text-green-700 font-medium">✓ Accepted</span>' +
-            '<span class="text-xs text-gray-400">' + data.applied_count + ' tx updated</span>';
+        card.classList.add('rules-sugg--accepted');
+        card.querySelector('.rules-sugg__actions').innerHTML =
+            '<div class="rules-sugg__done">' +
+              '<span class="ds-badge ds-badge--ok">Accepted</span>' +
+              '<span class="ds-meta">' + data.applied_count + ' updated</span>' +
+            '</div>';
 
-        // Add to local existing-categories list so badge updates on re-render
+        // Keep the local list in step so the badge is right on a re-render.
         if (existingCategories.indexOf(s.category) === -1) {
             existingCategories.push(s.category);
         }
-
-        showToast('✓ "' + s.category + '" moved to top priority — ' + data.applied_count + ' transaction(s) recategorized', 'success');
-
-    } catch(e) {
-        btn.textContent = '✗ Error';
+        showToast('"' + s.category + '" moved to top priority — ' +
+                  data.applied_count + ' transaction(s) recategorised', 'success');
+    } catch (e) {
         btn.disabled = false;
+        btn.textContent = 'Retry';
+        showToast('Could not reach the server. Please try again.', 'error');
     }
 }
 
 function skipSuggestion(idx) {
-    var card = document.querySelector('.suggestion-card[data-idx="' + idx + '"]');
-    if (card) card.classList.add('skipped');
+    var card = document.querySelector('.rules-sugg[data-idx="' + idx + '"]');
+    if (card) card.classList.add('rules-sugg--skipped');
 }
 
 async function acceptAllSuggestions() {
-    var cards  = document.querySelectorAll('.suggestion-card:not(.accepted):not(.skipped)');
     var allBtn = document.getElementById('ai-accept-all-btn');
     allBtn.disabled = true;
     allBtn.textContent = 'Accepting…';
 
     for (var i = 0; i < aiSuggestions.length; i++) {
-        var card = document.querySelector('.suggestion-card[data-idx="' + i + '"]');
-        if (!card || card.classList.contains('accepted') || card.classList.contains('skipped')) continue;
-        var acceptBtn = card.querySelector('button');
+        var card = document.querySelector('.rules-sugg[data-idx="' + i + '"]');
+        if (!card) continue;
+        if (card.classList.contains('rules-sugg--accepted')) continue;
+        if (card.classList.contains('rules-sugg--skipped')) continue;
+        var acceptBtn = card.querySelector('[data-accept]');
         if (acceptBtn) await acceptSuggestion(i, acceptBtn);
     }
 
-    allBtn.textContent = '✓ Done';
+    allBtn.textContent = 'Done';
 }
 
 function clearSuggestions() {
     aiSuggestions = [];
-    document.getElementById('ai-suggestions-area').classList.add('hidden');
-    document.getElementById('ai-error').classList.add('hidden');
+    show('ai-suggestions-area', false);
+    show('ai-error', false);
 }
 
-// ── RU1: Test-rule keyword preview ────────────────────────────────────────────
+// ── Keyword preview ──────────────────────────────────────────────────────────
 var previewTimer = null;
 function schedulePreview() {
     clearTimeout(previewTimer);
@@ -444,87 +423,85 @@ function schedulePreview() {
 
 function runPreview() {
     var kw = document.getElementById('keyword').value.trim();
-    var box   = document.getElementById('previewBox');
-    var body  = document.getElementById('previewBody');
-    var none  = document.getElementById('previewNone');
-    if (!kw) { box.classList.add('hidden'); none.classList.add('hidden'); return; }
+    var body = document.getElementById('previewBody');
+    if (!kw) { show('previewBox', false); show('previewNone', false); return; }
 
     fetch('/rules/test', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ keyword: kw })
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({keyword: kw})
     })
-    .then(function(r) { return r.json(); })
-    .then(function(data) {
+    .then(function (r) { return r.json(); })
+    .then(function (data) {
         body.innerHTML = '';
-        if (data.matches && data.matches.length > 0) {
-            data.matches.forEach(function(m) {
-                var div = document.createElement('div');
-                div.className = 'flex justify-between text-xs text-gray-700 py-0.5';
-                var amt = parseFloat(m.amount);
-                var amtClass = amt >= 0 ? 'text-green-600' : 'text-red-600';
-                div.innerHTML =
-                    '<span class="text-gray-400 mr-2 flex-shrink-0">' + m.date + '</span>' +
-                    '<span class="flex-1 truncate">' + esc(m.description) + '</span>' +
-                    '<span class="ml-3 font-medium ' + amtClass + ' flex-shrink-0">$' + Math.abs(amt).toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2}) + '</span>';
-                body.appendChild(div);
-            });
-            box.classList.remove('hidden');
-            none.classList.add('hidden');
-        } else {
-            box.classList.add('hidden');
-            none.classList.remove('hidden');
+        if (!data.matches || !data.matches.length) {
+            show('previewBox', false);
+            show('previewNone', true);
+            return;
         }
+        data.matches.forEach(function (m) {
+            var amount = parseFloat(m.amount);
+            var row = document.createElement('div');
+            row.className = 'rules-preview__row';
+            row.innerHTML =
+                '<span class="rules-preview__date">' + esc(m.date) + '</span>' +
+                '<span class="rules-preview__desc">' + esc(m.description) + '</span>' +
+                '<span class="rules-preview__amt ' +
+                  (amount >= 0 ? 'rules-preview__amt--in' : 'rules-preview__amt--out') + '">$' +
+                  Math.abs(amount).toLocaleString('en-US',
+                      {minimumFractionDigits: 2, maximumFractionDigits: 2}) +
+                '</span>';
+            body.appendChild(row);
+        });
+        show('previewBox', true);
+        show('previewNone', false);
     })
-    .catch(function() { box.classList.add('hidden'); none.classList.add('hidden'); });
+    .catch(function () { show('previewBox', false); show('previewNone', false); });
 }
 
-function esc(s) {
-    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-}
-
-// ── RU2: Drag-to-reorder ──────────────────────────────────────────────────────
+// ── Drag to reorder ──────────────────────────────────────────────────────────
 var tbody = document.getElementById('rulesBody');
 var dragging = null;
 
-tbody.addEventListener('dragstart', function(e) {
-    dragging = e.target.closest('tr');
-    setTimeout(function() { if (dragging) dragging.style.opacity = '0.4'; }, 0);
-});
+if (tbody) {
+    tbody.addEventListener('dragstart', function (e) {
+        dragging = e.target.closest('tr');
+        // Deferred a tick: applying the class synchronously would make the
+        // browser snapshot the *faded* row as the drag image.
+        setTimeout(function () {
+            if (dragging) dragging.classList.add('rules-row--dragging');
+        }, 0);
+    });
 
-tbody.addEventListener('dragend', function() {
-    if (dragging) dragging.style.opacity = '';
-    dragging = null;
-    saveOrder();
-});
+    tbody.addEventListener('dragend', function () {
+        if (dragging) dragging.classList.remove('rules-row--dragging');
+        dragging = null;
+        saveOrder();
+    });
 
-tbody.addEventListener('dragover', function(e) {
-    e.preventDefault();
-    var target = e.target.closest('tr');
-    if (!target || target === dragging) return;
-    var rows = Array.from(tbody.querySelectorAll('tr'));
-    var dragIdx  = rows.indexOf(dragging);
-    var targetIdx = rows.indexOf(target);
-    if (dragIdx < targetIdx) {
-        tbody.insertBefore(dragging, target.nextSibling);
-    } else {
-        tbody.insertBefore(dragging, target);
-    }
-});
+    tbody.addEventListener('dragover', function (e) {
+        e.preventDefault();
+        var target = e.target.closest('tr');
+        if (!target || !dragging || target === dragging) return;
+        var rows = Array.from(tbody.querySelectorAll('tr'));
+        if (rows.indexOf(dragging) < rows.indexOf(target)) {
+            tbody.insertBefore(dragging, target.nextSibling);
+        } else {
+            tbody.insertBefore(dragging, target);
+        }
+    });
+}
 
 function saveOrder() {
     var rows = Array.from(tbody.querySelectorAll('tr[data-category]'));
-    var order = rows.map(function(r) { return r.dataset.category; });
     fetch('/rules/reorder', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ order: order })
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({order: rows.map(function (r) { return r.dataset.category; })})
     })
-    .then(function(r) { return r.json(); })
-    .then(function(d) {
-        if (d.success) showToast('Rule order saved.', 'success');
-    })
-    .catch(function() { showToast('Failed to save order.', 'error'); });
+    .then(function (r) { return r.json(); })
+    .then(function (d) { if (d.success) showToast('Rule order saved.', 'success'); })
+    .catch(function () { showToast('Could not save the new order.', 'error'); });
 }
 </script>
 {% endblock %}

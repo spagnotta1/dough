@@ -1,343 +1,362 @@
 {% extends "base.html" %}
 
-{% block title %}Transactions - Checkbook App{% endblock %}
+{% block title %}Transactions · Dough{% endblock %}
 
 {% block content %}
-<style>
-/* Mobile-only layout — no effect ≥640px */
-@media (max-width: 640px) {
-  /* Date presets: one thumb-scrollable row */
-  #txnPresets { flex-wrap: nowrap !important; overflow-x: auto; -webkit-overflow-scrolling: touch; padding-bottom: 4px; }
-  #txnPresets button { white-space: nowrap; flex-shrink: 0; padding-top: 7px; padding-bottom: 7px; }
+{# Linked from inside the content block, not <head>: SPA navigation replaces
+   <main> only, so a stylesheet in the head never arrives on a client-side
+   navigation to this page. #}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/transactions.css') }}">
 
-  /* Collapsible filter section */
-  #filtersToggle { display: flex; }
-  #txnPresets.mob-hidden, #txnFilterForm.mob-hidden { display: none; }
+{# One definition for all seven sortable headers. The sort state goes on the
+   <th> as aria-sort — that is the element the ARIA spec puts it on, and it is
+   what a screen reader reads when the user lands in the column. #}
+{% macro sort_th(key, label, numeric=false) %}
+  {% set active = (sort_by == key) %}
+  {% set next_dir = 'asc' if active and sort_dir == 'desc' else 'desc' %}
+  <th scope="col"
+      {% if numeric %}class="ds-table__num"{% endif %}
+      {% if active %}aria-sort="{{ 'ascending' if sort_dir == 'asc' else 'descending' }}"{% endif %}>
+    <a class="ds-table__sort"
+       href="{{ url_for('transactions.index', **request.args.to_dict()|dict_update({'sort_by': key, 'sort_dir': next_dir, 'page': 1})) }}">
+      <span>{{ label }}</span>
+      <span class="ds-table__sort__dir" aria-hidden="true">{% if active %}{{ '▲' if sort_dir == 'asc' else '▼' }}{% else %}⇅{% endif %}</span>
+    </a>
+  </th>
+{% endmacro %}
 
-  /* Bulk action bar wraps instead of overflowing */
-  #bulkBar { flex-wrap: wrap; row-gap: 8px; }
+<div class="ds-stack ds-stack-6">
 
-  /* Table → fintech-style card rows (DOM unchanged, so row JS keeps working) */
-  #txnTable, #txnTable tbody { display: block; min-width: 0 !important; }
-  #txnTable thead { display: none; }
-  #txnTable tbody tr {
-    display: grid;
-    grid-template-columns: auto 1fr auto;
-    column-gap: 10px;
-    row-gap: 2px;
-    padding: 12px 2px;
-    border-bottom: 1px solid var(--border);
-  }
-  #txnTable td { display: block; padding: 0 !important; border: none !important; white-space: normal !important; }
-  #txnTable td:nth-child(1) { grid-column: 1; grid-row: 1 / 3; align-self: center; }   /* checkbox */
-  #txnTable td:nth-child(1) input { width: 20px; height: 20px; }
-  #txnTable td:nth-child(2) { display: none; }                                          /* id */
-  #txnTable td:nth-child(4) {                                                           /* description */
-    grid-column: 2; grid-row: 1;
-    font-weight: 600;
-    max-width: none !important;
-    overflow: hidden; text-overflow: ellipsis; white-space: nowrap !important;
-  }
-  #txnTable td:nth-child(7) { grid-column: 3; grid-row: 1; text-align: right; font-size: .95rem; } /* amount */
-  #txnTable td:nth-child(3) { grid-column: 2; grid-row: 2; font-size: .72rem; opacity: .55; }      /* date */
-  #txnTable td:nth-child(5) { grid-column: 3; grid-row: 2; text-align: right; font-size: .72rem; opacity: .55; } /* account */
-  #txnTable td:nth-child(6) { grid-column: 2; grid-row: 3; margin-top: 6px; }            /* category */
-  #txnTable td:nth-child(6) select { width: 100%; padding: 8px 10px; border-radius: 8px; }
-  #txnTable td:nth-child(8) {                                                            /* actions */
-    grid-column: 3; grid-row: 3;
-    margin-top: 6px; align-self: center;
-    text-align: right; white-space: nowrap !important;
-  }
-  #txnTable td:nth-child(8) button { padding: 8px 10px; font-size: 1.05rem; }
+  <!-- ── Filters ────────────────────────────────────────────────────────── -->
+  <section class="ds-card" aria-labelledby="txnFiltersHeading">
+    <h2 id="txnFiltersHeading" class="ds-sr">Filter transactions</h2>
 
-  /* Edit modal slides up as a bottom sheet */
-  #editModal > .flex { align-items: flex-end; padding: 0; }
-  #editModal .relative { max-width: none; border-radius: 18px 18px 0 0; padding-bottom: calc(1.5rem + env(safe-area-inset-bottom)); }
-}
-</style>
-<div class="space-y-6">
-    <!-- Filters -->
-    <div class="bg-white shadow px-4 py-5 sm:rounded-lg sm:p-6">
-        <!-- Mobile-only filters toggle (CSS shows it below 640px) -->
-        <button id="filtersToggle" type="button" onclick="toggleTxnFilters()"
-                class="hidden w-full items-center justify-between mb-3 text-sm font-semibold text-gray-700">
-            <span>Filters &amp; Search</span>
-            <span id="filtersChevron" class="text-gray-400">▾</span>
-        </button>
-        <!-- Date presets -->
-        <div id="txnPresets" class="flex flex-wrap gap-2 mb-3">
-            <span class="text-xs font-medium text-gray-500 self-center">Quick:</span>
-            <button type="button" onclick="applyDatePreset('this_month')" class="px-2.5 py-1 text-xs font-medium rounded border border-gray-300 text-gray-600 hover:bg-indigo-50 hover:border-indigo-400 hover:text-indigo-700 transition-colors">This Month</button>
-            <button type="button" onclick="applyDatePreset('last_month')" class="px-2.5 py-1 text-xs font-medium rounded border border-gray-300 text-gray-600 hover:bg-indigo-50 hover:border-indigo-400 hover:text-indigo-700 transition-colors">Last Month</button>
-            <button type="button" onclick="applyDatePreset('last_3mo')" class="px-2.5 py-1 text-xs font-medium rounded border border-gray-300 text-gray-600 hover:bg-indigo-50 hover:border-indigo-400 hover:text-indigo-700 transition-colors">Last 3 Mo</button>
-            <button type="button" onclick="applyDatePreset('ytd')" class="px-2.5 py-1 text-xs font-medium rounded border border-gray-300 text-gray-600 hover:bg-indigo-50 hover:border-indigo-400 hover:text-indigo-700 transition-colors">YTD</button>
-            <button type="button" onclick="applyDatePreset('last_year')" class="px-2.5 py-1 text-xs font-medium rounded border border-gray-300 text-gray-600 hover:bg-indigo-50 hover:border-indigo-400 hover:text-indigo-700 transition-colors">Last Year</button>
-        </div>
-        <form id="txnFilterForm" method="GET" class="space-y-4 sm:space-y-0 sm:flex sm:flex-wrap sm:gap-4 items-end">
-            <!-- preserve sort + per_page across filter submissions -->
-            <input type="hidden" name="sort_by"  value="{{ sort_by }}">
-            <input type="hidden" name="sort_dir" value="{{ sort_dir }}">
-            <input type="hidden" name="per_page" value="{{ per_page }}">
-            <div class="flex-1 min-w-0">
-                <label for="account" class="block text-sm font-medium text-gray-700">Account</label>
-                <select name="account" id="account" class="mt-1 block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm rounded-md">
-                    <option value="">All Accounts</option>
-                    {% for account in accounts %}
-                    <option value="{{ account }}" {% if account_filter == account %}selected{% endif %}>{{ account }}</option>
-                    {% endfor %}
-                </select>
-            </div>
-            <div class="flex-1 min-w-0">
-                <label for="category" class="block text-sm font-medium text-gray-700">Category</label>
-                <select name="category" id="category" class="mt-1 block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm rounded-md">
-                    <option value="">All Categories</option>
-                    {% for category in categories %}
-                    <option value="{{ category }}" {% if category_filter == category %}selected{% endif %}>{{ category }}</option>
-                    {% endfor %}
-                </select>
-            </div>
-            <div class="flex-1 min-w-0">
-                <label for="direction" class="block text-sm font-medium text-gray-700">Direction</label>
-                <select name="direction" id="direction" class="mt-1 block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm rounded-md">
-                    <option value="">All</option>
-                    <option value="inbound" {% if direction_filter == 'inbound' %}selected{% endif %}>Inbound</option>
-                    <option value="outgo"   {% if direction_filter == 'outgo'   %}selected{% endif %}>Outgo</option>
-                </select>
-            </div>
-            <div class="flex-1 min-w-0">
-                <label for="start_date" class="block text-sm font-medium text-gray-700">Start Date</label>
-                <input type="date" name="start_date" id="start_date" value="{{ start_date or '' }}" class="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm">
-            </div>
-            <div class="flex-1 min-w-0">
-                <label for="end_date" class="block text-sm font-medium text-gray-700">End Date</label>
-                <input type="date" name="end_date" id="end_date" value="{{ end_date or '' }}" class="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm">
-            </div>
-            <div class="flex-1 min-w-0">
-                <label for="search" class="block text-sm font-medium text-gray-700">Search</label>
-                <input type="text" name="search" id="search" value="{{ search_query or '' }}" placeholder="Search description..." class="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm">
-            </div>
-            <div class="flex space-x-2 items-end">
-                <button type="submit" class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-indigo-600 hover:bg-indigo-700">Apply</button>
-                <a href="{{ url_for('clear_filters') }}" class="inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md shadow-sm text-gray-700 bg-white hover:bg-gray-50">Clear</a>
-                <a id="exportBtn" href="{{ url_for('export', account=account_filter or '', category=category_filter or '', start_date=start_date or '', end_date=end_date or '', direction=direction_filter or '', search=search_query or '') }}"
-                   class="inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md shadow-sm text-gray-700 bg-white hover:bg-gray-50">Export CSV</a>
-            </div>
-        </form>
+    {# Phone only — the ledger is the main event, so the filters start folded. #}
+    <button id="filtersToggle" type="button" class="ds-btn ds-btn--ghost txn-filters__toggle"
+            onclick="toggleTxnFilters()" aria-expanded="false" aria-controls="txnFilterForm">
+      <span>Filters &amp; Search</span>
+      <span id="filtersChevron" aria-hidden="true">▾</span>
+    </button>
+
+    <div id="txnPresets" class="txn-presets">
+      <span class="ds-eyebrow">Quick</span>
+      <button type="button" class="ds-chip" onclick="applyDatePreset('this_month')">This Month</button>
+      <button type="button" class="ds-chip" onclick="applyDatePreset('last_month')">Last Month</button>
+      <button type="button" class="ds-chip" onclick="applyDatePreset('last_3mo')">Last 3 Mo</button>
+      <button type="button" class="ds-chip" onclick="applyDatePreset('ytd')">YTD</button>
+      <button type="button" class="ds-chip" onclick="applyDatePreset('last_year')">Last Year</button>
     </div>
 
-    <!-- Bulk Action Bar -->
-    <div id="bulkBar" class="hidden bg-indigo-50 border border-indigo-200 rounded-lg px-4 py-3 flex items-center space-x-4">
-        <span id="selectedCount" class="text-sm font-medium text-indigo-700">0 selected</span>
-        <select id="bulkCategory" class="text-sm border-gray-300 rounded-md focus:ring-indigo-500 focus:border-indigo-500">
-            <option value="">— choose category —</option>
+    <form id="txnFilterForm" method="GET" class="txn-filter-form">
+      {# Sort and page size survive a filter submission. #}
+      <input type="hidden" name="sort_by"  value="{{ sort_by }}">
+      <input type="hidden" name="sort_dir" value="{{ sort_dir }}">
+      <input type="hidden" name="per_page" value="{{ per_page }}">
+
+      <div class="txn-filters__grid">
+        <div class="ds-field">
+          <label class="ds-label" for="account">Account</label>
+          <select class="ds-select" name="account" id="account">
+            <option value="">All Accounts</option>
+            {% for account in accounts %}
+            <option value="{{ account }}" {% if account_filter == account %}selected{% endif %}>{{ account }}</option>
+            {% endfor %}
+          </select>
+        </div>
+
+        <div class="ds-field">
+          <label class="ds-label" for="category">Category</label>
+          <select class="ds-select" name="category" id="category">
+            <option value="">All Categories</option>
+            {% for category in categories %}
+            <option value="{{ category }}" {% if category_filter == category %}selected{% endif %}>{{ category }}</option>
+            {% endfor %}
+          </select>
+        </div>
+
+        <div class="ds-field">
+          <label class="ds-label" for="direction">Direction</label>
+          <select class="ds-select" name="direction" id="direction">
+            <option value="">All</option>
+            <option value="inbound" {% if direction_filter == 'inbound' %}selected{% endif %}>Inbound</option>
+            <option value="outgo"   {% if direction_filter == 'outgo'   %}selected{% endif %}>Outgo</option>
+          </select>
+        </div>
+
+        <div class="ds-field">
+          <label class="ds-label" for="start_date">Start Date</label>
+          <input class="ds-input" type="date" name="start_date" id="start_date" value="{{ start_date or '' }}">
+        </div>
+
+        <div class="ds-field">
+          <label class="ds-label" for="end_date">End Date</label>
+          <input class="ds-input" type="date" name="end_date" id="end_date" value="{{ end_date or '' }}">
+        </div>
+
+        <div class="ds-field">
+          <label class="ds-label" for="search">Search</label>
+          <input class="ds-input" type="text" name="search" id="search"
+                 value="{{ search_query or '' }}" placeholder="Search description…">
+        </div>
+
+        <div class="txn-filters__actions">
+          <button type="submit" class="ds-btn ds-btn--primary">Apply</button>
+          <a class="ds-btn ds-btn--secondary" href="{{ url_for('transactions.clear_filters') }}">Clear</a>
+          <a class="ds-btn ds-btn--secondary" id="exportBtn"
+             href="{{ url_for('transactions.export', account=account_filter or '', category=category_filter or '', start_date=start_date or '', end_date=end_date or '', direction=direction_filter or '', search=search_query or '') }}">Export CSV</a>
+        </div>
+      </div>
+    </form>
+  </section>
+
+  <!-- ── Bulk actions ───────────────────────────────────────────────────── -->
+  {# The native hidden attribute rather than a Tailwind .hidden class, so this
+     bar keeps working once the CDN goes. #}
+  <div id="bulkBar" class="ds-card ds-card--compact txn-bulk" hidden>
+    <span id="selectedCount" class="txn-bulk__count">0 selected</span>
+    <label class="ds-sr" for="bulkCategory">Category to apply</label>
+    <select id="bulkCategory" class="ds-select txn-cat-select">
+      <option value="">— choose category —</option>
+      {% for category in categories %}
+      <option value="{{ category }}">{{ category }}</option>
+      {% endfor %}
+    </select>
+    <button type="button" class="ds-btn ds-btn--primary ds-btn--sm" onclick="applyBulkCategory()">Apply Category</button>
+    <button type="button" class="ds-btn ds-btn--danger ds-btn--sm" onclick="deleteSelected()">Delete Selected</button>
+    <button type="button" class="ds-btn ds-btn--ghost ds-btn--sm" onclick="clearSelection()">Clear</button>
+  </div>
+
+  <!-- ── Ledger ─────────────────────────────────────────────────────────── -->
+  <section class="ds-card" aria-labelledby="txnTableHeading">
+    <h2 id="txnTableHeading" class="ds-sr">Transactions</h2>
+
+    <div class="txn-toolbar">
+      <p class="ds-meta">
+        Showing <strong>{{ transactions.items|length }}</strong> of
+        <strong>{{ transactions.total }}</strong> results
+      </p>
+      <div class="ds-row">
+        <label class="ds-label" for="perPage">Rows</label>
+        <select id="perPage" class="ds-select txn-cat-select" onchange="changePerPage(this.value)">
+          {% for n in [25, 50, 100, 250] %}
+          <option value="{{ n }}" {% if per_page == n %}selected{% endif %}>{{ n }}</option>
+          {% endfor %}
+        </select>
+      </div>
+    </div>
+
+    <div class="ds-table-wrap ds-scroll">
+      <table id="txnTable" class="ds-table ds-table--hover">
+        <caption class="ds-sr">Transactions, sortable by column. Use the checkbox in each row to select it for bulk actions.</caption>
+        <thead>
+          <tr>
+            <th scope="col">
+              <input type="checkbox" id="selectAll" aria-label="Select all transactions on this page">
+            </th>
+            {{ sort_th('id', 'ID') }}
+            {{ sort_th('date', 'Date') }}
+            {{ sort_th('description', 'Description') }}
+            {{ sort_th('account', 'Account') }}
+            {{ sort_th('category', 'Category') }}
+            {{ sort_th('amount', 'Amount', numeric=true) }}
+            <th scope="col"><span class="ds-sr">Actions</span></th>
+          </tr>
+        </thead>
+        {# Cell order is load-bearing: saveEdit() addresses cells by index
+           (2 date, 3 description, 4 account, 6 amount) and the phone layout
+           positions them by :nth-child. Reorder a column here and both
+           follow it in transactions.css and the script below. #}
+        <tbody>
+          {% for transaction in transactions.items %}
+          <tr id="row-{{ transaction.id }}" data-id="{{ transaction.id }}">
+            <td>
+              <input type="checkbox" class="row-check" value="{{ transaction.id }}"
+                     aria-label="Select transaction {{ transaction.id }}">
+            </td>
+            <td class="ds-meta">{{ transaction.id }}</td>
+            <td>{{ transaction.date.strftime('%Y-%m-%d') }}</td>
+            <td class="txn-desc" title="{{ transaction.description }}">{{ transaction.description }}</td>
+            <td>{{ transaction.account_name }}</td>
+            <td>
+              <label class="ds-sr" for="cat-{{ transaction.id }}">Category for transaction {{ transaction.id }}</label>
+              <select id="cat-{{ transaction.id }}" class="ds-select txn-cat-select category-select"
+                      data-transaction-id="{{ transaction.id }}" onchange="updateCategory(this)">
+                {% for category in categories %}
+                <option value="{{ category }}" {% if transaction.category == category %}selected{% endif %}>{{ category }}</option>
+                {% endfor %}
+              </select>
+            </td>
+            {# The sign is written out, not just coloured — colour alone would
+               put the direction of the money in a channel some users do not
+               receive, and this is the number they are here for. #}
+            <td class="ds-table__num {% if transaction.amount >= 0 %}txn-amt--in{% else %}txn-amt--out{% endif %}">
+              {%- if transaction.amount < 0 %}-{% endif -%}
+              ${{ "{:,.2f}".format(transaction.amount|abs) }}
+            </td>
+            <td>
+              <div class="txn-row-actions">
+                {% if transaction.notes %}
+                <span class="txn-note-dot" title="{{ transaction.notes }}" aria-hidden="true"></span>
+                <span class="ds-sr">Has a note: {{ transaction.notes }}</span>
+                {% endif %}
+                {# The single quotes around this attribute are load-bearing, and
+                   so is every |tojson in it.
+
+                   `|tojson` returns a JSON literal, and a JSON string is
+                   delimited by double quotes. Inside a double-quoted HTML
+                   attribute those quotes close the attribute: the browser read
+                   `onclick="openEditModal(8, '2026-07-21', -500.0, "` and threw
+                   `SyntaxError: Unexpected end of input` on every click, so the
+                   Edit button did nothing on every row of the ledger. Nothing
+                   caught it, because an onclick attribute is not compiled until
+                   it fires — the page loads clean and the console stays silent
+                   until somebody actually clicks.
+
+                   Single quotes fix it because Flask's tojson escapes `'` (and
+                   `<`, `>`, `&`) to \u form, so no value can reach the attribute
+                   delimiter. That is also why the date goes through tojson now
+                   instead of being wrapped in hand-written quotes: a hand-written
+                   `'...'` inside a single-quoted attribute reintroduces exactly
+                   the bug being fixed.
+
+                   test_ui_invariants.py::test_no_tojson_inside_a_double_quoted_attribute
+                   holds the rule. #}
+                <button type="button" class="ds-btn ds-btn--icon"
+                        aria-label="Edit transaction {{ transaction.id }}" title="Edit"
+                        onclick='openEditModal({{ transaction.id }}, {{ transaction.date.strftime("%Y-%m-%d")|tojson }}, {{ transaction.amount|float }}, {{ transaction.description|tojson }}, {{ transaction.account_name|tojson }}, {{ transaction.category|tojson }}, {{ (transaction.notes or "")|tojson }})'>&#x270E;</button>
+                <button type="button" class="ds-btn ds-btn--icon ds-btn--danger"
+                        aria-label="Delete transaction {{ transaction.id }}" title="Delete"
+                        onclick="deleteRow({{ transaction.id }})">&#x2715;</button>
+              </div>
+            </td>
+          </tr>
+          {% else %}
+          {# A filter that matches nothing renders a header over blank space
+             unless this is here — which reads as a broken page rather than an
+             answer to the question the user asked. #}
+          <tr class="txn-empty-row">
+            <td colspan="8">
+              <div class="ds-empty">
+                <span class="ds-empty__art" data-dough="searching" data-dough-size="96"></span>
+                <p class="ds-empty__title">Nothing matches that</p>
+                <p class="ds-empty__body">I looked, but no transactions fit these filters.
+                  Try widening the dates, or clear the filters to see everything again.</p>
+                <div class="ds-empty__actions">
+                  <a class="ds-btn ds-btn--secondary" href="{{ url_for('transactions.clear_filters') }}">Clear filters</a>
+                </div>
+              </div>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    {% if transactions.pages > 1 %}
+    <nav class="txn-pager" aria-label="Transaction pages">
+      {# Phone: two big targets instead of a row of page numbers. #}
+      <div class="txn-pager--compact">
+        {% if transactions.has_prev %}
+        {% set args = request.args.to_dict() %}{% set _ = args.update({'page': transactions.prev_num}) %}
+        <a class="ds-btn ds-btn--secondary" href="{{ url_for('transactions.index', **args) }}">&larr; Prev</a>
+        {% else %}
+        <span class="ds-btn ds-btn--secondary" aria-disabled="true">&larr; Prev</span>
+        {% endif %}
+        <p class="ds-meta">{{ transactions.page }} / {{ transactions.pages }}</p>
+        {% if transactions.has_next %}
+        {% set args = request.args.to_dict() %}{% set _ = args.update({'page': transactions.next_num}) %}
+        <a class="ds-btn ds-btn--secondary" href="{{ url_for('transactions.index', **args) }}">Next &rarr;</a>
+        {% else %}
+        <span class="ds-btn ds-btn--secondary" aria-disabled="true">Next &rarr;</span>
+        {% endif %}
+      </div>
+
+      <p class="ds-meta txn-pager__full">
+        Page <strong>{{ transactions.page }}</strong> of <strong>{{ transactions.pages }}</strong>
+      </p>
+      <div class="txn-pager__pages txn-pager__full">
+        {% if transactions.has_prev %}
+        {% set args = request.args.to_dict() %}{% set _ = args.update({'page': transactions.prev_num}) %}
+        <a class="ds-btn ds-btn--secondary ds-btn--sm" href="{{ url_for('transactions.index', **args) }}"
+           aria-label="Previous page">&larr;</a>
+        {% endif %}
+        {% for page in transactions.iter_pages() %}
+          {% if page %}
+            {% set args = request.args.to_dict() %}{% set _ = args.update({'page': page}) %}
+            <a class="ds-chip {% if page == transactions.page %}ds-chip--active{% endif %}"
+               href="{{ url_for('transactions.index', **args) }}"
+               {% if page == transactions.page %}aria-current="page"{% endif %}>{{ page }}</a>
+          {% else %}
+            <span class="txn-pager__gap" aria-hidden="true">…</span>
+          {% endif %}
+        {% endfor %}
+        {% if transactions.has_next %}
+        {% set args = request.args.to_dict() %}{% set _ = args.update({'page': transactions.next_num}) %}
+        <a class="ds-btn ds-btn--secondary ds-btn--sm" href="{{ url_for('transactions.index', **args) }}"
+           aria-label="Next page">&rarr;</a>
+        {% endif %}
+      </div>
+    </nav>
+    {% endif %}
+  </section>
+</div>
+
+<!-- ── Edit dialog ──────────────────────────────────────────────────────────
+     A native <dialog>, so focus trapping, Esc-to-close, and inertness of the
+     page behind are the platform's job rather than ours. The previous
+     div-with-a-backdrop did none of the three. -->
+<dialog id="editModal" class="ds-dialog" aria-labelledby="editModalTitle">
+  <div class="ds-dialog__panel">
+    <h2 id="editModalTitle" class="ds-dialog__title">Edit Transaction</h2>
+
+    <div class="ds-dialog__body ds-stack ds-stack-4">
+      <div class="txn-filters__grid">
+        <div class="ds-field">
+          <label class="ds-label" for="edit_date">Date</label>
+          <input class="ds-input" type="date" id="edit_date">
+        </div>
+        <div class="ds-field">
+          <label class="ds-label" for="edit_amount">Amount</label>
+          <input class="ds-input ds-input--num" type="number" step="0.01" id="edit_amount">
+        </div>
+      </div>
+
+      <div class="ds-field">
+        <label class="ds-label" for="edit_description">Description</label>
+        <input class="ds-input" type="text" id="edit_description">
+      </div>
+
+      <div class="txn-filters__grid">
+        <div class="ds-field">
+          <label class="ds-label" for="edit_account">Account</label>
+          <select class="ds-select" id="edit_account">
+            {% for account in accounts %}
+            <option value="{{ account }}">{{ account }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="ds-field">
+          <label class="ds-label" for="edit_category">Category</label>
+          <select class="ds-select" id="edit_category">
             {% for category in categories %}
             <option value="{{ category }}">{{ category }}</option>
             {% endfor %}
-        </select>
-        <button onclick="applyBulkCategory()" class="inline-flex items-center px-3 py-1.5 border border-transparent text-sm font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700">
-            Apply Category
-        </button>
-        <button onclick="deleteSelected()" class="inline-flex items-center px-3 py-1.5 border border-transparent text-sm font-medium rounded-md text-white bg-red-600 hover:bg-red-700">
-            Delete Selected
-        </button>
-        <button onclick="clearSelection()" class="text-sm text-gray-500 hover:text-gray-700">Clear</button>
-    </div>
-
-    <!-- Transactions Table -->
-    <div class="bg-white shadow sm:rounded-lg">
-        <div class="px-4 py-5 sm:p-6">
-            <!-- Row count + page-size selector -->
-            <div class="flex items-center justify-between mb-3">
-                <p class="text-sm text-gray-600">
-                    Showing <span class="font-medium">{{ transactions.items|length }}</span> of
-                    <span class="font-medium">{{ transactions.total }}</span> results
-                </p>
-                <div class="flex items-center space-x-2">
-                    <label class="text-sm text-gray-600">Rows:</label>
-                    <select onchange="changePerPage(this.value)" class="text-sm border-gray-300 rounded-md focus:ring-indigo-500 focus:border-indigo-500">
-                        {% for n in [25, 50, 100, 250] %}
-                        <option value="{{ n }}" {% if per_page == n %}selected{% endif %}>{{ n }}</option>
-                        {% endfor %}
-                    </select>
-                </div>
-            </div>
-
-            <div class="overflow-x-auto">
-                <table id="txnTable" class="min-w-full divide-y divide-gray-200">
-                    <thead class="bg-gray-50">
-                        <tr>
-                            <th class="px-3 py-3">
-                                <input type="checkbox" id="selectAll" class="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500">
-                            </th>
-                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                                <a href="{{ url_for('transactions', **request.args.to_dict()|dict_update({'sort_by':'id','sort_dir':('asc' if sort_by=='id' and sort_dir=='desc' else 'desc'),'page':1})) }}" class="flex items-center space-x-1 hover:text-gray-700">
-                                    <span>ID</span><span class="text-gray-400">{% if sort_by=='id' %}{{ '▲' if sort_dir=='asc' else '▼' }}{% else %}⇅{% endif %}</span>
-                                </a>
-                            </th>
-                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                                <a href="{{ url_for('transactions', **request.args.to_dict()|dict_update({'sort_by':'date','sort_dir':('asc' if sort_by=='date' and sort_dir=='desc' else 'desc'),'page':1})) }}" class="flex items-center space-x-1 hover:text-gray-700">
-                                    <span>Date</span><span class="text-gray-400">{% if sort_by=='date' %}{{ '▲' if sort_dir=='asc' else '▼' }}{% else %}⇅{% endif %}</span>
-                                </a>
-                            </th>
-                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                                <a href="{{ url_for('transactions', **request.args.to_dict()|dict_update({'sort_by':'description','sort_dir':('asc' if sort_by=='description' and sort_dir=='desc' else 'desc'),'page':1})) }}" class="flex items-center space-x-1 hover:text-gray-700">
-                                    <span>Description</span><span class="text-gray-400">{% if sort_by=='description' %}{{ '▲' if sort_dir=='asc' else '▼' }}{% else %}⇅{% endif %}</span>
-                                </a>
-                            </th>
-                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                                <a href="{{ url_for('transactions', **request.args.to_dict()|dict_update({'sort_by':'account','sort_dir':('asc' if sort_by=='account' and sort_dir=='desc' else 'desc'),'page':1})) }}" class="flex items-center space-x-1 hover:text-gray-700">
-                                    <span>Account</span><span class="text-gray-400">{% if sort_by=='account' %}{{ '▲' if sort_dir=='asc' else '▼' }}{% else %}⇅{% endif %}</span>
-                                </a>
-                            </th>
-                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                                <a href="{{ url_for('transactions', **request.args.to_dict()|dict_update({'sort_by':'category','sort_dir':('asc' if sort_by=='category' and sort_dir=='desc' else 'desc'),'page':1})) }}" class="flex items-center space-x-1 hover:text-gray-700">
-                                    <span>Category</span><span class="text-gray-400">{% if sort_by=='category' %}{{ '▲' if sort_dir=='asc' else '▼' }}{% else %}⇅{% endif %}</span>
-                                </a>
-                            </th>
-                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                                <a href="{{ url_for('transactions', **request.args.to_dict()|dict_update({'sort_by':'amount','sort_dir':('asc' if sort_by=='amount' and sort_dir=='desc' else 'desc'),'page':1})) }}" class="flex items-center space-x-1 hover:text-gray-700">
-                                    <span>Amount</span><span class="text-gray-400">{% if sort_by=='amount' %}{{ '▲' if sort_dir=='asc' else '▼' }}{% else %}⇅{% endif %}</span>
-                                </a>
-                            </th>
-                            <th class="px-4 py-3"></th>
-                        </tr>
-                    </thead>
-                    <tbody class="bg-white divide-y divide-gray-200">
-                        {% for transaction in transactions.items %}
-                        <tr id="row-{{ transaction.id }}" data-id="{{ transaction.id }}">
-                            <td class="px-3 py-4">
-                                <input type="checkbox" class="row-check rounded border-gray-300 text-indigo-600 focus:ring-indigo-500" value="{{ transaction.id }}">
-                            </td>
-                            <td class="px-4 py-4 whitespace-nowrap text-sm text-gray-500">{{ transaction.id }}</td>
-                            <td class="px-4 py-4 whitespace-nowrap text-sm text-gray-900">{{ transaction.date.strftime('%Y-%m-%d') }}</td>
-                            <td class="px-4 py-4 text-sm text-gray-900 max-w-xs truncate">{{ transaction.description }}</td>
-                            <td class="px-4 py-4 whitespace-nowrap text-sm text-gray-900">{{ transaction.account_name }}</td>
-                            <td class="px-4 py-4 whitespace-nowrap text-sm text-gray-900">
-                                <select class="category-select border-gray-300 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm"
-                                        data-transaction-id="{{ transaction.id }}"
-                                        onchange="updateCategory(this)">
-                                    {% for category in categories %}
-                                    <option value="{{ category }}" {% if transaction.category == category %}selected{% endif %}>{{ category }}</option>
-                                    {% endfor %}
-                                </select>
-                            </td>
-                            <td class="px-4 py-4 whitespace-nowrap text-sm font-medium {% if transaction.amount >= 0 %}text-green-600{% else %}text-red-600{% endif %}">
-                                ${{ "{:,.2f}".format(transaction.amount) }}
-                            </td>
-                            <td class="px-4 py-4 whitespace-nowrap text-right text-sm space-x-3">
-                                {% if transaction.notes %}
-                                <span class="inline-block w-2 h-2 rounded-full bg-indigo-400" title="{{ transaction.notes }}"></span>
-                                {% endif %}
-                                <button onclick="openEditModal({{ transaction.id }}, '{{ transaction.date.strftime('%Y-%m-%d') }}', {{ transaction.amount|float }}, {{ transaction.description|tojson }}, '{{ transaction.account_name }}', '{{ transaction.category }}', {{ (transaction.notes or '')|tojson }})"
-                                        class="text-indigo-500 hover:text-indigo-700 font-medium" title="Edit">&#x270E;</button>
-                                <button onclick="deleteRow({{ transaction.id }})" class="text-red-500 hover:text-red-700 font-medium" title="Delete">&#x2715;</button>
-                            </td>
-                        </tr>
-                        {% endfor %}
-                    </tbody>
-                </table>
-            </div>
-
-            <!-- Pagination -->
-            {% if transactions.pages > 1 %}
-            <div class="px-4 py-3 flex items-center justify-between border-t border-gray-200 mt-4">
-                <!-- Mobile pager: big Prev/Next targets -->
-                <div class="flex flex-1 items-center justify-between gap-3 sm:hidden">
-                    {% if transactions.has_prev %}
-                    {% set args = request.args.to_dict() %}{% set _ = args.update({'page': transactions.prev_num}) %}
-                    <a href="{{ url_for('transactions', **args) }}" class="inline-flex items-center px-4 py-2.5 border border-gray-300 rounded-md bg-white text-sm font-medium text-gray-700">&larr; Prev</a>
-                    {% else %}<span class="px-4 py-2.5 text-sm text-gray-300">&larr; Prev</span>{% endif %}
-                    <p class="text-sm text-gray-600 whitespace-nowrap">{{ transactions.page }} / {{ transactions.pages }}</p>
-                    {% if transactions.has_next %}
-                    {% set args = request.args.to_dict() %}{% set _ = args.update({'page': transactions.next_num}) %}
-                    <a href="{{ url_for('transactions', **args) }}" class="inline-flex items-center px-4 py-2.5 border border-gray-300 rounded-md bg-white text-sm font-medium text-gray-700">Next &rarr;</a>
-                    {% else %}<span class="px-4 py-2.5 text-sm text-gray-300">Next &rarr;</span>{% endif %}
-                </div>
-                <div class="hidden sm:flex sm:flex-1 sm:items-center sm:justify-between">
-                    <p class="text-sm text-gray-700">
-                        Page <span class="font-medium">{{ transactions.page }}</span> of
-                        <span class="font-medium">{{ transactions.pages }}</span>
-                    </p>
-                    <nav class="relative z-0 inline-flex rounded-md shadow-sm -space-x-px">
-                        {% if transactions.has_prev %}
-                        {% set args = request.args.to_dict() %}{% set _ = args.update({'page': transactions.prev_num}) %}
-                        <a href="{{ url_for('transactions', **args) }}" class="relative inline-flex items-center px-2 py-2 rounded-l-md border border-gray-300 bg-white text-sm font-medium text-gray-500 hover:bg-gray-50">
-                            <svg class="h-5 w-5" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M12.707 5.293a1 1 0 010 1.414L9.414 10l3.293 3.293a1 1 0 01-1.414 1.414l-4-4a1 1 0 010-1.414l4-4a1 1 0 011.414 0z" clip-rule="evenodd"/></svg>
-                        </a>
-                        {% endif %}
-                        {% for page in transactions.iter_pages() %}
-                            {% if page %}
-                                {% set args = request.args.to_dict() %}{% set _ = args.update({'page': page}) %}
-                                <a href="{{ url_for('transactions', **args) }}" class="relative inline-flex items-center px-4 py-2 border border-gray-300 bg-white text-sm font-medium {% if page == transactions.page %}text-indigo-600 bg-indigo-50{% else %}text-gray-700 hover:bg-gray-50{% endif %}">{{ page }}</a>
-                            {% else %}
-                                <span class="relative inline-flex items-center px-4 py-2 border border-gray-300 bg-white text-sm font-medium text-gray-700">...</span>
-                            {% endif %}
-                        {% endfor %}
-                        {% if transactions.has_next %}
-                        {% set args = request.args.to_dict() %}{% set _ = args.update({'page': transactions.next_num}) %}
-                        <a href="{{ url_for('transactions', **args) }}" class="relative inline-flex items-center px-2 py-2 rounded-r-md border border-gray-300 bg-white text-sm font-medium text-gray-500 hover:bg-gray-50">
-                            <svg class="h-5 w-5" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M7.293 14.707a1 1 0 010-1.414L10.586 10 7.293 6.707a1 1 0 011.414-1.414l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0z" clip-rule="evenodd"/></svg>
-                        </a>
-                        {% endif %}
-                    </nav>
-                </div>
-            </div>
-            {% endif %}
+          </select>
         </div>
-    </div>
-</div>
+      </div>
 
-<!-- Edit modal -->
-<div id="editModal" class="hidden fixed inset-0 z-40 overflow-y-auto">
-    <div class="flex items-center justify-center min-h-screen px-4">
-        <div class="fixed inset-0 bg-gray-600 bg-opacity-50" onclick="closeEditModal()"></div>
-        <div class="relative bg-white rounded-lg shadow-xl w-full max-w-lg z-50 p-6">
-            <h3 class="text-lg font-semibold text-gray-900 mb-4">Edit Transaction</h3>
-            <div class="space-y-3">
-                <div class="grid grid-cols-2 gap-3">
-                    <div>
-                        <label class="block text-xs font-medium text-gray-600 mb-1">Date</label>
-                        <input type="date" id="edit_date" class="w-full rounded border-gray-300 shadow-sm text-sm focus:ring-indigo-500 focus:border-indigo-500">
-                    </div>
-                    <div>
-                        <label class="block text-xs font-medium text-gray-600 mb-1">Amount</label>
-                        <input type="number" step="0.01" id="edit_amount" class="w-full rounded border-gray-300 shadow-sm text-sm focus:ring-indigo-500 focus:border-indigo-500">
-                    </div>
-                </div>
-                <div>
-                    <label class="block text-xs font-medium text-gray-600 mb-1">Description</label>
-                    <input type="text" id="edit_description" class="w-full rounded border-gray-300 shadow-sm text-sm focus:ring-indigo-500 focus:border-indigo-500">
-                </div>
-                <div class="grid grid-cols-2 gap-3">
-                    <div>
-                        <label class="block text-xs font-medium text-gray-600 mb-1">Account</label>
-                        <select id="edit_account" class="w-full rounded border-gray-300 shadow-sm text-sm focus:ring-indigo-500 focus:border-indigo-500">
-                            {% for account in accounts %}
-                            <option value="{{ account }}">{{ account }}</option>
-                            {% endfor %}
-                        </select>
-                    </div>
-                    <div>
-                        <label class="block text-xs font-medium text-gray-600 mb-1">Category</label>
-                        <select id="edit_category" class="w-full rounded border-gray-300 shadow-sm text-sm focus:ring-indigo-500 focus:border-indigo-500">
-                            {% for category in categories %}
-                            <option value="{{ category }}">{{ category }}</option>
-                            {% endfor %}
-                        </select>
-                    </div>
-                </div>
-                <div>
-                    <label class="block text-xs font-medium text-gray-600 mb-1">Notes</label>
-                    <textarea id="edit_notes" rows="2" placeholder="Optional memo…" class="w-full rounded border-gray-300 shadow-sm text-sm focus:ring-indigo-500 focus:border-indigo-500"></textarea>
-                </div>
-            </div>
-            <div class="flex justify-end space-x-3 mt-5">
-                <button onclick="closeEditModal()" class="px-4 py-2 text-sm font-medium text-gray-700 border border-gray-300 rounded-md hover:bg-gray-50">Cancel</button>
-                <button onclick="saveEdit()" class="px-4 py-2 text-sm font-medium text-white bg-indigo-600 rounded-md hover:bg-indigo-700">Save Changes</button>
-            </div>
-        </div>
+      <div class="ds-field">
+        <label class="ds-label" for="edit_notes">Notes</label>
+        <textarea class="ds-textarea" id="edit_notes" rows="2" placeholder="Optional memo…"></textarea>
+      </div>
     </div>
-</div>
+
+    <div class="ds-dialog__actions">
+      <button type="button" class="ds-btn ds-btn--secondary" onclick="closeEditModal()">Cancel</button>
+      <button type="button" class="ds-btn ds-btn--primary" onclick="saveEdit()">Save Changes</button>
+    </div>
+  </div>
+</dialog>
 
 <script>
 // ── Mobile collapsible filters ────────────────────────────────────────────────
@@ -348,6 +367,7 @@ function toggleTxnFilters() {
         collapsed = el.classList.toggle('mob-hidden');
     });
     document.getElementById('filtersChevron').textContent = collapsed ? '▾' : '▴';
+    document.getElementById('filtersToggle').setAttribute('aria-expanded', collapsed ? 'false' : 'true');
 }
 // Start collapsed on phones — the transaction list is the main event
 if (window.innerWidth <= 640) {
@@ -376,6 +396,18 @@ function changePerPage(val) {
     args.set('per_page', val);
     args.set('page', '1');
     window.location.search = args.toString();
+}
+
+// ── Amount rendering ──────────────────────────────────────────────────────────
+// Matches the server-side format exactly. These used to disagree: the template
+// rendered a signed figure ("$-45.00") while an edit re-rendered the same row
+// as "$45.00", so editing a charge silently made it look like a deposit.
+function formatAmount(value) {
+    var abs = Math.abs(value).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    return (value < 0 ? '-$' : '$') + abs;
+}
+function amountClass(value) {
+    return 'ds-table__num ' + (value >= 0 ? 'txn-amt--in' : 'txn-amt--out');
 }
 
 // ── Single category update ────────────────────────────────────────────────────
@@ -428,12 +460,8 @@ function getCheckedIds() {
 
 function updateBulkBar() {
     var ids = getCheckedIds();
-    if (ids.length > 0) {
-        bulkBar.classList.remove('hidden');
-        selectedCount.textContent = ids.length + ' selected';
-    } else {
-        bulkBar.classList.add('hidden');
-    }
+    bulkBar.hidden = ids.length === 0;
+    if (ids.length) selectedCount.textContent = ids.length + ' selected';
 }
 
 function clearSelection() {
@@ -505,7 +533,7 @@ function deleteSelected() {
   document.querySelectorAll('.category-select').forEach(function(s) { s.dataset.originalValue = s.value; });
 })();
 
-// ── Edit modal ────────────────────────────────────────────────────────────────
+// ── Edit dialog ───────────────────────────────────────────────────────────────
 var _editingId = null;
 
 function openEditModal(id, date, amount, description, account, category, notes) {
@@ -516,16 +544,33 @@ function openEditModal(id, date, amount, description, account, category, notes) 
     document.getElementById('edit_account').value = account;
     document.getElementById('edit_category').value = category;
     document.getElementById('edit_notes').value = notes;
-    document.getElementById('editModal').classList.remove('hidden');
+    var dlg = document.getElementById('editModal');
+    // showModal() is what brings the focus trap and the inert backdrop; the
+    // attribute fallback keeps the dialog usable if it is ever unavailable.
+    if (typeof dlg.showModal === 'function') dlg.showModal();
+    else dlg.setAttribute('open', '');
 }
 
 function closeEditModal() {
-    document.getElementById('editModal').classList.add('hidden');
+    var dlg = document.getElementById('editModal');
+    if (typeof dlg.close === 'function' && dlg.open) dlg.close();
+    else dlg.removeAttribute('open');
     _editingId = null;
 }
 
+(function _initEditDialog() {
+    var dlg = document.getElementById('editModal');
+    if (!dlg) return;
+    // Esc closes natively and fires 'close' — keep _editingId in step with it.
+    dlg.addEventListener('close', function() { _editingId = null; });
+    // A click that lands on the dialog itself landed on the backdrop; the
+    // panel swallows anything aimed at the form.
+    dlg.addEventListener('click', function(e) { if (e.target === dlg) closeEditModal(); });
+})();
+
 function saveEdit() {
     if (!_editingId) return;
+    var editingId = _editingId;
     var payload = {
         date: document.getElementById('edit_date').value,
         amount: parseFloat(document.getElementById('edit_amount').value),
@@ -534,7 +579,7 @@ function saveEdit() {
         category: document.getElementById('edit_category').value,
         notes: document.getElementById('edit_notes').value
     };
-    fetch('/transactions/' + _editingId, {
+    fetch('/transactions/' + editingId, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
@@ -543,15 +588,15 @@ function saveEdit() {
     .then(function(data) {
         if (data.success) {
             var t = data.transaction;
-            var row = document.getElementById('row-' + _editingId);
+            var row = document.getElementById('row-' + editingId);
             if (row) {
                 row.cells[2].textContent = t.date;
                 row.cells[3].textContent = t.description;
                 row.cells[3].title = t.description;
                 row.cells[4].textContent = t.account_name;
                 var amtCell = row.cells[6];
-                amtCell.textContent = '$' + Math.abs(t.amount).toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2});
-                amtCell.className = 'px-4 py-4 whitespace-nowrap text-sm font-medium ' + (t.amount >= 0 ? 'text-green-600' : 'text-red-600');
+                amtCell.textContent = formatAmount(t.amount);
+                amtCell.className = amountClass(t.amount);
                 var catSel = row.querySelector('.category-select');
                 if (catSel) { catSel.value = t.category; catSel.dataset.originalValue = t.category; }
             }
@@ -563,9 +608,5 @@ function saveEdit() {
     })
     .catch(function() { showToast('Save failed.', 'error'); });
 }
-
-document.addEventListener('keydown', function(e) {
-    if (e.key === 'Escape') closeEditModal();
-});
 </script>
 {% endblock %}

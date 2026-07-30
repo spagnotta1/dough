@@ -53,7 +53,18 @@ class FinancialInstitutionAdapter(ABC):
     supports_transactions: ClassVar[bool] = True
     supports_holdings: ClassVar[bool] = True
     live_api_available: ClassVar[bool] = True  # False = no public API exists
-    accent_color: ClassVar[str] = "#6366f1"    # UI badge color
+    # UI badge colour. The catalog derives the label ink from this
+    # (dough/contrast.py), and an adapter that does not override it inherits
+    # whatever accessibility this value has: the previous #6366f1 topped out
+    # at 4.47:1 against white and 4.35:1 against the near-black — no ink
+    # clears AA on it, because none exists. This one carries white at 6.3:1.
+    accent_color: ClassVar[str] = "#4f46e5"
+    # Whether to offer this institution in the "Add an Institution" catalog.
+    # False withdraws it from the picker *only* — the adapter stays registered,
+    # so connections already made with it keep syncing and disconnecting
+    # normally. This is a product decision (is this integration ready to put in
+    # front of users?), not a capability one.
+    offered: ClassVar[bool] = True
 
     def __init__(self, credentials: Optional[Dict[str, Any]] = None,
                  timeout: float = 20.0):

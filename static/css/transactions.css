@@ -1,0 +1,181 @@
+/* ══════════════════════════════════════════════════════════════════════════
+   Transactions — the layout the design system does not generalise.
+   ──────────────────────────────────────────────────────────────────────────
+   Everything visual comes from design-system.css tokens; what lives here is
+   the page's own composition, and one thing that genuinely is page-specific:
+   the phone treatment of the ledger table.
+
+   Loaded from inside {% block content %} rather than <head>, because SPA
+   navigation swaps <main> only — a <link> in the head would never arrive on
+   a client-side navigation to this page.
+   ══════════════════════════════════════════════════════════════════════════ */
+
+/* ── Filter bar ─────────────────────────────────────────────────────────── */
+
+.txn-filters__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: var(--sp-4);
+  align-items: end;
+}
+/* The submit/clear/export cluster sits on the baseline of the last row. */
+.txn-filters__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+}
+
+/* Quick date presets — one thumb-scrollable row on a phone. */
+.txn-presets {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-2);
+  margin-bottom: var(--sp-4);
+}
+
+/* The mobile-only filter collapse toggle. Hidden by default; the phone block
+   at the bottom of this file reveals it. */
+.txn-filters__toggle { display: none; width: 100%; }
+
+/* ── Bulk action bar ────────────────────────────────────────────────────── */
+
+.txn-bulk {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  flex-wrap: wrap;
+  border-color: color-mix(in srgb, var(--accent) 34%, var(--border));
+  background: var(--accent-bg);
+}
+.txn-bulk__count {
+  font-size: var(--f-sm);
+  font-weight: var(--w-semi);
+  color: var(--accent-ink);
+}
+
+/* ── Table ──────────────────────────────────────────────────────────────── */
+
+.txn-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-3);
+  flex-wrap: wrap;
+  margin-bottom: var(--sp-3);
+}
+
+/* Sign is carried by the glyph as well as the colour — colour alone would
+   put the single most important fact on this page into a channel that
+   colour-blind users and grayscale printouts do not receive. */
+.txn-amt--in  { color: var(--ok-ink); font-weight: var(--w-semi); }
+.txn-amt--out { color: var(--ink-body); font-weight: var(--w-semi); }
+
+/* Description is the one column allowed to truncate. */
+.txn-desc {
+  max-width: 22rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* A transaction carrying a memo gets a dot; the memo itself is in the title
+   and in the row's screen-reader text. */
+.txn-note-dot {
+  display: inline-block;
+  width: 6px; height: 6px;
+  border-radius: var(--r-full);
+  background: var(--accent);
+  vertical-align: middle;
+  margin-right: var(--sp-1);
+}
+
+.txn-row-actions { display: inline-flex; gap: var(--sp-1); justify-content: flex-end; }
+
+/* The inline category picker is a control inside a dense row, so it is
+   sized down from .ds-select rather than inheriting the form default. */
+.txn-cat-select { min-height: 30px; padding: 2px var(--sp-2); font-size: var(--f-xs); }
+
+/* ── Pagination ─────────────────────────────────────────────────────────── */
+
+.txn-pager {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-3);
+  flex-wrap: wrap;
+  margin-top: var(--sp-4);
+  padding-top: var(--sp-4);
+  border-top: 1px solid var(--hairline);
+}
+.txn-pager__pages { display: flex; align-items: center; gap: var(--sp-1); flex-wrap: wrap; }
+.txn-pager__gap { color: var(--ink-ghost); padding: 0 var(--sp-1); }
+/* Prev/Next only, shown in place of numbered pages on a phone. */
+.txn-pager--compact { display: none; flex: 1; }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   Phone — the ledger becomes card rows
+   ──────────────────────────────────────────────────────────────────────────
+   The DOM is deliberately left alone here: saveEdit() addresses cells by
+   index (row.cells[2] … row.cells[6]), and the row JS keys off .row-check
+   and .category-select. So the table is re-laid-out with grid rather than
+   restructured, and every cell keeps its position in the source order.
+   ══════════════════════════════════════════════════════════════════════════ */
+
+@media (max-width: 640px) {
+  .txn-filters__toggle { display: flex; }
+  .txn-presets.mob-hidden, .txn-filter-form.mob-hidden { display: none; }
+
+  .txn-presets { flex-wrap: nowrap; overflow-x: auto; -webkit-overflow-scrolling: touch; padding-bottom: var(--sp-1); }
+  .txn-presets .ds-chip { flex-shrink: 0; }
+
+  .txn-filters__grid { grid-template-columns: 1fr; }
+  .txn-filters__actions .ds-btn { flex: 1; }
+
+  .txn-pager--compact { display: flex; justify-content: space-between; align-items: center; }
+  .txn-pager__full { display: none; }
+
+  /* Table → card rows. */
+  #txnTable, #txnTable tbody { display: block; min-width: 0; }
+  #txnTable thead { display: none; }
+  #txnTable tbody tr {
+    display: grid;
+    grid-template-columns: auto 1fr auto;
+    column-gap: var(--sp-3);
+    row-gap: 2px;
+    padding: var(--sp-3) 2px;
+    border-bottom: 1px solid var(--hairline);
+  }
+  #txnTable td {
+    display: block;
+    padding: 0;
+    border: none;
+    white-space: normal;
+  }
+
+  #txnTable td:nth-child(1) { grid-column: 1; grid-row: 1 / 3; align-self: center; }  /* select   */
+  #txnTable td:nth-child(1) input { width: 20px; height: 20px; }
+  #txnTable td:nth-child(2) { display: none; }                                        /* id       */
+  #txnTable td:nth-child(4) {                                                         /* desc     */
+    grid-column: 2; grid-row: 1;
+    font-weight: var(--w-semi);
+    max-width: none;
+  }
+  #txnTable td:nth-child(7) { grid-column: 3; grid-row: 1; text-align: right; }        /* amount   */
+  #txnTable td:nth-child(3) { grid-column: 2; grid-row: 2; font-size: var(--f-xs); color: var(--ink-faint); } /* date */
+  #txnTable td:nth-child(5) { grid-column: 3; grid-row: 2; text-align: right; font-size: var(--f-xs); color: var(--ink-faint); } /* account */
+  #txnTable td:nth-child(6) { grid-column: 2; grid-row: 3; margin-top: var(--sp-2); }  /* category */
+  #txnTable td:nth-child(6) .txn-cat-select { width: 100%; min-height: var(--tap-min); font-size: 16px; }
+  #txnTable td:nth-child(8) {                                                         /* actions  */
+    grid-column: 3; grid-row: 3;
+    margin-top: var(--sp-2);
+    align-self: center;
+    text-align: right;
+  }
+
+  /* The empty state spans the whole card row rather than a phantom column. */
+  #txnTable tbody tr.txn-empty-row { display: block; padding: 0; border-bottom: 0; }
+  #txnTable tr.txn-empty-row td { grid-column: 1 / -1; }
+
+  .txn-desc { max-width: none; }
+}

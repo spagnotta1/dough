@@ -1,229 +1,179 @@
 {% extends "base.html" %}
 
-{% block title %}Recurring Transactions - Checkbook App{% endblock %}
+{% block title %}Recurring · Dough{% endblock %}
 
 {% block content %}
-<style>
-/* Mobile-only layout — no effect ≥640px */
-@media (max-width: 640px) {
-  /* Subscriptions header stacks */
-  .subs-head { flex-wrap: wrap; gap: 10px; }
+{# Phase 9 Wave 2. Linked stylesheet, not an inline <style>: SPA navigation
+   replaces <main> only, so a <link> in <head> would never arrive on a
+   client-side navigation to this page. #}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/recurring.css') }}">
 
-  /* Subscriptions table → cards */
-  #subsTable, #subsTable tbody { display: block; min-width: 0 !important; }
-  #subsTable thead { display: none; }
-  #subsTable tbody tr {
-    display: grid;
-    grid-template-columns: 1fr auto;
-    column-gap: 10px; row-gap: 2px;
-    padding: 12px 4px;
-    border-bottom: 1px solid var(--border);
-  }
-  #subsTable td { display: block; padding: 0 !important; border: none !important; white-space: normal !important; text-align: left !important; }
-  #subsTable td:nth-child(1) { grid-column: 1; grid-row: 1; font-weight: 600; max-width: none !important; }
-  #subsTable td:nth-child(2) { grid-column: 2; grid-row: 1; text-align: right !important; }
-  #subsTable td:nth-child(3) { grid-column: 1; grid-row: 2; font-size: .72rem; opacity: .7; }
-  #subsTable td:nth-child(4) { grid-column: 2; grid-row: 2; text-align: right !important; }
-
-  /* Bills table → cards showing the essentials */
-  #billsTable, #billsTable tbody { display: block; min-width: 0 !important; }
-  #billsTable thead { display: none; }
-  #billsTable tbody tr {
-    display: grid;
-    grid-template-columns: 1fr auto;
-    column-gap: 10px; row-gap: 2px;
-    padding: 12px 4px;
-    border-bottom: 1px solid var(--border);
-  }
-  #billsTable td { display: block; padding: 0 !important; border: none !important; white-space: normal !important; text-align: left !important; }
-  #billsTable td:nth-child(1) { grid-column: 1; grid-row: 1; font-weight: 600; max-width: none !important; overflow: hidden; text-overflow: ellipsis; white-space: nowrap !important; }
-  #billsTable td:nth-child(4) { grid-column: 2; grid-row: 1; text-align: right !important; font-size: .95rem; }
-  #billsTable td:nth-child(2) { grid-column: 1; grid-row: 2; font-size: .72rem; opacity: .6; }
-  #billsTable td:nth-child(3) { grid-column: 2; grid-row: 2; text-align: right !important; font-size: .72rem; opacity: .6; }
-  #billsTable td:nth-child(9) { grid-column: 1; grid-row: 3; font-size: .75rem; margin-top: 4px; }
-  #billsTable td:nth-child(9)::before { content: 'Next: '; opacity: .55; color: var(--fg); }
-  #billsTable td:nth-child(6) { grid-column: 2; grid-row: 3; text-align: right !important; font-size: .72rem; opacity: .6; margin-top: 4px; }
-  #billsTable td:nth-child(6)::after { content: ' seen'; }
-  /* Secondary stats hidden on phone: annual cost, median gap, last seen */
-  #billsTable td:nth-child(5), #billsTable td:nth-child(7), #billsTable td:nth-child(8) { display: none; }
-  /* Dismiss button spans the bottom of the card */
-  #billsTable td:nth-child(10) { grid-column: 1 / -1; grid-row: 4; margin-top: 6px; }
-}
-</style>
-<div class="space-y-6">
-    <div class="bg-white shadow px-4 py-5 sm:rounded-lg sm:p-6">
-        <form method="GET" class="sm:flex sm:space-x-4 space-y-4 sm:space-y-0 items-end">
-            <div>
-                <label class="block text-sm font-medium text-gray-700">Account</label>
-                <select name="account" class="mt-1 block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm rounded-md">
+<div class="ds-stack ds-stack-6">
+    <section class="ds-card" aria-labelledby="recurFilterHeading">
+        <h2 id="recurFilterHeading" class="ds-sr">Filter by account</h2>
+        <form method="GET" class="ds-row ds-row--wrap recur-filter-form">
+            <div class="ds-field">
+                <label class="ds-label" for="recurAccount">Account</label>
+                <select name="account" id="recurAccount" class="ds-select">
                     <option value="both" {% if account_filter == 'both' %}selected{% endif %}>Both</option>
                     {% for acct in accounts %}
                     <option value="{{ acct }}" {% if account_filter == acct %}selected{% endif %}>{{ acct }}</option>
                     {% endfor %}
                 </select>
             </div>
-            <div>
-                <button type="submit" class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-indigo-600 hover:bg-indigo-700">
-                    Filter
-                </button>
-            </div>
+            <button type="submit" class="ds-btn ds-btn--primary">Filter</button>
         </form>
-    </div>
+    </section>
 
     <!-- Monthly Bills & Payments -->
-    <div class="bg-white shadow sm:rounded-lg">
-        <div class="px-4 py-5 sm:p-6">
-            <div class="subs-head flex items-start justify-between">
-                <div>
-                    <h3 class="text-lg leading-6 font-medium text-gray-900 mb-1">Monthly Bills &amp; Payments</h3>
-                    <p class="text-sm text-gray-500 mb-4">Debt payments and obligatory bills — loans, credit cards, insurance — based on your category rules. The payment shown is the typical actual amount from your transactions; annual cost reflects how often you actually pay. Payments not seen in the last 6 months are excluded. Not actually a bill? Dismiss it with the ✕.</p>
-                </div>
-                {% if bills %}
-                <div class="text-right flex-shrink-0 ml-4">
-                    <p class="text-xs text-gray-400 uppercase tracking-wider font-medium">Total Monthly</p>
-                    {% set bills_total = (bills | map(attribute='annual_cost') | sum) / 12 %}
-                    <p class="text-2xl font-bold text-gray-900">${{ "{:,.2f}".format(bills_total) }}</p>
-                </div>
-                {% endif %}
+    <section class="ds-card" aria-labelledby="billsHeading">
+        <div class="recur-head">
+            <div>
+                <h2 id="billsHeading" class="ds-section__title">Monthly Bills &amp; Payments</h2>
+                <p class="ds-section__sub">Debt payments and obligatory bills — loans, credit cards, insurance — based on your category rules. The payment shown is the typical actual amount from your transactions; annual cost reflects how often you actually pay. Payments not seen in the last 6 months are excluded. Not actually a bill? Dismiss it with the ✕.</p>
             </div>
-
             {% if bills %}
-            <div class="overflow-x-auto">
-                <table id="billsTable" class="min-w-full divide-y divide-gray-200">
-                    <thead class="bg-gray-50">
-                        <tr>
-                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Description</th>
-                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Category</th>
-                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Account</th>
-                            <th class="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Payment</th>
-                            <th class="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Annual Cost</th>
-                            <th class="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">Occurrences</th>
-                            <th class="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">Typical Gap</th>
-                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Last Seen</th>
-                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Next Expected</th>
-                            <th class="px-4 py-3"></th>
-                        </tr>
-                    </thead>
-                    <tbody class="bg-white divide-y divide-gray-200">
-                        {% for group in bills %}
-                        {% set monthly_abs = group.monthly_amount|abs %}
-                        <tr class="hover:bg-gray-50">
-                            <td class="px-4 py-4 text-sm text-gray-900 max-w-xs truncate" title="{{ group.description }}">{{ group.description }}</td>
-                            <td class="px-4 py-4 text-sm text-gray-500">{{ group.category }}</td>
-                            <td class="px-4 py-4 text-sm text-gray-500">{{ group.account_name }}</td>
-                            <td class="px-4 py-4 text-sm font-medium text-right text-red-600">-${{ "{:,.2f}".format(monthly_abs) }}</td>
-                            <td class="px-4 py-4 text-sm text-gray-600 text-right font-medium">${{ "{:,.0f}".format(group.annual_cost) }}/yr</td>
-                            <td class="px-4 py-4 text-sm text-gray-900 text-center">{{ group.occurrences }}</td>
-                            <td class="px-4 py-4 text-sm text-gray-500 text-center">{{ group.median_gap_days }}d</td>
-                            <td class="px-4 py-4 text-sm text-gray-400">{{ group.last_seen }}</td>
-                            <td class="px-4 py-4 text-sm font-medium text-indigo-600">{{ group.next_expected }}</td>
-                            <td class="px-4 py-4 text-center">
-                                <form method="POST" action="{{ url_for('recurring_dismiss') }}" class="inline"
-                                      onsubmit="return confirm('Hide “{{ group.description|replace("'","\\'") }}” from this view? You can restore it below.')">
-                                    <input type="hidden" name="description" value="{{ group.description }}">
-                                    <input type="hidden" name="kind" value="bill">
-                                    <button type="submit" class="text-xs text-gray-300 hover:text-red-500 font-medium" title="Not actually a recurring bill — hide it">✕ Dismiss</button>
-                                </form>
-                            </td>
-                        </tr>
-                        {% endfor %}
-                    </tbody>
-                </table>
+            <div class="recur-stat">
+                <p class="ds-eyebrow">Total Monthly</p>
+                {% set bills_total = (bills | map(attribute='annual_cost') | sum) / 12 %}
+                <p class="recur-stat__value">${{ "{:,.2f}".format(bills_total) }}</p>
             </div>
-            {% else %}
-            <p class="text-sm text-gray-500">No active recurring bills detected in the last 6 months of data.</p>
             {% endif %}
         </div>
-    </div>
+
+        {% if bills %}
+        <div class="ds-table-wrap ds-scroll">
+            <table id="billsTable" class="ds-table ds-table--hover">
+                <thead>
+                    <tr>
+                        <th scope="col">Description</th>
+                        <th scope="col">Category</th>
+                        <th scope="col">Account</th>
+                        <th scope="col" class="ds-table__num">Payment</th>
+                        <th scope="col" class="ds-table__num">Annual Cost</th>
+                        <th scope="col" class="recur-table__center">Occurrences</th>
+                        <th scope="col" class="recur-table__center">Typical Gap</th>
+                        <th scope="col">Last Seen</th>
+                        <th scope="col">Next Expected</th>
+                        <th scope="col"><span class="ds-sr">Actions</span></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for group in bills %}
+                    {% set monthly_abs = group.monthly_amount|abs %}
+                    <tr>
+                        <td class="recur-desc" title="{{ group.description }}">{{ group.description }}</td>
+                        <td>{{ group.category }}</td>
+                        <td>{{ group.account_name }}</td>
+                        <td class="ds-table__num recur-amt--out">-${{ "{:,.2f}".format(monthly_abs) }}</td>
+                        <td class="ds-table__num">${{ "{:,.0f}".format(group.annual_cost) }}/yr</td>
+                        <td class="recur-table__center">{{ group.occurrences }}</td>
+                        <td class="recur-table__center">{{ group.median_gap_days }}d</td>
+                        <td class="ds-meta">{{ group.last_seen }}</td>
+                        <td class="recur-next">{{ group.next_expected }}</td>
+                        <td class="recur-table__center">
+                            <form method="POST" action="{{ url_for('insights.recurring_dismiss') }}"
+                                  onsubmit="return confirm('Hide “{{ group.description|replace("'","\\'") }}” from this view? You can restore it below.')">
+                              {{ csrf_field() }}
+                                <input type="hidden" name="description" value="{{ group.description }}">
+                                <input type="hidden" name="kind" value="bill">
+                                <button type="submit" class="recur-dismiss" title="Not actually a recurring bill — hide it">✕ Dismiss</button>
+                            </form>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <p class="recur-empty">No active recurring bills detected in the last 6 months of data.</p>
+        {% endif %}
+    </section>
 
     <!-- Subscriptions + Savings Calculator -->
-    <div class="bg-white shadow sm:rounded-lg border-l-4 border-amber-400" x-data="savingsCalc()" x-init="init()">
-        <div class="px-4 py-5 sm:p-6">
-            <div class="subs-head flex items-start justify-between">
-                <div>
-                    <h3 class="text-lg font-medium text-gray-900">Subscriptions</h3>
-                    <p class="text-sm text-gray-500 mt-0.5">Active subscription services billed monthly. Anything without a charge in the last 6 months is assumed cancelled and hidden. Mark subscriptions as unnecessary to calculate potential annual savings.</p>
-                </div>
-                <div class="text-right flex-shrink-0 ml-4">
-                    <p class="text-xs text-gray-400 uppercase tracking-wider font-medium">Potential Annual Savings</p>
-                    <p class="text-2xl font-bold text-amber-600" x-text="'$' + totalSavings.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2})">$0.00</p>
-                </div>
+    <section class="ds-card recur-card--accent" aria-labelledby="subsHeading" x-data="savingsCalc()" x-init="init()">
+        <div class="recur-head">
+            <div>
+                <h2 id="subsHeading" class="ds-section__title">Subscriptions</h2>
+                <p class="ds-section__sub">Active subscription services billed monthly. Anything without a charge in the last 6 months is assumed cancelled and hidden. Mark subscriptions as unnecessary to calculate potential annual savings.</p>
             </div>
-
-            {% if subscriptions %}
-            <div class="mt-4 overflow-x-auto">
-                <table id="subsTable" class="min-w-full divide-y divide-gray-200">
-                    <thead class="bg-gray-50">
-                        <tr>
-                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Subscription</th>
-                            <th class="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Monthly</th>
-                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Next Renewal</th>
-                            <th class="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase">Unnecessary?</th>
-                        </tr>
-                    </thead>
-                    <tbody class="bg-white divide-y divide-gray-200">
-                        {% for group in subscriptions %}
-                        {% set monthly = group.monthly_amount|abs %}
-                        {% set annual = monthly * 12 %}
-                        <tr class="hover:bg-gray-50" :class="isUnnecessary('{{ group.description|replace("'","\\'")|replace('"','\\"') }}') ? 'bg-red-50' : ''">
-                            <td class="px-4 py-3 text-sm text-gray-900 max-w-xs truncate" title="{{ group.description }}">
-                                <span :class="isUnnecessary('{{ group.description|replace("'","\\'")|replace('"','\\"') }}') ? 'line-through text-gray-400' : ''">
-                                    {{ group.description }}
-                                </span>
-                                <span class="ml-1 text-xs text-gray-400">{{ group.category }}</span>
-                            </td>
-                            <td class="px-4 py-3 text-sm text-red-600 font-medium text-right">
-                                -${{ "{:,.2f}".format(monthly) }}
-                                <span class="block text-xs text-gray-400 font-normal">${{ "{:,.0f}".format(annual) }}/yr</span>
-                            </td>
-                            <td class="px-4 py-3 text-sm font-medium text-indigo-600">{{ group.next_expected }}</td>
-                            <td class="px-4 py-3 text-center whitespace-nowrap">
-                                <button @click="toggle('{{ group.description|replace("'","\\'")|replace('"','\\"') }}', {{ annual }})"
-                                    :class="isUnnecessary('{{ group.description|replace("'","\\'")|replace('"','\\"') }}')
-                                        ? 'bg-red-500 text-white border-red-500'
-                                        : 'bg-white text-gray-500 border-gray-300 hover:border-red-400 hover:text-red-500'"
-                                    class="px-3 py-1 text-xs font-medium rounded-full border transition-colors">
-                                    <span x-text="isUnnecessary('{{ group.description|replace("'","\\'")|replace('"','\\"') }}') ? 'Cancel It ✓' : 'Mark Unnecessary'"></span>
-                                </button>
-                                <form method="POST" action="{{ url_for('recurring_dismiss') }}" class="inline ml-2"
-                                      onsubmit="return confirm('Hide “{{ group.description|replace("'","\\'") }}” from this view? You can restore it below.')">
-                                    <input type="hidden" name="description" value="{{ group.description }}">
-                                    <input type="hidden" name="kind" value="subscription">
-                                    <button type="submit" class="text-xs text-gray-300 hover:text-red-500 font-medium" title="Not actually a subscription — hide it">✕ Dismiss</button>
-                                </form>
-                            </td>
-                        </tr>
-                        {% endfor %}
-                    </tbody>
-                </table>
+            <div class="recur-stat">
+                <p class="ds-eyebrow">Potential Annual Savings</p>
+                <p class="recur-stat__value recur-stat__value--accent" x-text="'$' + totalSavings.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2})">$0.00</p>
             </div>
-            {% else %}
-            <p class="text-sm text-gray-500 mt-4">No active subscriptions detected in the last 6 months of data.</p>
-            {% endif %}
         </div>
-    </div>
+
+        {% if subscriptions %}
+        <div class="ds-table-wrap ds-scroll">
+            <table id="subsTable" class="ds-table ds-table--hover">
+                <thead>
+                    <tr>
+                        <th scope="col">Subscription</th>
+                        <th scope="col" class="ds-table__num">Monthly</th>
+                        <th scope="col">Next Renewal</th>
+                        <th scope="col" class="recur-table__center">Unnecessary?</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for group in subscriptions %}
+                    {% set monthly = group.monthly_amount|abs %}
+                    {% set annual = monthly * 12 %}
+                    {% set desc_key = group.description|replace("'","\\'")|replace('"','\\"') %}
+                    <tr :class="{ 'recur-row--marked': isUnnecessary('{{ desc_key }}') }">
+                        <td class="recur-desc" title="{{ group.description }}">
+                            <span :class="{ 'recur-desc--marked': isUnnecessary('{{ desc_key }}') }">
+                                {{ group.description }}
+                            </span>
+                            <span class="recur-desc__category">{{ group.category }}</span>
+                        </td>
+                        <td class="ds-table__num recur-amt--out">
+                            -${{ "{:,.2f}".format(monthly) }}
+                            <span class="recur-amt__annual">${{ "{:,.0f}".format(annual) }}/yr</span>
+                        </td>
+                        <td class="recur-next">{{ group.next_expected }}</td>
+                        <td class="recur-table__center">
+                            <button type="button" class="ds-chip" @click="toggle('{{ desc_key }}', {{ annual }})"
+                                    :aria-pressed="isUnnecessary('{{ desc_key }}').toString()">
+                                <span x-text="isUnnecessary('{{ desc_key }}') ? 'Cancel It ✓' : 'Mark Unnecessary'"></span>
+                            </button>
+                            <form method="POST" action="{{ url_for('insights.recurring_dismiss') }}" class="recur-inline"
+                                  onsubmit="return confirm('Hide “{{ group.description|replace("'","\\'") }}” from this view? You can restore it below.')">
+                              {{ csrf_field() }}
+                                <input type="hidden" name="description" value="{{ group.description }}">
+                                <input type="hidden" name="kind" value="subscription">
+                                <button type="submit" class="recur-dismiss" title="Not actually a subscription — hide it">✕ Dismiss</button>
+                            </form>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <p class="recur-empty">No active subscriptions detected in the last 6 months of data.</p>
+        {% endif %}
+    </section>
 
     <!-- Dismissed items -->
     {% if dismissals %}
-    <details class="bg-white shadow sm:rounded-lg">
-        <summary class="px-4 py-4 sm:px-6 text-sm font-medium text-gray-500 cursor-pointer select-none hover:text-gray-700">
+    <details class="ds-card">
+        <summary class="recur-dismissed__summary">
             Dismissed items ({{ dismissals|length }}) — hidden from this view and from Claude's context
         </summary>
-        <div class="px-4 pb-5 sm:px-6">
-            <ul class="divide-y divide-gray-200">
-                {% for d in dismissals %}
-                <li class="py-3 flex items-center justify-between">
-                    <div class="min-w-0">
-                        <span class="text-sm text-gray-700">{{ d.description }}</span>
-                        <span class="ml-2 text-xs text-gray-400">{{ 'bill' if d.kind == 'bill' else 'subscription' }} · dismissed {{ d.created_at.strftime('%Y-%m-%d') }}</span>
-                    </div>
-                    <form method="POST" action="{{ url_for('recurring_restore') }}" class="flex-shrink-0 ml-4">
-                        <input type="hidden" name="id" value="{{ d.id }}">
-                        <button type="submit" class="text-xs font-medium text-indigo-600 hover:text-indigo-800">Restore</button>
-                    </form>
-                </li>
-                {% endfor %}
-            </ul>
+        <div class="recur-dismissed__list">
+            {% for d in dismissals %}
+            <div class="recur-dismissed__row">
+                <div class="recur-dismissed__desc">
+                    <span class="ds-meta">{{ d.description }}</span>
+                    <span class="recur-dismissed__meta">{{ 'bill' if d.kind == 'bill' else 'subscription' }} · dismissed {{ d.created_at.strftime('%Y-%m-%d') }}</span>
+                </div>
+                <form method="POST" action="{{ url_for('insights.recurring_restore') }}">
+                  {{ csrf_field() }}
+                    <input type="hidden" name="id" value="{{ d.id }}">
+                    <button type="submit" class="ds-btn ds-btn--sm ds-btn--ghost">Restore</button>
+                </form>
+            </div>
+            {% endfor %}
         </div>
     </details>
     {% endif %}

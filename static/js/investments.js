@@ -161,7 +161,11 @@
   function paintMarks(root) {
     if (!window.CheckCharts) return;
     (root || document).querySelectorAll('[data-mark]').forEach(function (el) {
-      el.style.background = markColor(el.getAttribute('data-mark') || '?');
+      var bg = markColor(el.getAttribute('data-mark') || '?');
+      el.style.background = bg;
+      // The palette hue is arbitrary, so the ink has to be chosen against it:
+      // a fixed white was unreadable on the light hues several themes carry.
+      el.style.color = window.CheckScheme ? CheckScheme.onColor(bg) : '#fff';
     });
   }
 

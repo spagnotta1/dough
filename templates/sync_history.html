@@ -1,108 +1,108 @@
 {% extends "base.html" %}
-{% block title %}Sync History - Checkbook App{% endblock %}
+{% block title %}Sync History · Dough{% endblock %}
 
 {% block content %}
-<div class="space-y-6">
+{# Phase 9 Wave 4. Linked stylesheet, not an inline <style>: SPA navigation
+   replaces <main> only, so a <link> in <head> would never arrive on a
+   client-side navigation to this page. #}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/sync_history.css') }}">
+
+<div class="ds-stack ds-stack-6">
 
     <!-- Header -->
-    <div class="flex items-center justify-between flex-wrap gap-3">
+    <div class="ds-row ds-row--between ds-row--wrap">
         <div>
-            <h1 class="text-2xl font-bold text-gray-900">Sync History</h1>
-            <p class="text-sm text-gray-500 mt-0.5">Every synchronization run and any errors encountered</p>
+            <h1 class="ds-section__title">Sync History</h1>
+            <p class="ds-section__sub">Every synchronization run and any errors encountered</p>
         </div>
-        <a href="/connections"
-            class="px-4 py-2 border border-gray-300 text-gray-700 text-sm font-medium rounded-lg hover:bg-gray-50 transition-colors">
-            ← Connections
-        </a>
+        <a href="/connections" class="ds-btn ds-btn--secondary">← Connections</a>
     </div>
 
     <!-- Runs -->
-    <div class="bg-white shadow sm:rounded-xl overflow-hidden">
-        <div class="px-5 py-5">
-            <h3 class="text-base font-semibold text-gray-900 mb-4">Synchronization Runs</h3>
-            {% if runs %}
-            <div class="overflow-x-auto">
-                <table class="min-w-full divide-y divide-gray-200">
-                    <thead class="bg-gray-50">
-                        <tr>
-                            <th class="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase">Started</th>
-                            <th class="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase">Institution</th>
-                            <th class="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase">Trigger</th>
-                            <th class="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
-                            <th class="px-3 py-3 text-right text-xs font-medium text-gray-500 uppercase">Accounts</th>
-                            <th class="px-3 py-3 text-right text-xs font-medium text-gray-500 uppercase">Holdings</th>
-                            <th class="px-3 py-3 text-right text-xs font-medium text-gray-500 uppercase">Txns Added</th>
-                            <th class="px-3 py-3 text-right text-xs font-medium text-gray-500 uppercase">Txns Skipped</th>
-                            <th class="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase">Error</th>
-                        </tr>
-                    </thead>
-                    <tbody class="bg-white divide-y divide-gray-200">
-                        {% for r in runs %}
-                        <tr class="hover:bg-gray-50">
-                            <td class="px-3 py-3 text-sm text-gray-700 whitespace-nowrap">{{ r.started_at }}</td>
-                            <td class="px-3 py-3 text-sm font-medium text-gray-900 capitalize">{{ (r.institution or 'all').replace('_', ' ') }}</td>
-                            <td class="px-3 py-3 text-sm text-gray-500 capitalize">{{ r.trigger }}</td>
-                            <td class="px-3 py-3">
-                                <span class="px-2 py-0.5 text-xs rounded-full font-medium
-                                    {% if r.status == 'success' %}bg-green-100 text-green-700
-                                    {% elif r.status == 'running' %}bg-blue-100 text-blue-700
-                                    {% elif r.status == 'partial' %}bg-yellow-100 text-yellow-700
-                                    {% else %}bg-red-100 text-red-700{% endif %} capitalize">
-                                    {{ r.status }}
-                                </span>
-                            </td>
-                            <td class="px-3 py-3 text-sm text-gray-700 text-right">{{ r.accounts_synced }}</td>
-                            <td class="px-3 py-3 text-sm text-gray-700 text-right">{{ r.holdings_synced }}</td>
-                            <td class="px-3 py-3 text-sm text-gray-700 text-right">{{ r.transactions_added }}</td>
-                            <td class="px-3 py-3 text-sm text-gray-400 text-right">{{ r.transactions_skipped }}</td>
-                            <td class="px-3 py-3 text-xs text-red-500 max-w-[240px] truncate" title="{{ r.error_message or '' }}">{{ r.error_message or '—' }}</td>
-                        </tr>
-                        {% endfor %}
-                    </tbody>
-                </table>
-            </div>
-            {% else %}
-            <p class="text-center text-sm text-gray-400 py-8">No synchronization runs yet.</p>
-            {% endif %}
+    <section class="ds-card" aria-labelledby="syncRunsHeading">
+        <div class="ds-card__head">
+            <h2 id="syncRunsHeading" class="ds-section__title">Synchronization Runs</h2>
         </div>
-    </div>
+        {% if runs %}
+        <div class="ds-table-wrap ds-scroll">
+            <table class="ds-table ds-table--hover">
+                <thead>
+                    <tr>
+                        <th scope="col">Started</th>
+                        <th scope="col">Institution</th>
+                        <th scope="col">Trigger</th>
+                        <th scope="col">Status</th>
+                        <th scope="col" class="ds-table__num">Accounts</th>
+                        <th scope="col" class="ds-table__num">Holdings</th>
+                        <th scope="col" class="ds-table__num">Txns Added</th>
+                        <th scope="col" class="ds-table__num">Txns Skipped</th>
+                        <th scope="col">Error</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for r in runs %}
+                    <tr>
+                        <td class="ds-meta">{{ r.started_at }}</td>
+                        <td class="sync-capitalize">{{ (r.institution or 'all').replace('_', ' ') }}</td>
+                        <td class="ds-meta sync-capitalize">{{ r.trigger }}</td>
+                        <td>
+                            <span class="ds-badge sync-capitalize {{ 'ds-badge--ok' if r.status == 'success'
+                                else 'ds-badge--info' if r.status == 'running'
+                                else 'ds-badge--warn' if r.status == 'partial'
+                                else 'ds-badge--danger' }}">
+                                {{ r.status }}
+                            </span>
+                        </td>
+                        <td class="ds-table__num">{{ r.accounts_synced }}</td>
+                        <td class="ds-table__num">{{ r.holdings_synced }}</td>
+                        <td class="ds-table__num">{{ r.transactions_added }}</td>
+                        <td class="ds-table__num ds-meta">{{ r.transactions_skipped }}</td>
+                        <td class="sync-truncate sync-error-text" title="{{ r.error_message or '' }}">{{ r.error_message or '—' }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <p class="sync-empty">No synchronization runs yet.</p>
+        {% endif %}
+    </section>
 
     <!-- Errors -->
     {% if errors %}
-    <div class="bg-white shadow sm:rounded-xl overflow-hidden">
-        <div class="px-5 py-5">
-            <h3 class="text-base font-semibold text-gray-900 mb-4">Recent Errors</h3>
-            <div class="overflow-x-auto">
-                <table class="min-w-full divide-y divide-gray-200">
-                    <thead class="bg-gray-50">
-                        <tr>
-                            <th class="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase">When</th>
-                            <th class="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase">Institution</th>
-                            <th class="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase">Type</th>
-                            <th class="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase">Attempt</th>
-                            <th class="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase">Message</th>
-                        </tr>
-                    </thead>
-                    <tbody class="bg-white divide-y divide-gray-200">
-                        {% for e in errors %}
-                        <tr class="hover:bg-gray-50">
-                            <td class="px-3 py-3 text-sm text-gray-700 whitespace-nowrap">{{ e.created_at }}</td>
-                            <td class="px-3 py-3 text-sm font-medium text-gray-900 capitalize">{{ (e.institution or '—').replace('_', ' ') }}</td>
-                            <td class="px-3 py-3">
-                                <span class="px-2 py-0.5 text-xs rounded-full font-medium
-                                    {% if e.is_transient %}bg-yellow-100 text-yellow-700{% else %}bg-red-100 text-red-700{% endif %}">
-                                    {{ e.error_type }}
-                                </span>
-                            </td>
-                            <td class="px-3 py-3 text-sm text-gray-500">{{ e.attempt }}</td>
-                            <td class="px-3 py-3 text-xs text-gray-600 max-w-[360px] truncate" title="{{ e.message }}">{{ e.message }}</td>
-                        </tr>
-                        {% endfor %}
-                    </tbody>
-                </table>
-            </div>
+    <section class="ds-card" aria-labelledby="syncErrorsHeading">
+        <div class="ds-card__head">
+            <h2 id="syncErrorsHeading" class="ds-section__title">Recent Errors</h2>
         </div>
-    </div>
+        <div class="ds-table-wrap ds-scroll">
+            <table class="ds-table ds-table--hover">
+                <thead>
+                    <tr>
+                        <th scope="col">When</th>
+                        <th scope="col">Institution</th>
+                        <th scope="col">Type</th>
+                        <th scope="col">Attempt</th>
+                        <th scope="col">Message</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for e in errors %}
+                    <tr>
+                        <td class="ds-meta">{{ e.created_at }}</td>
+                        <td class="sync-capitalize">{{ (e.institution or '—').replace('_', ' ') }}</td>
+                        <td>
+                            <span class="ds-badge {{ 'ds-badge--warn' if e.is_transient else 'ds-badge--danger' }}">
+                                {{ e.error_type }}
+                            </span>
+                        </td>
+                        <td class="ds-meta">{{ e.attempt }}</td>
+                        <td class="sync-truncate sync-truncate--wide ds-meta" title="{{ e.message }}">{{ e.message }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </section>
     {% endif %}
 
 </div>

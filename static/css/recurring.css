@@ -1,0 +1,141 @@
+/* ══════════════════════════════════════════════════════════════════════════
+   Recurring — monthly bills and subscriptions.
+   ──────────────────────────────────────────────────────────────────────────
+   Phase 9 Wave 2. Everything visual resolves through design-system.css
+   tokens; what is left here is this page's own composition: the stat block
+   in a card header, the "mark unnecessary" chip on a subscription row, and
+   the phone card-layout for both tables.
+
+   Tokens defined here are namespaced --recur-*.
+   ══════════════════════════════════════════════════════════════════════════ */
+
+.recur-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--sp-4);
+  flex-wrap: wrap;
+  margin-bottom: var(--sp-4);
+}
+
+.recur-filter-form { align-items: flex-end; }
+.recur-inline { display: inline; }
+.recur-dismissed__desc { min-width: 0; }
+
+.recur-stat { text-align: right; flex-shrink: 0; }
+.recur-stat__value {
+  font-size: var(--f-xl);
+  font-weight: var(--w-bold);
+  color: var(--ink-strong);
+  margin: 2px 0 0;
+}
+.recur-stat__value--accent { color: var(--warn-ink); }
+
+/* Subscriptions card gets a warn-toned accent edge — it is the card with a
+   savings calculator in it, not a plain list. */
+.recur-card--accent { border-left: 3px solid var(--warn-mark); }
+
+.recur-empty { color: var(--ink-faint); font-size: var(--f-sm); }
+
+/* ── Tables ────────────────────────────────────────────────────────────── */
+
+.recur-table__center { text-align: center; }
+
+.recur-desc {
+  max-width: 28ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.recur-desc__category { margin-left: var(--sp-1); color: var(--ink-faint); }
+/* Toggled by Alpine when a subscription is marked unnecessary. */
+.recur-desc--marked { text-decoration: line-through; color: var(--ink-faint); }
+.recur-row--marked { background: var(--danger-bg); }
+
+.recur-amt--out { color: var(--danger-ink); font-weight: var(--w-semi); }
+.recur-amt__annual {
+  display: block;
+  font-size: var(--f-xs);
+  font-weight: var(--w-normal);
+  color: var(--ink-faint);
+}
+
+.recur-next { color: var(--accent-ink); font-weight: var(--w-medium); }
+
+/* A keyword-remove-style dismiss affordance: quiet until hovered, then reads
+   as destructive. Matches rules.css's .rules-keyword__x reasoning. */
+.recur-dismiss {
+  border: 0;
+  background: none;
+  padding: 0;
+  color: var(--ink-ghost);
+  font-size: var(--f-xs);
+  font-weight: var(--w-medium);
+  cursor: pointer;
+  transition: color var(--dur-2) var(--ease-out);
+}
+.recur-dismiss:hover { color: var(--danger-ink); }
+
+.recur-dismissed__summary {
+  cursor: pointer;
+  user-select: none;
+  color: var(--ink-muted);
+  font-size: var(--f-sm);
+  font-weight: var(--w-medium);
+}
+.recur-dismissed__summary:hover { color: var(--ink-body); }
+.recur-dismissed__list { margin-top: var(--sp-4); }
+.recur-dismissed__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-4);
+  padding: var(--sp-2) 0;
+}
+.recur-dismissed__row + .recur-dismissed__row { border-top: 1px solid var(--hairline); }
+.recur-dismissed__meta { color: var(--ink-faint); font-size: var(--f-xs); margin-left: var(--sp-2); }
+
+/* ── Touch / narrow ────────────────────────────────────────────────────── */
+
+@media (max-width: 640px) {
+  .recur-head { flex-wrap: wrap; gap: var(--sp-3); }
+  .recur-stat { text-align: left; }
+
+  #billsTable, #billsTable tbody,
+  #subsTable, #subsTable tbody { display: block; min-width: 0; }
+  #billsTable thead, #subsTable thead { display: none; }
+
+  #billsTable tbody tr, #subsTable tbody tr {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    column-gap: var(--sp-3);
+    row-gap: 2px;
+    padding: var(--sp-3) var(--sp-1);
+    border-bottom: 1px solid var(--hairline);
+  }
+  #billsTable td, #subsTable td {
+    display: block;
+    padding: 0;
+    border: none;
+    white-space: normal;
+    text-align: left;
+  }
+  .recur-desc { max-width: none; }
+
+  #billsTable td:nth-child(1) { grid-column: 1; grid-row: 1; font-weight: var(--w-semi); }
+  #billsTable td:nth-child(4) { grid-column: 2; grid-row: 1; text-align: right; font-size: var(--f-md); }
+  #billsTable td:nth-child(2) { grid-column: 1; grid-row: 2; font-size: var(--f-xs); opacity: .7; }
+  #billsTable td:nth-child(3) { grid-column: 2; grid-row: 2; text-align: right; font-size: var(--f-xs); opacity: .7; }
+  #billsTable td:nth-child(9) { grid-column: 1; grid-row: 3; font-size: var(--f-xs); margin-top: 4px; }
+  #billsTable td:nth-child(9)::before { content: 'Next: '; color: var(--ink-faint); }
+  #billsTable td:nth-child(6) { grid-column: 2; grid-row: 3; text-align: right; font-size: var(--f-xs); opacity: .7; margin-top: 4px; }
+  #billsTable td:nth-child(6)::after { content: ' seen'; }
+  /* Secondary stats hidden on phone: annual cost, occurrences, typical gap. */
+  #billsTable td:nth-child(5), #billsTable td:nth-child(7), #billsTable td:nth-child(8) { display: none; }
+  #billsTable td:nth-child(10) { grid-column: 1 / -1; grid-row: 4; margin-top: 6px; }
+
+  #subsTable td:nth-child(1) { grid-column: 1; grid-row: 1; font-weight: var(--w-semi); }
+  #subsTable td:nth-child(2) { grid-column: 2; grid-row: 1; text-align: right; }
+  #subsTable td:nth-child(3) { grid-column: 1; grid-row: 2; font-size: var(--f-xs); opacity: .7; }
+  #subsTable td:nth-child(4) { grid-column: 2; grid-row: 2; text-align: right; }
+}

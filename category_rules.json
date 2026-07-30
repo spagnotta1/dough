@@ -1,4 +1,7 @@
 {
+  "Coffee": [
+    "STARBUCKS"
+  ],
   "Insurance Payment": [
     "Withdrawal from PROG ADVANCED INS PREM",
     "INSURANCE",
@@ -134,5 +137,8 @@
   "Investments": [
     "VANGUARD BUY",
     "COINBASE"
+  ],
+  "BrowserTestCategory": [
+    "ZZTESTKEYWORD"
   ]
 }

@@ -1,0 +1,169 @@
+{% extends "base.html" %}
+
+{% block title %}Household · Dough{% endblock %}
+
+{#
+  Household — who can see this money.
+
+  The page is deliberately plain. Everything on it is irreversible or close to
+  it: an invitation link hands somebody a family's full financial history, and
+  removing a member deletes a login. So there are no inline confirmations
+  dressed up as buttons, the destructive actions say what they do rather than
+  what they are, and the one thing that must not be missed — the invitation
+  link, which is shown exactly once — gets the whole width and a warning.
+
+  Members see the same page as owners, minus the controls. Hiding the roster
+  from members would be security theatre: they can already see every
+  transaction in the household, so who else can is not the secret.
+#}
+
+{% block content %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/dashboard.css') }}">
+
+<div class="ds-stack ds-stack-4">
+
+  <header class="ds-section__head ds-rise">
+    <div>
+      <h1 class="ds-section__title">{{ household.name }}</h1>
+      <p class="ds-section__sub">
+        Everyone here sees the same accounts, transactions and balances.
+      </p>
+    </div>
+  </header>
+
+  {# ── The invitation link, shown once ──────────────────────────────────────
+     Rendered from a one-shot session value, so a refresh does not bring it
+     back. That is not a UI nicety: the plaintext token is never stored, so
+     "shown once" is a fact about the system rather than a policy about the
+     page, and the copy below says so plainly instead of implying the link can
+     be looked up again later. ──────────────────────────────────────────── #}
+  {% if invite_link %}
+  <section class="ds-card ds-card--warn ds-rise" style="--ds-delay:40ms">
+    <p class="ds-eyebrow">Copy this now</p>
+    <p class="ds-meta">
+      This link is shown once and cannot be recovered — Dough stores only a
+      fingerprint of it. Anyone who has it can join {{ household.name }} and see
+      everything in it, so send it the way you would send a password.
+    </p>
+    <div class="ds-row ds-row--wrap" style="gap: var(--sp-2); margin-top: var(--sp-3)">
+      <input id="invite-link" class="dash-input ds-input" readonly value="{{ invite_link }}"
+             style="flex:1 1 280px; font-family: ui-monospace, monospace; font-size: .8rem"
+             onfocus="this.select()">
+      <button type="button" class="ds-btn ds-btn--secondary"
+              onclick="navigator.clipboard.writeText(document.getElementById('invite-link').value).then(function(){
+                         var b=event.target; var t=b.textContent; b.textContent='Copied';
+                         setTimeout(function(){ b.textContent=t; }, 1600); })">Copy link</button>
+    </div>
+  </section>
+  {% endif %}
+
+  {# ── Members ───────────────────────────────────────────────────────────── #}
+  <section class="ds-section ds-rise" style="--ds-delay:60ms">
+    <h2 class="ds-section__title">Members</h2>
+
+    <div class="ds-stack ds-stack-2">
+      {% for member in members %}
+      <div class="ds-card ds-card--compact ds-row ds-row--between ds-row--wrap">
+        <div>
+          <strong>{{ member.username }}</strong>
+          {% if member.id == me.id %}<span class="ds-meta">— you</span>{% endif %}
+          <span class="ds-badge {{ 'ds-badge--ok' if member.is_owner else 'ds-badge--info' }} ds-badge--pill">
+            {{ 'Owner' if member.is_owner else 'Member' }}
+          </span>
+          <p class="ds-meta">Joined {{ member.created_at.strftime('%d %b %Y') }}</p>
+        </div>
+
+        {% if me.is_owner and member.id != me.id %}
+        <div class="ds-row" style="gap: var(--sp-2)">
+          <form method="POST"
+                action="{{ url_for('household.member_role', user_id=member.id) }}">
+            {{ csrf_field() }}
+            <input type="hidden" name="role"
+                   value="{{ 'member' if member.is_owner else 'owner' }}">
+            <button type="submit" class="ds-btn ds-btn--ghost ds-btn--sm">
+              {{ 'Make a member' if member.is_owner else 'Make an owner' }}
+            </button>
+          </form>
+          <form method="POST"
+                action="{{ url_for('household.member_remove', user_id=member.id) }}"
+                onsubmit="return confirm('Remove {{ member.username }}? Their login is deleted. Nothing in the household\'s accounts or transactions is removed — that data belongs to the household, not to them.')">
+            {{ csrf_field() }}
+            <button type="submit" class="ds-btn ds-btn--danger ds-btn--sm">Remove</button>
+          </form>
+        </div>
+        {% endif %}
+      </div>
+      {% endfor %}
+    </div>
+
+    {% if members|length == 1 %}
+    <p class="ds-meta" style="margin-top: var(--sp-3)">
+      It's just you right now. Invite someone below if you share these accounts.
+    </p>
+    {% endif %}
+  </section>
+
+  {# ── Invitations ───────────────────────────────────────────────────────── #}
+  {% if me.is_owner %}
+  <section class="ds-section ds-rise" style="--ds-delay:80ms">
+    <h2 class="ds-section__title">Invitations</h2>
+    <p class="ds-section__sub">
+      An invitation is a single-use link. It stops working once somebody uses
+      it, and expires on its own if nobody does.
+    </p>
+
+    <form method="POST" action="{{ url_for('household.invite_create') }}"
+          class="ds-card ds-card--compact ds-row ds-row--wrap"
+          style="gap: var(--sp-3); align-items: flex-end">
+      {{ csrf_field() }}
+      <label style="flex:1 1 200px">
+        <span class="ds-eyebrow">Who is it for?</span>
+        <input class="dash-input ds-input" type="text" name="label" maxlength="120"
+               placeholder="A note for you — e.g. Jamie's phone">
+      </label>
+      <label>
+        <span class="ds-eyebrow">Role</span>
+        <select class="dash-input ds-select" name="role">
+          <option value="member">Member — can see and use everything</option>
+          <option value="owner">Owner — can also invite and remove people</option>
+        </select>
+      </label>
+      <button type="submit" class="ds-btn ds-btn--primary">Create link</button>
+    </form>
+
+    {% if invites %}
+    <div class="ds-stack ds-stack-2" style="margin-top: var(--sp-4)">
+      {% for invite in invites %}
+      {% set state = invite.state() %}
+      <div class="ds-card ds-card--compact ds-row ds-row--between ds-row--wrap">
+        <div>
+          <strong>{{ invite.label or 'Untitled invitation' }}</strong>
+          <span class="ds-badge ds-badge--pill
+            {{ {'pending':'ds-badge--info', 'accepted':'ds-badge--ok',
+                'revoked':'ds-badge--danger', 'expired':'ds-badge--warn'}[state] }}">
+            {{ state|capitalize }}
+          </span>
+          <p class="ds-meta">
+            {{ 'Owner' if invite.role == 'owner' else 'Member' }} ·
+            created {{ invite.created_at.strftime('%d %b %Y') }}
+            {%- if state == 'pending' %} · expires {{ invite.expires_at.strftime('%d %b, %H:%M') }} UTC
+            {%- elif state == 'accepted' %} · used by {{ invite.accepted_by.username if invite.accepted_by else 'someone' }}
+            {%- endif %}
+          </p>
+        </div>
+        {% if state == 'pending' %}
+        <form method="POST"
+              action="{{ url_for('household.invite_revoke', invite_id=invite.id) }}">
+          {{ csrf_field() }}
+          <button type="submit" class="ds-btn ds-btn--ghost ds-btn--sm">Revoke</button>
+        </form>
+        {% endif %}
+      </div>
+      {% endfor %}
+    </div>
+    {% endif %}
+  </section>
+  {% endif %}
+
+</div>
+{% endblock %}

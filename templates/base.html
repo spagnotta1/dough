@@ -3,7 +3,42 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content">
-  <title>{% block title %}Checkbook App{% endblock %}</title>
+  <title>{% block title %}Dough{% endblock %}</title>
+  {% include '_head_icons.html' %}
+
+  <meta name="csrf-token" content="{{ csrf_token() }}">
+  <!-- ── CSRF for fetch(), installed before anything can call it ────────────
+       Inline and first in <head> on purpose. This patches window.fetch, and a
+       deferred script would run after any inline handler that fires on
+       DOMContentLoaded — so some calls would go out untokenised and land as a
+       403 that only reproduces on a fast connection.
+
+       Wrapping fetch rather than editing the ~40 call sites is not laziness:
+       the call site that matters is the one added next, and it inherits this
+       automatically. Only same-origin unsafe methods are touched, so a request
+       to a third party never carries our token. -->
+  <script>
+  (function () {
+    var meta = document.querySelector('meta[name="csrf-token"]');
+    var token = meta && meta.getAttribute('content');
+    if (!token || !window.fetch) return;
+    var SAFE = {GET: 1, HEAD: 1, OPTIONS: 1, TRACE: 1};
+    var original = window.fetch;
+    window.fetch = function (input, init) {
+      init = init || {};
+      var method = (init.method || (input && input.method) || 'GET').toUpperCase();
+      var url = typeof input === 'string' ? input : (input && input.url) || '';
+      var sameOrigin = !/^[a-z]+:\/\//i.test(url)
+        || url.indexOf(window.location.origin) === 0;
+      if (!SAFE[method] && sameOrigin) {
+        var headers = new Headers(init.headers || (input && input.headers) || {});
+        if (!headers.has('X-CSRF-Token')) headers.set('X-CSRF-Token', token);
+        init = Object.assign({}, init, {headers: headers, method: method});
+      }
+      return original.call(this, input, init);
+    };
+  })();
+  </script>
 
   <!-- ── Apply saved theme BEFORE any render (prevents flash of wrong theme) ── -->
   <script>
@@ -99,20 +134,32 @@
         if (c.red) s.setProperty('--red', c.red);
       }
     } catch(e){}
-    // Falls back to the :root defaults declared in the stylesheet.
-    window.CheckScheme.apply(c || { bg:'#f3f4f6', fg:'#111827', panel:'#ffffff', border:'#e5e7eb', red:'#7c3aed' });
+    // Falls back to the :root defaults declared in the stylesheet. These five
+    // values must stay identical to that :root block and to THEMES.light --
+    // nothing is set here on a first visit, so the colors come from CSS while
+    // the derived scheme and accents come from this literal. If they disagree,
+    // the page paints one theme and contrast-corrects for another.
+    window.CheckScheme.apply(c || { bg:'#f0ebe3', fg:'#5a5248', panel:'#faf6f0', border:'#d4cdc2', red:'#c47d5a' });
   })();
   </script>
 
-  <script src="https://cdn.tailwindcss.com"></script>
   <script defer src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <!-- Opt-in value labels for every chart in the app — must follow Chart.js. -->
   <script src="{{ url_for('static', filename='js/chart-value-labels.js') }}"></script>
   <!-- Shared palette + Chart.js defaults, so every chart reads as one system. -->
   <script src="{{ url_for('static', filename='js/chart-theme.js') }}"></script>
+  <!-- The reset the Tailwind CDN used to provide, kept after its removal —
+       every page was authored against it. Must load before the design system:
+       a reset that loses to everything after it is the point of a reset. -->
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/preflight.css') }}">
   <!-- Design tokens + component primitives. Everything else styles from these. -->
   <link rel="stylesheet" href="{{ url_for('static', filename='css/design-system.css') }}">
+  <!-- Dough: the mascot's artwork, moods and the surfaces he speaks from.
+       Loaded app-wide rather than per page — Dough appears wherever the
+       product is being intelligent, which is nearly everywhere. -->
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/dough.css') }}">
+  <script defer src="{{ url_for('static', filename='js/dough.js') }}"></script>
 
   <style>
   /* ═══════════════════════════════════════════════════════════════════════
@@ -123,25 +170,27 @@
      ═══════════════════════════════════════════════════════════════════════ */
 
   :root {
-    /* Default: neutral light (Check's original look) */
-    --bg:     #f3f4f6;
-    --fg:     #111827;
-    --panel:  #ffffff;
-    --border: #e5e7eb;
-    --red:    #7c3aed;   /* "accent" — violet for Check (red in Odysseus) */
+    /* Default: THEMES.light — the warm paper look. A visitor with no saved
+       preference never runs applyTheme(), so this block *is* the default
+       theme; keep it in sync with THEMES.light and with the fallback literal
+       in the <head> init script above. */
+    --bg:     #f0ebe3;
+    --fg:     #5a5248;
+    --panel:  #faf6f0;
+    --border: #d4cdc2;
+    --red:    #c47d5a;   /* "accent" — copper (red in Odysseus) */
   }
 
   /* ── Smooth transitions on theme switch ── */
   body, nav, main, header, footer,
-  .bg-white, .bg-gray-50, .bg-gray-100,
   input, textarea, select, button,
   table, th, td { transition: background-color .28s ease, color .22s ease, border-color .2s ease !important; }
   /* Don't animate canvas, images, or JS animations */
   canvas, img, video, svg,
-  [style*="animation"], [class*="animate-"] { transition: none !important; }
+  [style*="animation"] { transition: none !important; }
 
   /* ── Body ── */
-  body { background-color: var(--bg) !important; color: var(--fg) !important; }
+  body { background-color: var(--bg); color: var(--fg); min-height: 100vh; }
 
   /* ── Navigation ──
      Sticky and translucent: the page scrolls under it rather than pushing it
@@ -162,96 +211,90 @@
   @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
     nav { background-color: var(--panel) !important; }
   }
-  nav .shadow-lg                { box-shadow: none !important; }
+  /* ── App shell ─────────────────────────────────────────────────────────
+     The nav row, its links, the content column and the toast anchor. These
+     were Tailwind utility classes until the CDN came out; the widths and
+     paddings below are the same values those utilities resolved to, so the
+     shell is pixel-identical either side of the change. */
 
-  /* Brand title */
-  nav a.text-xl {
-    color: var(--fg) !important;
-    letter-spacing: -.022em;
+  .nav-inner { max-width: 80rem; margin-inline: auto; padding-inline: 1rem; }
+  .nav-row   { display: flex; justify-content: space-between; height: 4rem; }
+  .nav-left  { display: flex; }
+  .nav-brand-box { flex-shrink: 0; display: flex; align-items: center; }
+  .nav-brand {
+    display: flex;
+    align-items: center;
+    gap: .5rem;
+    font-size: 1.25rem;
     font-weight: 650;
+    letter-spacing: -.022em;
+    color: var(--fg);
+  }
+  .nav-right {
+    display: flex;
+    align-items: center;
+    gap: .5rem;
+    flex-shrink: 0;
+    margin-left: .75rem;
+    white-space: nowrap;
   }
 
-  /* Nav links */
-  nav a.text-gray-500           { color: color-mix(in srgb, var(--fg) 55%, transparent) !important; }
-  nav a.hover\:text-gray-700:hover { color: var(--fg) !important; }
-  nav a.hover\:border-gray-300:hover { border-color: color-mix(in srgb, var(--border) 120%, var(--fg) 5%) !important; }
+  /* Revealed at 1024px — the exact complement of the touch block below.
+     Seven links plus the brand need about 880px; revealing them any earlier
+     re-opens the band of widths where the row is shown but does not fit. */
+  #primary-nav { display: none; }
+  @media (min-width: 1024px) {
+    #primary-nav { display: flex; margin-left: 1rem; gap: 1rem; }
+  }
+  @media (min-width: 1280px) {
+    #primary-nav { gap: 1.75rem; }
+  }
 
-  /* A soft plate on hover so the target reads before the pointer lands. */
-  nav .sm\:flex > a {
+  .nav-link {
+    display: inline-flex;
+    align-items: center;
+    white-space: nowrap;
+    padding: .25rem 10px 0;
+    border-bottom: 2px solid transparent;
+    /* A soft plate on hover so the target reads before the pointer lands. */
     border-radius: 8px 8px 0 0;
-    padding-left: 10px !important;
-    padding-right: 10px !important;
+    font-size: .875rem;
+    font-weight: 500;
+    color: color-mix(in srgb, var(--fg) 55%, transparent);
     transition: background-color .14s ease, color .14s ease, border-color .14s ease;
   }
-  nav .sm\:flex > a:hover { background: color-mix(in srgb, var(--fg) 6%, transparent); }
-
-  /* Active nav item (AI Chat link uses violet classes) */
-  nav a.text-violet-500,
-  nav a.text-violet-600         { color: var(--red) !important; }
-  nav a.border-violet-500       { border-color: var(--red) !important; }
-  nav a.hover\:border-violet-400:hover { border-color: color-mix(in srgb, var(--red) 70%, white) !important; }
-  nav a.hover\:text-violet-700:hover   { color: color-mix(in srgb, var(--red) 80%, black) !important; }
-
-  /* ── White / gray panels → theme panel ── */
-  .bg-white                     { background-color: var(--panel) !important; }
-  .bg-gray-50                   { background-color: color-mix(in srgb, var(--bg) 72%, var(--panel)) !important; }
-  .bg-gray-100                  { background-color: var(--bg) !important; }
-
-  /* ── Text ── */
-  .text-gray-900                { color: var(--fg) !important; }
-  .text-gray-800                { color: color-mix(in srgb, var(--fg) 88%, transparent) !important; }
-  .text-gray-700                { color: color-mix(in srgb, var(--fg) 76%, transparent) !important; }
-  .text-gray-600                { color: color-mix(in srgb, var(--fg) 63%, transparent) !important; }
-  .text-gray-500                { color: color-mix(in srgb, var(--fg) 50%, transparent) !important; }
-  .text-gray-400                { color: color-mix(in srgb, var(--fg) 38%, transparent) !important; }
-  .text-gray-300                { color: color-mix(in srgb, var(--fg) 28%, transparent) !important; }
-
-  /* ── Borders ── */
-  .border-gray-200              { border-color: var(--border) !important; }
-  .border-gray-300              { border-color: color-mix(in srgb, var(--border) 130%, var(--fg) 6%) !important; }
-  .divide-gray-200 > * + *     { border-color: var(--border) !important; }
-
-  /* ── Accent (violet → --red per theme) ── */
-  .text-violet-600, .text-violet-700 { color: var(--red) !important; }
-  .text-violet-500              { color: color-mix(in srgb, var(--red) 85%, white) !important; }
-  .text-violet-400, .text-violet-300 { color: color-mix(in srgb, var(--red) 65%, white) !important; }
-  .bg-violet-600                { background-color: var(--red) !important; }
-  .hover\:bg-violet-700:hover   { background-color: color-mix(in srgb, var(--red) 82%, black) !important; }
-  .border-violet-500, .border-violet-400 { border-color: var(--red) !important; }
-  .focus\:ring-violet-500:focus { box-shadow: 0 0 0 3px color-mix(in srgb, var(--red) 25%, transparent) !important; }
-
-  /* Green / positive values — keep as-is (financial data) */
-
-  /* ── Inputs / forms ── */
-  input[type="text"], input[type="number"], input[type="email"],
-  input[type="password"], input[type="date"], input[type="search"],
-  input[type="file"], textarea, select {
-    background-color: var(--panel) !important;
-    color: var(--fg) !important;
-    border-color: var(--border) !important;
+  .nav-link:hover {
+    background: color-mix(in srgb, var(--fg) 6%, transparent);
+    color: var(--fg);
+    border-color: color-mix(in srgb, var(--border) 120%, var(--fg) 5%);
   }
-  input::placeholder, textarea::placeholder {
-    color: color-mix(in srgb, var(--fg) 33%, transparent) !important;
+  /* Ask Dough carries the accent at rest — it is the one destination that is
+     an invitation rather than a place. */
+  .nav-link--accent { color: var(--red); }
+  .nav-link--accent:hover {
+    color: color-mix(in srgb, var(--red) 80%, black);
+    border-color: color-mix(in srgb, var(--red) 70%, white);
   }
-  /* File input button */
-  input[type="file"]::file-selector-button {
-    background-color: color-mix(in srgb, var(--panel) 80%, var(--bg)) !important;
-    color: var(--fg) !important;
-    border-color: var(--border) !important;
-  }
+  /* Set by _updateNav() on the link matching the current path. */
+  .nav-link.active { color: var(--red); border-color: var(--red); }
 
-  /* ── Table ── */
-  th { background-color: color-mix(in srgb, var(--bg) 65%, var(--panel)) !important;
-       color: color-mix(in srgb, var(--fg) 72%, transparent) !important; }
-  tr { border-color: var(--border) !important; }
-  .hover\:bg-gray-50:hover { background-color: color-mix(in srgb, var(--bg) 60%, var(--panel)) !important; }
+  /* The content column. py-6 px-4, then sm:px-6 and lg:px-8, as it was. */
+  .app-main { max-width: 80rem; margin-inline: auto; padding: 1.5rem 1rem; }
+  @media (min-width: 640px)  { .app-main { padding-inline: 1.5rem; } }
+  @media (min-width: 1024px) { .app-main { padding-inline: 2rem; } }
 
-  /* ── Badges / pills ── */
-  .bg-gray-200  { background-color: color-mix(in srgb, var(--border) 60%, var(--bg)) !important; }
-
-  /* ── Shadows (panel-aware) ── */
-  .shadow, .shadow-sm, .shadow-lg, .shadow-md {
-    --tw-shadow-color: rgba(0,0,0,.16);
+  /* The toast anchor. Bottom-right on desktop; the touch block below re-pins
+     it above the tab bar. */
+  #toast-container {
+    position: fixed;
+    bottom: 1rem;
+    right: 1rem;
+    z-index: 50;
+    display: flex;
+    flex-direction: column;
+    gap: .5rem;
+    pointer-events: none;
+    max-width: 20rem;
   }
 
   /* ════════════════════════════════════════════════════════════════════
@@ -265,7 +308,9 @@
     height: 34px;
     border-radius: 50%;
     background: var(--red);
-    color: #fff;
+    /* --accent-on is stamped by CheckScheme for exactly this: text sitting
+       directly on the accent, which several themes make too pale for white. */
+    color: var(--accent-on, #fff);
     font-weight: 700;
     font-size: .8rem;
     letter-spacing: 0;
@@ -327,7 +372,7 @@
     cursor: pointer;
   }
   .pm-item:hover { background: color-mix(in srgb, var(--fg) 7%, transparent); }
-  .pm-item.danger { color: #dc2626; }
+  .pm-item.danger { color: var(--danger-ink, #dc2626); }
   .pm-item svg { flex-shrink: 0; opacity: .7; }
 
   /* Theme swatch grid */
@@ -396,46 +441,104 @@
     white-space: nowrap;
   }
 
-  /* ── Mobile "More" menu (bottom sheet on phones) ── */
+  /* ── Mobile "More" menu (bottom sheet on phones) ──
+     Shown and hidden with the native [hidden] attribute (design-system.css
+     makes it win); the media query keeps it off desktop even if a resize
+     catches it open. */
   #mobile-menu { background-color: var(--panel); }
-  #mobile-menu a:active { background: color-mix(in srgb, var(--fg) 8%, transparent); }
+  @media (min-width: 1024px) { #mobile-menu { display: none !important; } }
+  .mm-body  { padding: 12px 12px 8px; }
+  .mm-title {
+    padding: 0 12px 4px;
+    font-size: .75rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: .05em;
+    color: color-mix(in srgb, var(--fg) 38%, transparent);
+  }
+  .mm-title--rule { border-top: 1px solid var(--border); margin-top: 8px; padding-top: 12px; }
+  .mm-link {
+    display: flex;
+    align-items: center;
+    width: 100%;
+    text-align: left;
+    padding: 8px 12px;
+    border-radius: 6px;
+    font-size: 1rem;
+    font-weight: 500;
+    color: color-mix(in srgb, var(--fg) 50%, transparent);
+    background: none;
+    border: 0;
+    cursor: pointer;
+    text-decoration: none;
+  }
+  .mm-link:active { background: color-mix(in srgb, var(--fg) 8%, transparent); }
 
   /* ── Bottom tab bar (phones only) ── */
   #tab-bar { display: none; }
 
-  /* ── Small-screen fit (no effect on desktop) ── */
-  @media (max-width: 640px) {
+  /* ── Touch / narrow layout ────────────────────────────────────────────────
+     1023.98px, and the number is not arbitrary: it is the exact complement of
+     Tailwind's `lg:` (min-width 1024px), which is what reveals the desktop nav
+     row below. The two have to be complements or there is a band of widths
+     with no navigation that fits.
+
+     It used to be 640px, and that band existed: from 641px to about 880px the
+     seven-link desktop nav was shown but did not fit, so *every page in the
+     product* scrolled sideways at iPad-portrait width. The bottom tab bar and
+     the "More" sheet cover the same destinations and fit at any width, so the
+     fix is to keep using them until the desktop row genuinely has room.
+
+     chat.css's PHONE / TOUCH block carries the same number and must keep
+     carrying it — it reserves --chat-tabbar-h for the bar this block shows.
+     When they disagreed, 641-860px reserved 54px for a bar that was not there.
+     tests/test_ui_invariants.py::test_the_touch_breakpoint_agrees_across_files
+     holds them together. */
+  @media (max-width: 1023.98px) {
     * { -webkit-tap-highlight-color: transparent; }
+
+    /* The tab bar's height was written out as a literal in four places, so
+       growing Dough's tab by a pixel silently desynced the bottom sheet and
+       the scroll padding from the bar they sit above. One number now. */
+    :root { --tabbar-h: 58px; }
 
     /* 16px inputs stop iOS Safari/WebView from auto-zooming on focus */
     input[type="text"], input[type="number"], input[type="email"],
     input[type="password"], input[type="date"], input[type="search"],
     select, textarea { font-size: 16px !important; }
 
+    /* These three were written when this block stopped at 640px, where
+       "edge to edge" and "phone width" were the same thing. They are not the
+       same thing at 1000px, so each one now caps its width and stays on the
+       side it was already on. On a phone the cap is wider than the screen, so
+       nothing about the phone layout changes. */
     #profile-menu {
       position: fixed;
       top: 64px;
       right: 8px;
       left: 8px;
       width: auto;
-      max-width: none;
+      max-width: 380px;
+      margin-left: auto;   /* left+right+max-width is over-constrained; pin it right */
     }
     #toast-container {
       left: 1rem;
       right: 1rem;
-      max-width: none !important;
-      bottom: calc(68px + env(safe-area-inset-bottom)) !important;
+      max-width: 420px !important;
+      margin-left: auto;
+      bottom: calc(var(--tabbar-h) + 14px + env(safe-area-inset-bottom)) !important;
     }
     /* Keep wide content scrollable instead of stretching the page */
     main {
       overflow-x: hidden;
-      /* room for the fixed tab bar (!important beats Tailwind's .py-6) */
-      padding-bottom: calc(84px + env(safe-area-inset-bottom)) !important;
+      /* room for the fixed tab bar (!important beats .app-main's padding) */
+      padding-bottom: calc(var(--tabbar-h) + 30px + env(safe-area-inset-bottom)) !important;
     }
 
     /* Fixed bottom tab bar — primary nav within thumb reach */
     #tab-bar {
       display: flex;
+      justify-content: center;
       position: fixed;
       left: 0; right: 0; bottom: 0;
       z-index: 9990;
@@ -445,14 +548,18 @@
       box-shadow: 0 -2px 16px rgba(0,0,0,.10);
     }
     .tab-item {
-      flex: 1;
+      /* Capped so five tabs do not stretch to 200px each on a tablet; the
+         group then centres itself in the bar. On a phone each tab is well
+         under the cap, so this is inert there. */
+      flex: 1 1 0;
+      max-width: 132px;
       display: flex;
       flex-direction: column;
       align-items: center;
       justify-content: center;
       gap: 3px;
       padding: 8px 0 6px;
-      min-height: 54px;
+      min-height: var(--tabbar-h);
       font-size: .62rem;
       font-weight: 600;
       letter-spacing: .02em;
@@ -465,6 +572,17 @@
     .tab-item.active { color: var(--red); }
     .tab-item svg { flex-shrink: 0; }
 
+    /* Dough's tab can't dim by inheriting currentColor the way the outline
+       glyphs do — he is full colour. Fading the whole avatar gives him the
+       same inactive/active reading as its neighbours.
+
+       He runs a few pixels larger than the 21px outline glyphs beside him on
+       purpose: he is the "get help" affordance and the only full-colour mark
+       on the bar, and at 21px the ears stop resolving. --tabbar-h is sized to
+       hold him. */
+    .tab-dough .dough-avatar { --dough-size: 28px; opacity: .6; transition: opacity .14s ease; }
+    .tab-dough.active .dough-avatar { opacity: 1; }
+
     /* While the keyboard is up, hide the tab bar (ChatGPT-style focused compose) */
     html.kb-open #tab-bar { display: none; }
     html.kb-open main { padding-bottom: 16px !important; }
@@ -473,19 +591,19 @@
     #mobile-menu {
       position: fixed;
       left: 0; right: 0;
-      bottom: calc(54px + env(safe-area-inset-bottom));
+      bottom: calc(var(--tabbar-h) + env(safe-area-inset-bottom));
       z-index: 9989;
       border-radius: 16px 16px 0 0;
       border-top: 1px solid var(--border);
       box-shadow: 0 -8px 40px rgba(0,0,0,.28);
       max-height: 60vh;
       overflow-y: auto;
+      /* Centred and capped on a tablet; full-bleed on a phone, where the cap
+         is wider than the screen and so does nothing. */
+      max-width: 560px;
+      margin: 0 auto;
     }
-    #mobile-menu a {
-      min-height: 44px;
-      display: flex;
-      align-items: center;
-    }
+    #mobile-menu .mm-link { min-height: 44px; }
   }
 
   /* SPA transition bar */
@@ -494,33 +612,47 @@
   .spa-loaded { animation:fadeSlideIn .18s ease-out }
   </style>
 </head>
-<body class="bg-gray-100 min-h-screen">
+<body>
 <div id="spa-bar"></div>
 <a href="#main" class="ds-skip">Skip to main content</a>
 
   <!-- ── Navigation ── -->
-  <nav class="bg-white shadow-lg">
-    <div class="max-w-7xl mx-auto px-4">
-      <div class="flex justify-between h-16">
+  <nav>
+    <div class="nav-inner">
+      <div class="nav-row">
 
         <!-- Left: brand + nav links -->
-        <div class="flex">
-          <div class="flex-shrink-0 flex items-center">
-            <a href="/" class="text-xl font-bold text-gray-800">Checkbook App</a>
+        <div class="nav-left">
+          <div class="nav-brand-box">
+            <!-- Dough's face is the logo. He greets on first paint and then
+                 settles into the idle blink, so the brand mark is the same
+                 character the user talks to a click away. -->
+            <a href="/" class="nav-brand">
+              <span class="dough-avatar dough-avatar-sm" aria-hidden="true">
+                <span data-dough="greeting" data-dough-size="36" data-dough-tight></span>
+              </span>
+              Dough
+            </a>
           </div>
-          <div class="hidden sm:ml-4 sm:flex sm:space-x-3 lg:space-x-4 xl:space-x-7">
-            <a href="/" class="border-transparent text-gray-500 hover:border-gray-300 hover:text-gray-700 inline-flex items-center whitespace-nowrap px-1 pt-1 border-b-2 text-sm font-medium">Dashboard</a>
-            <a href="/transactions" class="border-transparent text-gray-500 hover:border-gray-300 hover:text-gray-700 inline-flex items-center whitespace-nowrap px-1 pt-1 border-b-2 text-sm font-medium">Transactions</a>
-            <a href="/anomalies" class="border-transparent text-gray-500 hover:border-gray-300 hover:text-gray-700 inline-flex items-center whitespace-nowrap px-1 pt-1 border-b-2 text-sm font-medium">Anomalies</a>
-            <a href="/recurring" class="border-transparent text-gray-500 hover:border-gray-300 hover:text-gray-700 inline-flex items-center whitespace-nowrap px-1 pt-1 border-b-2 text-sm font-medium">Recurring</a>
-            <a href="/budgets" class="border-transparent text-gray-500 hover:border-gray-300 hover:text-gray-700 inline-flex items-center whitespace-nowrap px-1 pt-1 border-b-2 text-sm font-medium">Budgets</a>
-            <a href="/investments" class="border-transparent text-gray-500 hover:border-gray-300 hover:text-gray-700 inline-flex items-center whitespace-nowrap px-1 pt-1 border-b-2 text-sm font-medium">Investments</a>
-            <a href="/chat" class="border-transparent text-violet-500 hover:border-violet-400 hover:text-violet-700 inline-flex items-center whitespace-nowrap px-1 pt-1 border-b-2 text-sm font-medium">AI Chat</a>
+          {# Revealed at 1024px, not 640px. Seven links plus the brand and
+             the avatar need about 880px; revealing them at 640px produced a
+             band of widths — every tablet in portrait — where this row was
+             shown and did not fit, and the page scrolled sideways. The touch
+             nav covers the same destinations below this width. See the
+             #primary-nav rules in the <style> block above. #}
+          <div id="primary-nav">
+            <a href="/" class="nav-link">Dashboard</a>
+            <a href="/transactions" class="nav-link">Transactions</a>
+            <a href="/anomalies" class="nav-link">Anomalies</a>
+            <a href="/recurring" class="nav-link">Recurring</a>
+            <a href="/budgets" class="nav-link">Budgets</a>
+            <a href="/investments" class="nav-link">Investments</a>
+            <a href="/chat" class="nav-link nav-link--accent">Ask Dough</a>
           </div>
         </div>
 
         <!-- Right: account / settings -->
-        <div class="flex items-center gap-2 flex-shrink-0 ml-3 whitespace-nowrap">
+        <div class="nav-right">
           <div id="profile-menu-wrap">
             <button id="profile-btn" onclick="toggleProfileMenu()" title="Account &amp; settings" aria-haspopup="true" aria-expanded="false" aria-label="Account and settings">
               {{ (current_username[0] if current_username else 'U')|upper }}
@@ -528,7 +660,7 @@
             <div id="profile-menu" role="menu" aria-label="Account and settings">
               <div class="pm-header">
                 <p class="pm-name">{{ current_username or 'Account' }}</p>
-                <p class="pm-sub">Checkbook App</p>
+                <p class="pm-sub">Dough</p>
               </div>
               <div class="pm-divider"></div>
               <a href="/upload" class="pm-item" role="menuitem">
@@ -543,6 +675,14 @@
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 21v-7"/><path d="M4 10V3"/><path d="M12 21v-9"/><path d="M12 8V3"/><path d="M20 21v-5"/><path d="M20 12V3"/><path d="M2 14h4"/><path d="M10 8h4"/><path d="M18 12h4"/></svg>
                 Rules
               </a>
+              {# A literal href rather than url_for('household.index'): the
+                 household blueprint is registered only when AUTH_ENABLED, so
+                 url_for would raise a BuildError in every configuration that
+                 runs with auth off -- which is most of the test suite. #}
+              <a href="/household" class="pm-item" role="menuitem">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10.5 12 3l9 7.5"/><path d="M5 9.5V21h14V9.5"/><path d="M9 21v-6h6v6"/></svg>
+                Household
+              </a>
               <a href="/sync-history" class="pm-item" role="menuitem">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 4v5h5"/><path d="M12 7v5l3 3"/></svg>
                 Sync History
@@ -552,6 +692,7 @@
               <div id="theme-grid"></div>
               <div class="pm-divider"></div>
               <form method="post" action="/logout">
+                {{ csrf_field() }}
                 <button type="submit" id="logout-btn" class="pm-item danger" role="menuitem">
                   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
                   Sign out
@@ -566,19 +707,19 @@
 
   </nav>
 
-  <!-- More menu — bottom sheet on phones, hidden on sm+ -->
-  <div id="mobile-menu" class="sm:hidden hidden">
-    <div class="px-3 pt-3 pb-2">
-      <p class="px-3 pb-1 text-xs font-semibold uppercase tracking-wider text-gray-400">More</p>
-      <a href="/investments" class="block px-3 py-2 rounded-md text-base font-medium text-gray-500">Investments</a>
-      <a href="/anomalies" class="block px-3 py-2 rounded-md text-base font-medium text-gray-500">Anomalies</a>
-      <a href="/recurring" class="block px-3 py-2 rounded-md text-base font-medium text-gray-500">Recurring</a>
-      <p class="px-3 pt-3 pb-1 text-xs font-semibold uppercase tracking-wider text-gray-400 border-t border-gray-200 mt-2">Account &amp; settings</p>
-      <button type="button" onclick="closeMobileMenu(); toggleProfileMenu();" class="block w-full text-left px-3 py-2 rounded-md text-base font-medium text-gray-500">Settings</button>
+  <!-- More menu — bottom sheet on touch widths, hidden once the desktop nav fits -->
+  <div id="mobile-menu" hidden>
+    <div class="mm-body">
+      <p class="mm-title">More</p>
+      <a href="/investments" class="mm-link">Investments</a>
+      <a href="/anomalies" class="mm-link">Anomalies</a>
+      <a href="/recurring" class="mm-link">Recurring</a>
+      <p class="mm-title mm-title--rule">Account &amp; settings</p>
+      <button type="button" onclick="closeMobileMenu(); toggleProfileMenu();" class="mm-link">Settings</button>
     </div>
   </div>
 
-  <main id="main" tabindex="-1" class="max-w-7xl mx-auto py-6 px-4 sm:px-6 lg:px-8">
+  <main id="main" tabindex="-1" class="app-main">
     {% block content %}{% endblock %}
   </main>
 
@@ -596,9 +737,16 @@
       <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21.21 15.89A10 10 0 1 1 8 2.83"/><path d="M22 12A10 10 0 0 0 12 2v10z"/></svg>
       <span>Budgets</span>
     </a>
-    <a href="/chat" class="tab-item">
-      <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg>
-      <span>AI Chat</span>
+    <!-- Dough's own tab. His face rather than a speech-bubble glyph: this is
+         the product's primary "get help" affordance, and a full-colour mascot
+         in a row of monochrome outlines is the fastest thing on the bar to
+         find. The label still carries the meaning for anyone who reads
+         rather than looks. -->
+    <a href="/chat" class="tab-item tab-dough">
+      <span class="dough-avatar" aria-hidden="true">
+        <span data-dough="happy" data-dough-size="25" data-dough-tight></span>
+      </span>
+      <span>Ask Dough</span>
     </a>
     <button class="tab-item" id="tab-more" onclick="toggleMobileMenu()" aria-label="More pages">
       <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></svg>
@@ -607,7 +755,13 @@
   </div>
 
   <!-- Toast container -->
-  <div id="toast-container" class="fixed bottom-4 right-4 z-50 flex flex-col space-y-2 pointer-events-none" style="max-width:20rem"></div>
+  {# The live region itself — showToast() flips aria-live to "assertive" for
+     errors and warnings before inserting into it. #}
+  <div id="toast-container"
+       role="region"
+       aria-label="Notifications"
+       aria-live="polite"
+       aria-atomic="false"></div>
 
   <script>
   /* ═══════════════════════════════════════════════════════════════════════
@@ -633,7 +787,10 @@
   };
 
   var LS_KEY = 'check-theme';
-  var _activeTheme = 'default';
+  /* The theme a visitor gets before they ever open the picker. Changing this
+     changes three things at once — see the :root block and the <head> init
+     script, which encode the same choice as literals for first-paint. */
+  var _activeTheme = 'light';
 
   /* ── Apply a theme by key ── */
   function applyTheme(key) {
@@ -716,18 +873,20 @@
     if (btn) btn.setAttribute('aria-expanded', 'false');
   }
 
-  /* ── Mobile menu toggle ── */
+  /* ── Mobile menu toggle ──
+     The native hidden attribute rather than a .hidden class: the class was
+     Tailwind's, and kept working only for as long as the CDN was loaded. */
   function toggleMobileMenu() {
     var menu = document.getElementById('mobile-menu');
-    if (menu) menu.classList.toggle('hidden');
+    if (menu) menu.hidden = !menu.hidden;
   }
   function closeMobileMenu() {
     var menu = document.getElementById('mobile-menu');
-    if (menu) menu.classList.add('hidden');
+    if (menu) menu.hidden = true;
   }
   document.addEventListener('click', function(e) {
     var menu = document.getElementById('mobile-menu');
-    if (!menu || menu.classList.contains('hidden')) return;
+    if (!menu || menu.hidden) return;
     // Close after tapping a link, or when tapping outside the sheet
     // (ignore the More tab button — its own onclick handles the toggle)
     if (e.target.closest('#tab-more')) return;
@@ -757,20 +916,66 @@
   /* ═══════════════════════════════════════════════════════════════════════
      TOAST SYSTEM
      ═══════════════════════════════════════════════════════════════════════ */
+  /* Tone -> presentation + how urgently a screen reader should interrupt.
+     Errors and warnings are the ones a user must not walk away without. */
+  var TOAST_TONE = {
+    success: { cls: 'ds-toast--ok',     lead: '',          live: 'polite'    },
+    error:   { cls: 'ds-toast--danger', lead: 'Error',     live: 'assertive' },
+    warning: { cls: 'ds-toast--warn',   lead: 'Warning',   live: 'assertive' },
+    info:    { cls: 'ds-toast--info',   lead: '',          live: 'polite'    }
+  };
+
   function showToast(message, type) {
-    type = type || 'info';
-    var bg = { success:'bg-green-600', error:'bg-red-600', info:'bg-blue-600', warning:'bg-yellow-500' };
+    var tone = TOAST_TONE[type] || TOAST_TONE.info;
     var container = document.getElementById('toast-container');
+    if (!container) return null;
+
+    /* Urgency lives on the region, not the node — nesting a role="alert"
+       inside a live region is ambiguous, but flipping the container's
+       politeness before the insert is honoured consistently. */
+    container.setAttribute('aria-live', tone.live);
+
     var toast = document.createElement('div');
-    toast.className = 'pointer-events-auto flex items-center justify-between gap-3 px-4 py-3 rounded-lg shadow-lg text-white text-sm font-medium transition-all duration-300 opacity-0 translate-x-8 ' + (bg[type] || bg.info);
-    toast.innerHTML = '<span class="flex-1">' + message + '</span><button onclick="dismissToast(this.parentElement)" class="shrink-0 text-white/70 hover:text-white text-xl leading-none">&times;</button>';
+    toast.className = 'ds-toast ' + tone.cls;
+
+    /* textContent, never innerHTML: `message` is routinely a server or Plaid
+       error string (see the `'Error: ' + data.error` call sites), and
+       rules.py echoes exception text straight back into that field. Building
+       this node with markup would turn every one of those into an XSS sink. */
+    var msg = document.createElement('span');
+    msg.className = 'ds-toast__msg';
+    if (tone.lead) {
+      var lead = document.createElement('strong');
+      lead.textContent = tone.lead + ': ';
+      msg.appendChild(lead);
+    }
+    msg.appendChild(document.createTextNode(String(message)));
+
+    var close = document.createElement('button');
+    close.type = 'button';
+    close.className = 'ds-toast__close';
+    close.setAttribute('aria-label', 'Dismiss notification');
+    close.textContent = '×';
+    close.addEventListener('click', function() { dismissToast(toast); });
+
+    toast.appendChild(msg);
+    toast.appendChild(close);
     container.appendChild(toast);
-    requestAnimationFrame(function() { requestAnimationFrame(function() { toast.classList.remove('opacity-0','translate-x-8'); }); });
-    setTimeout(function() { dismissToast(toast); }, 5000);
+
+    requestAnimationFrame(function() {
+      requestAnimationFrame(function() { toast.classList.add('ds-toast--in'); });
+    });
+
+    /* Reading a long error should not be a race against the timer. */
+    var timer = setTimeout(function() { dismissToast(toast); }, 5000);
+    toast.addEventListener('mouseenter', function() { clearTimeout(timer); });
+    toast.addEventListener('focusin',    function() { clearTimeout(timer); });
+    return toast;
   }
+
   function dismissToast(toast) {
     if (!toast || !toast.parentElement) return;
-    toast.classList.add('opacity-0','translate-x-8');
+    toast.classList.remove('ds-toast--in');
     setTimeout(function() { toast.remove(); }, 300);
   }
 
@@ -840,13 +1045,12 @@
 
   function _updateNav(url) {
     var path = url.split('?')[0];
-    document.querySelectorAll('nav a').forEach(function(a) {
+    // #primary-nav rather than every nav <a>: the brand link is a nav <a>
+    // too, and the old class-swapping used to restyle it as if it were a
+    // destination.
+    document.querySelectorAll('#primary-nav a').forEach(function(a) {
       var h = a.getAttribute('href');
-      var active = h === path || (h !== '/' && path.startsWith(h));
-      a.classList.toggle('text-violet-600',   active);
-      a.classList.toggle('border-violet-500', active);
-      a.classList.toggle('text-gray-500',    !active);
-      a.classList.toggle('border-transparent',!active);
+      a.classList.toggle('active', h === path || (h !== '/' && path.startsWith(h)));
     });
     document.querySelectorAll('#tab-bar a').forEach(function(a) {
       var h = a.getAttribute('href');
@@ -906,6 +1110,13 @@
           return _JS_TYPES.indexOf((el.getAttribute('type') || '').toLowerCase().trim()) !== -1;
         }
 
+        // These run SYNCHRONOUSLY from here — nothing may be awaited before
+        // the first inline script executes. Alpine's MutationObserver
+        // initialises the swapped-in DOM as soon as this task yields, so a
+        // page whose x-data factory is defined in an inline script (see
+        // connections.html) loses the race and every control bound to that
+        // component renders blank. A CSS-ready wait was tried here and did
+        // exactly that.
         (function _rx(scripts, i) {
           if (i >= scripts.length) {
             if (typeof Alpine !== 'undefined') { try { Alpine.initTree(curMain); } catch(e){} }

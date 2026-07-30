@@ -19,7 +19,10 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import List, Optional
 
-from models import InstitutionConnection, SyncErrorLog, SyncRun, db
+from dough.tenancy import find_owned
+from dough.services import audit
+from models import (EVENT_SYNC_COMPLETED, EVENT_SYNC_FAILED,
+                    InstitutionConnection, SyncErrorLog, SyncRun, db)
 
 from .adapters import get_adapter_class
 from .adapters.base import FinancialInstitutionAdapter
@@ -91,7 +94,12 @@ class SyncEngine:
     def sync_connection(self, connection_id: int,
                         trigger: str = "manual") -> ConnectionSyncResult:
         """Synchronize a single connection, recording history and errors."""
-        connection = db.session.get(InstitutionConnection, connection_id)
+        # find_owned, not session.get: session.get answers from the identity
+        # map when it can, which is the one lookup the ORM tenant backstop
+        # never sees. A sync is the entry point most likely to be handed an
+        # id from a different household -- it runs on a background thread
+        # against ids read from a table.
+        connection = find_owned(InstitutionConnection, connection_id)
         if connection is None:
             return ConnectionSyncResult(
                 connection_id=connection_id, institution="unknown",
@@ -127,6 +135,17 @@ class SyncEngine:
         logger.info("Synced %s: %d accounts, %d holdings, +%d transactions",
                     connection.institution, save.accounts_synced,
                     save.holdings_synced, save.transactions_added)
+        # Recorded here rather than in the route: this is the only point every
+        # sync passes through. The scheduled ones have no request behind them
+        # at all, and they are the ones nobody is watching.
+        audit.record(EVENT_SYNC_COMPLETED,
+                     household_id=connection.household_id,
+                     entity_type='connection', entity_id=connection.id,
+                     metadata={'institution': connection.institution,
+                               'trigger': trigger, 'run_id': run.id,
+                               'accounts': save.accounts_synced,
+                               'holdings': save.holdings_synced,
+                               'transactions_added': save.transactions_added})
         return ConnectionSyncResult(
             connection_id=connection.id, institution=connection.institution,
             status="success", run_id=run.id,
@@ -213,6 +232,17 @@ class SyncEngine:
         connection.last_error = str(exc)
         db.session.commit()
         logger.error("Sync failed for %s: %s", connection.institution, exc)
+        # `error_type`, not the message. Adapter exceptions quote provider
+        # responses, and a provider response is exactly the kind of string that
+        # turns out to contain an item id or a token. The full text is already
+        # in SyncErrorLog, which is not append-only and can be pruned.
+        audit.record(EVENT_SYNC_FAILED,
+                     household_id=connection.household_id,
+                     entity_type='connection', entity_id=connection.id,
+                     metadata={'institution': connection.institution,
+                               'run_id': run.id,
+                               'error_type': getattr(exc, 'error_type',
+                                                     type(exc).__name__)})
         return ConnectionSyncResult(
             connection_id=connection.id, institution=connection.institution,
             status="error", run_id=run.id, error=str(exc))

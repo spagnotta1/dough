@@ -5,7 +5,7 @@
    read from these custom properties rather than hardcoding a value, so a
    change here moves the entire product at once.
 
-   The app ships 17 user-selectable themes whose panels range from #ffffff
+   The app ships 16 user-selectable themes whose panels range from #ffffff
    to #000000. Four base variables carry the theme (--bg / --fg / --panel /
    --border, set on :root by base.html) and everything in this file is
    derived from them. The one thing that cannot be derived is whether the
@@ -50,6 +50,7 @@
   --font-sans: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI",
                Inter, Roboto, "Helvetica Neue", Arial, sans-serif;
   --font-num:  ui-sans-serif, -apple-system, "Segoe UI", Inter, Roboto, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
 
   /* ── Text emphasis ladder ───────────────────────────────────────────── */
   --ink:        var(--fg);
@@ -122,6 +123,9 @@
   /* ── Focus ──────────────────────────────────────────────────────────── */
   --focus-ring: 0 0 0 2px var(--panel), 0 0 0 4px var(--accent);
 
+  /* ── Scrim — behind dialogs ─────────────────────────────────────────── */
+  --scrim: rgb(0 0 0 / .45);
+
   /* ── Layout ─────────────────────────────────────────────────────────── */
   --page-max: 1400px;
   --tap-min: 44px;   /* WCAG 2.2 AA target size */
@@ -152,6 +156,10 @@ html[data-scheme="dark"] {
   --surface-raised: color-mix(in srgb, var(--panel) 92%, var(--fg));
   --surface-sunken: color-mix(in srgb, var(--panel) 88%, black);
   --accent-on: #ffffff;
+
+  /* A light scrim is invisible over a dark page; this one has to do the
+     separating work the drop shadow cannot. */
+  --scrim: rgb(0 0 0 / .62);
 }
 
 /* Themes whose accent is too dark/light to carry white text handle it via
@@ -503,6 +511,410 @@ html[data-scheme="dark"] {
 .ds-skeleton--value { height: 28px; width: 62%; border-radius: var(--r-sm); }
 
 /* ══════════════════════════════════════════════════════════════════════════
+   Toasts
+   The one piece of UI that speaks after the user has stopped looking, so it
+   has two jobs the visual design cannot do alone: it must be announced to a
+   screen reader, and it must never render its message as markup — the text
+   routinely carries a server or Plaid error string.  #toast-container owns
+   the aria-live region; these classes only dress what lands inside it.
+   ══════════════════════════════════════════════════════════════════════════ */
+
+.ds-toast {
+  pointer-events: auto;
+  display: flex;
+  align-items: flex-start;
+  gap: var(--sp-3);
+  padding: var(--sp-3) var(--sp-4);
+  border: 1px solid var(--hairline-firm);
+  border-left: 3px solid var(--ink-ghost);
+  border-radius: var(--r-md);
+  background: var(--surface-raised);
+  box-shadow: var(--e-4);
+  color: var(--ink-body);
+  font-size: var(--f-sm);
+  font-weight: var(--w-medium);
+  line-height: var(--lh-snug);
+  /* Enters from the side it is anchored to; --ds-toast-slide flips to 0 on
+     phones, where the container is full-bleed and a sideways slide reads as
+     the toast being cut off by the screen edge. */
+  opacity: 0;
+  transform: translateX(var(--ds-toast-slide, 2rem));
+  transition: opacity var(--dur-3) var(--ease-out),
+              transform var(--dur-3) var(--ease-out);
+}
+.ds-toast--in { opacity: 1; transform: none; }
+
+.ds-toast__msg { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+
+.ds-toast__close {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px; height: 22px;
+  margin: -1px -2px 0 0;
+  padding: 0;
+  border: 0;
+  border-radius: var(--r-xs);
+  background: transparent;
+  color: var(--ink-ghost);
+  font-size: var(--f-lg);
+  line-height: 1;
+  cursor: pointer;
+  position: relative;
+  transition: color var(--dur-1) var(--ease-out),
+              background var(--dur-1) var(--ease-out);
+}
+/* Same trick as .ds-btn--icon: 22px of ink, 44px of target. */
+.ds-toast__close::after {
+  content: "";
+  position: absolute;
+  left: 50%; top: 50%;
+  width: var(--tap-min); height: var(--tap-min);
+  transform: translate(-50%, -50%);
+}
+.ds-toast__close:hover {
+  color: var(--ink);
+  background: color-mix(in srgb, var(--fg) 9%, transparent);
+}
+
+.ds-toast--ok     { border-left-color: var(--ok-mark);     }
+.ds-toast--warn   { border-left-color: var(--warn-mark);   }
+.ds-toast--danger { border-left-color: var(--danger-mark); }
+.ds-toast--info   { border-left-color: var(--info-mark);   }
+
+.ds-toast--ok     .ds-toast__msg strong { color: var(--ok-ink);     }
+.ds-toast--warn   .ds-toast__msg strong { color: var(--warn-ink);   }
+.ds-toast--danger .ds-toast__msg strong { color: var(--danger-ink); }
+.ds-toast--info   .ds-toast__msg strong { color: var(--info-ink);   }
+
+@media (max-width: 640px) { .ds-toast { --ds-toast-slide: 0; } }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   Empty states
+   An empty table is the first thing a new user sees on most pages, so it is
+   treated as a designed state rather than an absence: say what goes here,
+   and offer the action that fills it.
+   ══════════════════════════════════════════════════════════════════════════ */
+
+.ds-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: var(--sp-3);
+  padding: var(--sp-10) var(--sp-6);
+  color: var(--ink-muted);
+}
+.ds-empty--tight { padding: var(--sp-6) var(--sp-4); }
+
+/* Sized so Dough (or an icon) sits at the same scale on every empty page.
+   The art is the size authority; whatever gets dropped in fills it, which
+   keeps a mascot slot and an inline icon at matching scale. */
+.ds-empty__art {
+  width: 96px;
+  height: 96px;
+  margin-bottom: var(--sp-1);
+  opacity: .92;
+}
+.ds-empty__art > svg, .ds-empty__art > img { display: block; width: 100%; height: 100%; }
+.ds-empty--tight .ds-empty__art { width: 64px; height: 64px; }
+
+.ds-empty__title {
+  font-size: var(--f-lg);
+  font-weight: var(--w-semi);
+  color: var(--ink-strong);
+  letter-spacing: -.012em;
+  margin: 0;
+}
+.ds-empty__body {
+  font-size: var(--f-sm);
+  color: var(--ink-faint);
+  line-height: var(--lh-body);
+  max-width: 42ch;
+  margin: 0;
+}
+.ds-empty__actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: var(--sp-2);
+  margin-top: var(--sp-2);
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   Tables
+   Financial tables are wide by nature. Rather than let one stretch the page
+   on a phone, .ds-table-wrap scrolls it inside its own card — so the body
+   never scrolls sideways.
+   ══════════════════════════════════════════════════════════════════════════ */
+
+.ds-table-wrap {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.ds-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--f-sm);
+  color: var(--ink-body);
+}
+.ds-table th {
+  padding: var(--sp-2) var(--sp-3);
+  text-align: left;
+  font-size: var(--f-micro);
+  font-weight: var(--w-semi);
+  text-transform: uppercase;
+  letter-spacing: var(--track-caps);
+  color: var(--ink-faint);
+  white-space: nowrap;
+  border-bottom: 1px solid var(--hairline-firm);
+}
+.ds-table td {
+  padding: var(--sp-3);
+  border-bottom: 1px solid var(--hairline);
+  vertical-align: middle;
+}
+.ds-table tbody tr:last-child td { border-bottom: 0; }
+.ds-table--hover tbody tr { transition: background var(--dur-1) var(--ease-out); }
+.ds-table--hover tbody tr:hover { background: var(--surface-hover); }
+
+/* Money columns: right-aligned and tabular, so digits line up down the row. */
+.ds-table__num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
+  letter-spacing: var(--track-tight);
+  white-space: nowrap;
+}
+
+/* Sticky header for long scrolling tables. Needs an opaque background or the
+   rows show through as they pass underneath. */
+.ds-table--sticky thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--surface);
+}
+
+/* A sortable header is a button in a th, not a clickable th. */
+.ds-table__sort {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-1);
+  border: 0;
+  padding: 0;
+  background: transparent;
+  font: inherit;
+  color: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  cursor: pointer;
+}
+.ds-table__sort:hover { color: var(--ink-body); }
+/* aria-sort belongs on the th, per ARIA — the control inside just reflects it. */
+.ds-table th[aria-sort="ascending"]  .ds-table__sort,
+.ds-table th[aria-sort="descending"] .ds-table__sort { color: var(--accent-ink); }
+.ds-table__sort__dir { color: var(--ink-ghost); font-size: var(--f-micro); }
+.ds-table th[aria-sort] .ds-table__sort__dir { color: inherit; }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   Form fields
+   ══════════════════════════════════════════════════════════════════════════ */
+
+.ds-field { display: flex; flex-direction: column; gap: var(--sp-2); }
+
+.ds-label {
+  font-size: var(--f-xs);
+  font-weight: var(--w-semi);
+  color: var(--ink-muted);
+  letter-spacing: .004em;
+}
+.ds-label__req { color: var(--danger-ink); margin-left: 2px; }
+
+.ds-input, .ds-select, .ds-textarea {
+  width: 100%;
+  min-height: 36px;
+  padding: var(--sp-2) var(--sp-3);
+  border: 1px solid var(--hairline-firm);
+  border-radius: var(--r-sm);
+  background: var(--surface-sunken);
+  color: var(--ink);
+  font-family: inherit;
+  font-size: var(--f-sm);
+  line-height: var(--lh-snug);
+  transition: border-color var(--dur-1) var(--ease-out),
+              background var(--dur-1) var(--ease-out);
+}
+.ds-textarea { min-height: 84px; resize: vertical; }
+.ds-input::placeholder, .ds-textarea::placeholder { color: var(--ink-ghost); }
+.ds-input:hover, .ds-select:hover, .ds-textarea:hover {
+  border-color: color-mix(in srgb, var(--border) 55%, var(--fg) 18%);
+}
+.ds-input:disabled, .ds-select:disabled, .ds-textarea:disabled {
+  opacity: .5;
+  cursor: not-allowed;
+}
+.ds-input[aria-invalid="true"], .ds-select[aria-invalid="true"], .ds-textarea[aria-invalid="true"] {
+  border-color: var(--danger-mark);
+  background: var(--danger-bg);
+}
+
+.ds-hint  { font-size: var(--f-xs); color: var(--ink-faint); line-height: var(--lh-snug); }
+.ds-error { font-size: var(--f-xs); color: var(--danger-ink); font-weight: var(--w-medium); }
+
+/* Money inputs get the tabular treatment too. */
+.ds-input--num {
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+/* ── Composite controls ───────────────────────────────────────────────────
+   A field that is more than one element: a search box with a leading icon,
+   a composer with a send button riding inside it. The shell owns the border
+   and the focus ring; the input inside is deliberately bare, because two
+   nested borders and two focus rings read as two controls.
+
+   This is why the shell uses :focus-within — the ring has to appear when
+   focus lands on the input *or* on a button inside the shell, and neither
+   of those is the element being styled. */
+.ds-control {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  min-height: 36px;
+  padding: 0 var(--sp-3);
+  border: 1px solid var(--hairline-firm);
+  border-radius: var(--r-sm);
+  background: var(--surface-sunken);
+  color: var(--ink);
+  transition: border-color var(--dur-2) var(--ease-out),
+              box-shadow var(--dur-2) var(--ease-out);
+}
+.ds-control:hover { border-color: color-mix(in srgb, var(--border) 55%, var(--fg) 18%); }
+.ds-control:focus-within {
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 14%, transparent);
+}
+.ds-control__icon { flex-shrink: 0; color: var(--ink-faint); pointer-events: none; }
+
+/* The bare input. It carries no chrome of its own, which is exactly why the
+   form-control invariant accepts this class in place of .ds-input: the
+   control is themed by the design system, just one level up. */
+.ds-control__input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font-family: inherit;
+  font-size: var(--f-sm);
+  line-height: var(--lh-snug);
+  padding: var(--sp-2) 0;
+}
+.ds-control__input::placeholder { color: var(--ink-ghost); }
+/* The shell's ring is the affordance; a second one inside it is noise. */
+.ds-control__input:focus,
+.ds-control__input:focus-visible { outline: none; }
+textarea.ds-control__input { resize: none; overflow-y: auto; }
+
+/* Phones: 16px is the threshold below which iOS Safari zooms the viewport on
+   focus and never zooms back out. */
+@media (max-width: 640px) {
+  .ds-input, .ds-select, .ds-textarea,
+  .ds-control__input { font-size: 16px; }
+  .ds-input, .ds-select, .ds-textarea, .ds-control { min-height: var(--tap-min); }
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   Dialogs
+   Built on <dialog>, so focus trapping, Esc-to-close and inertness of the
+   page behind come from the platform rather than from us.
+   ══════════════════════════════════════════════════════════════════════════ */
+
+.ds-dialog {
+  width: min(560px, calc(100vw - 2 * var(--sp-4)));
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  overflow: visible;
+}
+.ds-dialog::backdrop {
+  background: var(--scrim);
+  backdrop-filter: blur(2px);
+}
+.ds-dialog[open] { animation: ds-dialog-in var(--dur-3) var(--ease-out); }
+@keyframes ds-dialog-in {
+  from { opacity: 0; transform: translateY(8px) scale(.985); }
+  to   { opacity: 1; transform: none; }
+}
+
+.ds-dialog__panel {
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-lg);
+  box-shadow: var(--e-5);
+  padding: var(--sp-6);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-4);
+  max-height: calc(100vh - 2 * var(--sp-8));
+  overflow-y: auto;
+}
+.ds-dialog__title {
+  font-size: var(--f-xl);
+  font-weight: var(--w-semi);
+  letter-spacing: -.016em;
+  color: var(--ink-strong);
+  margin: 0;
+}
+.ds-dialog__body { font-size: var(--f-sm); color: var(--ink-body); line-height: var(--lh-body); }
+.ds-dialog__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--sp-2);
+  flex-wrap: wrap;
+}
+
+/* Wide enough for a chart. A figure sized for a reading column is unreadable
+   when the point of expanding it was to get more horizontal room. */
+.ds-dialog--wide { width: min(1100px, calc(100vw - 2 * var(--sp-6))); }
+
+/* The panel is the content — no padding of our own around it. */
+.ds-dialog__panel--flush { padding: 0; gap: 0; overflow: hidden; }
+
+/* Dismiss affordance in the corner of a panel that has no actions row. */
+.ds-dialog__close {
+  position: absolute;
+  top: var(--sp-3);
+  right: var(--sp-3);
+  z-index: 1;
+}
+
+/* Phones: a dialog becomes a bottom sheet — closer to the thumb, and it does
+   not fight the keyboard the way a centred box does. */
+@media (max-width: 640px) {
+  .ds-dialog {
+    width: 100%;
+    max-width: none;
+    margin: auto auto 0;
+  }
+  .ds-dialog__panel {
+    border-radius: var(--r-xl) var(--r-xl) 0 0;
+    padding-bottom: calc(var(--sp-6) + env(safe-area-inset-bottom));
+  }
+  .ds-dialog__actions { flex-direction: column-reverse; }
+  .ds-dialog__actions .ds-btn { width: 100%; }
+  .ds-dialog[open] { animation-name: ds-sheet-in; }
+  @keyframes ds-sheet-in {
+    from { opacity: 0; transform: translateY(16px); }
+    to   { opacity: 1; transform: none; }
+  }
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
    Focus — one visible ring everywhere, keyboard only
    ══════════════════════════════════════════════════════════════════════════ */
 
@@ -559,6 +971,17 @@ html[data-scheme="dark"] {
 .ds-fade { animation: ds-fade var(--dur-3) var(--ease-out) both; animation-delay: var(--ds-delay, 0ms); }
 @keyframes ds-fade { from { opacity: 0; } to { opacity: 1; } }
 
+/* Pending. Put on the icon already inside a button, so the button keeps its
+   label and its width and only the glyph turns — a spinner that replaces the
+   label makes the control resize under the pointer at the moment it is
+   disabled, which reads as the page having jumped.
+
+   The reduced-motion block below stops this dead, which is correct: the
+   disabled state and the changed label already say "working", so the rotation
+   is decoration rather than the only signal. */
+.ds-spin { animation: ds-spin 800ms linear infinite; transform-origin: 50% 50%; }
+@keyframes ds-spin { to { transform: rotate(360deg); } }
+
 /* Notifications slide in from the side they are anchored to. */
 .ds-slide-in { animation: ds-slide-in var(--dur-4) var(--ease-out) both; animation-delay: var(--ds-delay, 0ms); }
 @keyframes ds-slide-in {
@@ -600,6 +1023,13 @@ html[data-scheme="dark"] {
 .ds-row--wrap { flex-wrap: wrap; }
 
 .ds-divider { height: 1px; background: var(--hairline); border: 0; margin: 0; }
+
+/* The native hidden attribute, made to actually win.
+   Pages currently hide things with Tailwind's .hidden class; migrated pages
+   use [hidden] instead, which needs !important because any display rule on
+   the element itself would otherwise override the UA default. This is what
+   lets a page stop depending on the Tailwind CDN. */
+[hidden] { display: none !important; }
 
 /* Section heading — the seam between dashboard layers */
 .ds-section__head {

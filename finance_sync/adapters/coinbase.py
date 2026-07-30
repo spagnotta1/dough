@@ -36,6 +36,7 @@ class CoinbaseAdapter(FinancialInstitutionAdapter):
     supports_transactions = False  # buys/sells are portfolio activity, not spending
     supports_holdings = True
     accent_color = "#0052ff"
+    offered = False  # withdrawn from the connect catalog for now; see base class
 
     # -- raw fetching ---------------------------------------------------------
 

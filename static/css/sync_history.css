@@ -1,0 +1,21 @@
+/* ══════════════════════════════════════════════════════════════════════════
+   Sync History — every synchronization run and the errors behind them.
+   ──────────────────────────────────────────────────────────────────────────
+   Phase 9 Wave 4. Everything visual resolves through design-system.css
+   tokens; what is left here is the two truncated message columns.
+
+   Tokens defined here are namespaced --sync-*.
+   ══════════════════════════════════════════════════════════════════════════ */
+
+.sync-capitalize { text-transform: capitalize; }
+.sync-empty { text-align: center; color: var(--ink-faint); padding: var(--sp-8) 0; }
+
+.sync-truncate {
+  max-width: 15rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sync-truncate--wide { max-width: 22rem; }
+
+.sync-error-text { color: var(--danger-ink); }

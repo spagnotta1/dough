@@ -14,10 +14,10 @@
         dropZone.addEventListener(ev, function(e) { e.preventDefault(); e.stopPropagation(); });
     });
     ['dragenter', 'dragover'].forEach(function(ev) {
-        dropZone.addEventListener(ev, function() { dropZone.classList.add('border-indigo-500', 'bg-indigo-50'); });
+        dropZone.addEventListener(ev, function() { dropZone.classList.add('upload-dropzone--active'); });
     });
     ['dragleave', 'drop'].forEach(function(ev) {
-        dropZone.addEventListener(ev, function() { dropZone.classList.remove('border-indigo-500', 'bg-indigo-50'); });
+        dropZone.addEventListener(ev, function() { dropZone.classList.remove('upload-dropzone--active'); });
     });
     dropZone.addEventListener('drop', function(e) {
         fileInput.files = e.dataTransfer.files;
@@ -40,11 +40,11 @@
                 rows.forEach(function(row) {
                     var tr = document.createElement('tr');
                     var amt = parseFloat(row.amount);
-                    var amtClass = isNaN(amt) ? 'text-gray-700' : (amt < 0 ? 'text-red-600' : 'text-green-600');
+                    var amtClass = isNaN(amt) ? '' : (amt < 0 ? 'upload-amt--out' : 'upload-amt--in');
                     tr.innerHTML =
-                        '<td class="px-3 py-1.5 whitespace-nowrap text-gray-700">' + esc(row.date) + '</td>' +
-                        '<td class="px-3 py-1.5 text-gray-700 max-w-xs truncate">' + esc(row.description) + '</td>' +
-                        '<td class="px-3 py-1.5 text-right font-medium ' + amtClass + '">' +
+                        '<td>' + esc(row.date) + '</td>' +
+                        '<td class="upload-desc">' + esc(row.description) + '</td>' +
+                        '<td class="ds-table__num ' + amtClass + '">' +
                             (isNaN(amt) ? esc(row.rawAmount) : '$' + Math.abs(amt).toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2})) +
                         '</td>';
                     previewBody.appendChild(tr);
@@ -57,7 +57,7 @@
                         : files.length + ' files — ' + totalRows + ' rows';
                     fileLabel.textContent = label;
                     previewTitle.textContent = 'Preview (' + totalRows + ' rows)';
-                    preview.classList.remove('hidden');
+                    preview.hidden = false;
                 }
             };
             reader.readAsText(file);
@@ -114,7 +114,7 @@
     function clearFiles() {
         fileInput.value = '';
         previewBody.innerHTML = '';
-        preview.classList.add('hidden');
+        preview.hidden = true;
         fileLabel.textContent = 'CSV files only';
     }
     window.clearFiles = clearFiles;
@@ -123,6 +123,6 @@
     form.addEventListener('submit', function() {
         uploadBtn.disabled = true;
         uploadBtn.textContent = 'Uploading…';
-        uploadStatus.classList.remove('hidden');
+        uploadStatus.hidden = false;
     });
 }());

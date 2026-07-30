@@ -13,7 +13,9 @@ def test_institutions_catalog(client):
     resp = client.get("/api/institutions")
     assert resp.status_code == 200
     slugs = {i["institution"] for i in resp.get_json()}
-    assert {"coinbase", "plaid"}.issubset(slugs)
+    assert "plaid" in slugs
+    # Coinbase is registered but not offered, so it must not reach the picker.
+    assert "coinbase" not in slugs
 
 
 def test_connect_flow_syncs_immediately(client):

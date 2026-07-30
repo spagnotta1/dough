@@ -1,0 +1,273 @@
+/* ══════════════════════════════════════════════════════════════════════════
+   Auth — the shared shell for login.html, join.html and setup.html.
+   ──────────────────────────────────────────────────────────────────────────
+   Phase 9 Wave 3. These three pages are reached by people who are not signed
+   in and have no household bound, so they intentionally do not extend
+   base.html: the nav, the profile menu, the theme picker and the toast system
+   are either broken or meaningless to a stranger, and a page reached by
+   strangers should load nothing it does not need (see the original note this
+   file consolidates, previously repeated in each template).
+
+   That includes base.html's runtime theme engine. Without it there is no
+   saved preference to read and no CheckScheme.apply() to derive contrast-safe
+   accent variants, so this file locks the four base tokens — and the two
+   values that engine would otherwise compute — to fixed values instead of
+   reading design-system.css's runtime-driven ones. That is also why these
+   three templates are not on test_ui_invariants.py's MIGRATED ledger: its
+   "no literal colours" rule assumes a page that inherits its palette from the
+   runtime engine, which by design these do not.
+
+   The values below are THEMES.light from base.html (the app's default
+   theme), so a signed-out visitor and a freshly signed-in one see the same
+   product:
+
+     --auth-bg / --auth-fg / --auth-panel / --auth-border / --auth-accent
+       copied verbatim from THEMES.light in base.html. If that entry ever
+       changes, this block should change with it.
+
+     --auth-accent-on / --auth-accent-ink
+       what base.html's CheckScheme (rgb/lum/contrast/onColor/readable) would
+       compute for THEMES.light, worked out the same way and pinned here:
+         onColor(#c47d5a)            -> contrast(white)=3.27, contrast(#111113)=5.77
+                                         -> #111113 wins, so accent-on is dark text
+         readable(#c47d5a, #faf6f0)  -> raw copper is 3.03:1 on the panel, which
+                                         fails 4.5:1; stepping toward black lands
+                                         on #935e44 at the first passing mix
+       A dark-text primary button is a real difference from an earlier version
+       of these pages, which used a hand-darkened copper fill with white text
+       instead — a plausible guess that did not actually match what
+       .ds-btn--primary renders for Light everywhere else in the product. This
+       is the value that does.
+   ══════════════════════════════════════════════════════════════════════════ */
+
+:root {
+  --auth-bg:         #f0ebe3;
+  --auth-fg:         #5a5248;
+  --auth-panel:      #faf6f0;
+  --auth-border:     #d4cdc2;
+  --auth-accent:     #c47d5a;
+  --auth-accent-on:  #111113;
+  --auth-accent-ink: #935e44;
+
+  /* Matches design-system.css's own static --danger-ink: error text is not
+     theme-accented, so it does not need the same derivation as the above. */
+  --auth-danger: #b91c1c;
+
+  --auth-muted: color-mix(in srgb, var(--auth-fg) 70%, transparent);
+  --auth-ghost: color-mix(in srgb, var(--auth-fg) 45%, transparent);
+  --auth-code-bg: color-mix(in srgb, var(--auth-fg) 12%, var(--auth-bg));
+
+  --auth-r-sm: 8px;
+  --auth-r-lg: 14px;
+
+  /* dough.css reads --red for Dough's prop accent (--dough-accent: var(--red,
+     #7c3aed)). Without this, every mascot on these pages renders his prop in
+     the design system's fallback violet instead of the Light theme's copper —
+     a real mismatch on a page whose whole point is "this looks like Dough,"
+     caught while giving error.html the same treatment for the same reason. */
+  --red: var(--auth-accent);
+}
+
+* { box-sizing: border-box; }
+
+body.auth-shell {
+  margin: 0;
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: var(--auth-bg);
+  color: var(--auth-fg);
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+/* ── Layout ────────────────────────────────────────────────────────────── */
+
+.auth-wrap { width: 320px; }
+
+/* login.html only: Dough overlaps the card's top edge, so the first thing on
+   screen is the character rather than a form. */
+.auth-hello {
+  display: flex;
+  justify-content: center;
+  margin-bottom: -26px;
+  position: relative;
+  z-index: 1;
+}
+
+/* join.html / setup.html: an introduction column beside the card. On a phone
+   the columns stack, mascot first. */
+.auth-split {
+  width: auto;
+  display: grid;
+  grid-template-columns: minmax(0, 300px) 320px;
+  gap: 40px;
+  align-items: center;
+}
+@media (max-width: 700px) {
+  .auth-split { grid-template-columns: 1fr; gap: 20px; max-width: 340px; }
+  .auth-intro { text-align: center; }
+  /* .dough is display:block, so text-align on the column does not centre it
+     on its own — it needs its own margin. */
+  .auth-intro .dough { margin: 0 auto; }
+}
+
+/* join.html's message-only branches (invalid link, already signed in): a
+   single centred column rather than the two-column grid, which would
+   otherwise reserve an empty 320px card track and push the message off
+   centre. See the comment in join.html. */
+.auth-solo { width: 340px; text-align: center; }
+.auth-solo .auth-intro p { color: var(--auth-muted); }
+.auth-solo .auth-intro .dough { margin: 0 auto; }
+
+.auth-intro h2 {
+  font-size: 1.4rem;
+  margin: 14px 0 10px;
+  letter-spacing: -.02em;
+}
+.auth-intro p {
+  font-size: .85rem;
+  line-height: 1.55;
+  color: var(--auth-muted);
+  margin: 0 0 10px;
+}
+.auth-intro a { color: var(--auth-accent-ink); }
+.auth-intro ul { margin: 0; padding: 0; list-style: none; }
+.auth-intro li {
+  font-size: .85rem;
+  line-height: 1.5;
+  color: var(--auth-muted);
+  padding-left: 20px;
+  position: relative;
+  margin-bottom: 8px;
+}
+.auth-intro li::before {
+  content: '';
+  position: absolute;
+  left: 0; top: .5em;
+  width: 7px; height: 7px;
+  border-radius: 50%;
+  background: var(--auth-accent);
+  opacity: .7;
+}
+
+/* ── Card ──────────────────────────────────────────────────────────────── */
+
+.auth-card {
+  background: var(--auth-panel);
+  border: 1px solid var(--auth-border);
+  border-radius: var(--auth-r-lg);
+  box-shadow: 0 4px 24px color-mix(in srgb, black 8%, transparent);
+  padding: 40px 32px 32px;
+  width: 320px;
+  text-align: left;
+}
+/* join.html / setup.html sit in the grid rather than centred alone, and their
+   heading sits directly under the card's own top edge instead of overlapping
+   a mascot above it. */
+.auth-split .auth-card { padding: 32px; }
+
+.auth-card h1 { font-size: 1.15rem; margin: 0 0 4px; }
+.auth-card > p:not(.auth-hint) { font-size: .8rem; color: var(--auth-muted); margin: 0 0 20px; }
+
+/* ── Form ──────────────────────────────────────────────────────────────── */
+
+.auth-field { margin-bottom: 12px; }
+
+/* Visible labels would duplicate the placeholder text these forms were
+   designed around; hidden-but-real ones give the same accessible name to
+   assistive tech without the visual redesign that showing both would need. */
+.auth-sr {
+  position: absolute;
+  width: 1px; height: 1px;
+  padding: 0; margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.auth-input {
+  width: 100%;
+  padding: 10px 12px;
+  font-size: 16px; /* iOS Safari zooms the viewport below this on focus */
+  font-family: inherit;
+  color: inherit;
+  background: var(--auth-panel);
+  border: 1px solid var(--auth-border);
+  border-radius: var(--auth-r-sm);
+}
+.auth-input:focus {
+  outline: none;
+  border-color: var(--auth-accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--auth-accent) 22%, transparent);
+}
+.auth-input[aria-invalid="true"] { border-color: var(--auth-danger); }
+
+.auth-hint {
+  font-size: .72rem;
+  color: var(--auth-ghost);
+  margin: -6px 0 12px;
+}
+
+.auth-error {
+  font-size: .8rem;
+  color: var(--auth-danger);
+  margin: 0 0 12px;
+}
+
+.auth-btn {
+  width: 100%;
+  padding: 10px;
+  font-size: .9rem;
+  font-weight: 600;
+  font-family: inherit;
+  color: var(--auth-accent-on);
+  background: var(--auth-accent);
+  border: none;
+  border-radius: var(--auth-r-sm);
+  cursor: pointer;
+}
+.auth-btn:hover { background: color-mix(in srgb, var(--auth-accent) 86%, var(--auth-fg)); }
+.auth-btn:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--auth-panel), 0 0 0 4px var(--auth-accent);
+}
+
+/* ── Notice (error.html) ───────────────────────────────────────────────────
+   No card — the message sits directly on the page background, since there is
+   nothing to separate it from: this is the whole page. ───────────────────── */
+
+.auth-notice { max-width: 30rem; padding: 2.5rem 2rem; text-align: center; }
+/* Full frame, not the avatar disc: this is an empty state, and it is the one
+   place `searching` needs its magnifier — a tight crop drops props.
+   inline-flex so the SVG centres on the block instead of sitting on a text
+   baseline with a descender gap under it. */
+.auth-notice__hero { display: flex; justify-content: center; }
+.auth-notice h1 { font-size: 1.35rem; font-weight: 650; margin: 1.25rem 0 .5rem; }
+.auth-notice p { color: var(--auth-muted); line-height: 1.6; margin: 0 0 1.5rem; }
+.auth-notice__ref { font-size: .78rem; color: var(--auth-muted); margin-top: 2rem; }
+.auth-notice__ref code {
+  background: var(--auth-code-bg);
+  padding: .15em .45em;
+  border-radius: 4px;
+  font-size: .95em;
+  user-select: all;
+}
+
+.auth-cta {
+  display: inline-block;
+  padding: .6rem 1.1rem;
+  border-radius: var(--auth-r-sm);
+  background: var(--auth-accent);
+  color: var(--auth-accent-on);
+  text-decoration: none;
+  font-size: .9rem;
+  font-weight: 550;
+}
+.auth-cta:hover { background: color-mix(in srgb, var(--auth-accent) 86%, var(--auth-fg)); }
+.auth-cta:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--auth-bg), 0 0 0 4px var(--auth-accent);
+}

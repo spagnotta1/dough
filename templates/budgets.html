@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 
-{% block title %}Budgets - Checkbook App{% endblock %}
+{% block title %}Budgets · Dough{% endblock %}
 
 {#
   Budgets — cards, not rows.
@@ -12,6 +12,7 @@
 
 {% block content %}
 <link rel="stylesheet" href="{{ url_for('static', filename='css/dashboard.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/budgets.css') }}">
 
 <div class="bud">
 
@@ -36,6 +37,39 @@
     </div>
     {% endif %}
   </header>
+
+  {# ── Dough's Budget Coach ──────────────────────────────────────────────
+     The page already states every number; this is the one line that tells the
+     user how to feel about them. Overspending is never scolded — the message
+     stays forward-looking, because someone who feels judged by their budgeting
+     tool stops opening it, and a budget nobody looks at does nothing.
+     The per-budget cards carry the actual status via badge, colour and text,
+     so nothing here is the sole carrier of any warning. ─────────────────── #}
+  {% if budget_status %}
+  {% set over = budget_status | selectattr('state', 'equalto', 'danger') | list %}
+  {% set close = budget_status | selectattr('state', 'equalto', 'warn') | list %}
+  {% set fine = budget_status | selectattr('state', 'equalto', 'ok') | list %}
+  <div class="bud-coach ds-rise" style="--ds-delay:40ms">
+    <span class="dough-avatar dough-avatar-lg" aria-hidden="true">
+      <span data-dough="{{ 'concerned' if over else 'proud' if fine|length == budget_status|length else 'happy' }}"
+            data-dough-size="72" data-dough-tight></span>
+    </span>
+    <p class="dough-bubble">
+      {% if over %}
+        We went a little over in {{ over|length }} categor{{ 'y' if over|length == 1 else 'ies' }}{% if fine %},
+        though you stayed under in {{ fine|length }}{% endif %}. Let's see if we can
+        make next month even better — I'll flag it earlier next time.
+      {% elif close %}
+        You're close to the line in {{ close|length }} categor{{ 'y' if close|length == 1 else 'ies' }},
+        but nothing has gone over yet. Worth a glance before the month is out.
+      {% else %}
+        Nice work — you're under budget in
+        {{ 'all ' if budget_status|length > 1 }}{{ budget_status|length }}
+        categor{{ 'y' if budget_status|length == 1 else 'ies' }}. That's a great habit to keep.
+      {% endif %}
+    </p>
+  </div>
+  {% endif %}
 
   {% if budget_status %}
   <div class="dash-budget-grid ds-rise" style="--ds-delay:60ms">
@@ -83,11 +117,12 @@
         <span class="ds-badge">{{ b.account_name }}</span>
         <span class="bud-actions__spacer"></span>
         <a class="ds-btn ds-btn--ghost ds-btn--sm"
-           href="{{ url_for('transactions', category=b.category, type='outgo') }}"
+           href="{{ url_for('transactions.index', category=b.category, type='outgo') }}"
            aria-label="View {{ b.category }} transactions">View</a>
         <button type="button" class="ds-btn ds-btn--ghost ds-btn--sm"
                 onclick="startEdit({{ b.id }})" aria-label="Edit {{ b.category }} budget">Edit</button>
         <form method="POST" class="bud-inline">
+          {{ csrf_field() }}
           <input type="hidden" name="action" value="delete">
           <input type="hidden" name="budget_id" value="{{ b.id }}">
           <button type="submit" class="ds-btn ds-btn--danger ds-btn--sm"
@@ -101,11 +136,12 @@
     <article class="ds-card dash-budget bud-edit" id="edit-{{ b.id }}" hidden>
       <h2 class="dash-budget__cat">{{ b.category }}</h2>
       <form method="POST" class="bud-edit__form">
+        {{ csrf_field() }}
         <input type="hidden" name="action" value="add">
         <input type="hidden" name="category" value="{{ b.category }}">
         <label class="bud-field">
           <span class="ds-eyebrow">Account</span>
-          <select name="account_name" class="dash-input">
+          <select name="account_name" class="dash-input ds-select">
             <option value="both" {% if b.account_name == 'both' %}selected{% endif %}>Both</option>
             {% for acct in accounts %}
             <option value="{{ acct }}" {% if b.account_name == acct %}selected{% endif %}>{{ acct }}</option>
@@ -115,7 +151,7 @@
         <label class="bud-field">
           <span class="ds-eyebrow">Monthly limit</span>
           <input type="number" name="monthly_limit" min="0" step="0.01"
-                 value="{{ "%.2f"|format(b.monthly_limit) }}" class="dash-input">
+                 value="{{ "%.2f"|format(b.monthly_limit) }}" class="dash-input ds-input">
         </label>
         <div class="bud-edit__actions">
           <button type="submit" class="ds-btn ds-btn--primary ds-btn--sm">Save</button>
@@ -134,13 +170,14 @@
     </h2>
     <p class="ds-meta bud-add__hint">
       Pick a category and a monthly ceiling. Anything you spend in that category
-      counts against it, and the dashboard will flag it before you go over.
+      counts against it, and I'll say something well before you reach the line.
     </p>
     <form method="POST" class="bud-add__form">
+      {{ csrf_field() }}
       <input type="hidden" name="action" value="add">
       <label class="bud-field">
         <span class="ds-eyebrow">Category</span>
-        <select name="category" required class="dash-input">
+        <select name="category" required class="dash-input ds-select">
           <option value="">Select a category…</option>
           {% for cat in categories %}
           <option value="{{ cat }}">{{ cat }}</option>
@@ -149,7 +186,7 @@
       </label>
       <label class="bud-field">
         <span class="ds-eyebrow">Account</span>
-        <select name="account_name" class="dash-input">
+        <select name="account_name" class="dash-input ds-select">
           <option value="both">Both</option>
           {% for acct in accounts %}
           <option value="{{ acct }}">{{ acct }}</option>
@@ -159,76 +196,22 @@
       <label class="bud-field">
         <span class="ds-eyebrow">Monthly limit</span>
         <input type="number" name="monthly_limit" min="0" step="0.01" required
-               placeholder="500.00" class="dash-input">
+               placeholder="500.00" class="dash-input ds-input">
       </label>
       <button type="submit" class="ds-btn ds-btn--primary">Save budget</button>
     </form>
   </section>
 
   {% if not budgets %}
-  <p class="dash-empty bud-empty">No budgets yet — the dashboard will start
-    flagging overspending as soon as you set one.</p>
+  <div class="dough-empty bud-empty">
+    <span data-dough="curious" data-dough-size="112"></span>
+    <p class="dough-empty-title">No budgets yet</p>
+    <p class="dough-empty-body">Give me a category and a number, and I'll keep
+      an eye on it for you — I'll say something long before it becomes a
+      problem.</p>
+  </div>
   {% endif %}
 </div>
-
-<style>
-.bud { display: flex; flex-direction: column; gap: var(--sp-8); padding-bottom: var(--sp-12); }
-.bud-title {
-  font-size: var(--f-display);
-  font-weight: var(--w-semi);
-  letter-spacing: -.026em;
-  color: var(--ink-strong);
-  margin: 0;
-}
-.bud-head { align-items: flex-end; }
-.bud-summary { min-width: 240px; display: flex; flex-direction: column; gap: var(--sp-2); }
-.bud-summary__figures { display: flex; align-items: baseline; gap: var(--sp-2); }
-.bud-summary__spent { font-size: var(--f-xl); font-weight: var(--w-bold); color: var(--ink-strong); }
-.bud-summary__of { font-size: var(--f-xs); color: var(--ink-faint); }
-
-.bud-actions {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  margin-top: auto;
-  padding-top: var(--sp-3);
-  border-top: 1px solid var(--hairline);
-}
-.bud-actions__spacer { flex: 1; }
-.bud-actions .ds-btn--sm { padding: 0 var(--sp-2); }
-.bud-inline { display: flex; }
-
-.bud-edit[hidden] { display: none; }
-.bud-edit__form { display: flex; flex-direction: column; gap: var(--sp-3); }
-.bud-edit__actions { display: flex; gap: var(--sp-2); }
-
-.bud-field { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
-.bud-field .dash-input { min-height: 40px; width: 100%; }
-
-.bud-add__hint { max-width: 62ch; margin: var(--sp-2) 0 var(--sp-5); }
-/* Explicit tracks rather than auto-fit: with a trailing `auto` for the
-   button, auto-fit resolved to a single column and stacked the whole form. */
-.bud-add__form {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr) auto;
-  gap: var(--sp-4);
-  align-items: end;
-  max-width: 900px;
-}
-.bud-add__form .ds-btn { min-height: 40px; }
-.bud-empty { text-align: center; padding: var(--sp-6) 0; }
-
-@media (max-width: 860px) {
-  .bud-add__form { grid-template-columns: 1fr 1fr; }
-  .bud-add__form .ds-btn { grid-column: 1 / -1; }
-}
-@media (max-width: 640px) {
-  .bud-add__form { grid-template-columns: 1fr; }
-  .bud-add__form .ds-btn { width: 100%; }
-  .bud-head { align-items: flex-start; }
-  .bud-summary { width: 100%; }
-}
-</style>
 
 <script>
 (function () {

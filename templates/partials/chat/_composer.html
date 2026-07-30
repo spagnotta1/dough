@@ -1,0 +1,22 @@
+{# Ask Dough — composer dock. Split out of chat.html in Phase 9
+   Wave 1b and migrated to the design system in Wave 1c. Ids here are
+   contracts: static/js/chat.js looks every one of them up by name. #}
+      <div id="dock">
+        <button id="jump" type="button" title="Jump to latest" aria-label="Jump to latest message">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M6 13l6 6 6-6"/></svg>
+        </button>
+
+        <div class="col">
+          <div class="ds-control" id="composer">
+            <label class="ds-sr" for="input">Ask Dough about your money</label>
+            <textarea class="ds-control__input" id="input" rows="1" placeholder="Ask Dough about your money…"
+                      enterkeyhint="send" autocapitalize="sentences"
+                      autocomplete="off" autocorrect="on" spellcheck="true"></textarea>
+            <button id="send" type="button" disabled aria-label="Send message" title="Send"></button>
+          </div>
+
+          <div id="suggest"></div>
+
+          <p class="dock-note">To answer, Dough sends your account data to the Claude API. He can get things wrong — double-check anything that matters.</p>
+        </div>
+      </div>

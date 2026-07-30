@@ -1,0 +1,18 @@
+{# ── App icon + manifest, shared by every page that has its own <head>.
+     Source of truth is static/img/app-icon.svg; the raster sizes are
+     regenerated with `python tools/build_icons.py`. The SVG offered to
+     browsers is the simplified mark, since tabs render it at 16px.
+
+     ?v= is a cache buster. Browsers cache favicons far more aggressively
+     than ordinary static files — often past a hard reload — so without a
+     changing URL a redesigned icon can sit unseen in a pinned tab for
+     weeks. Bump this whenever the artwork changes. ── #}
+{% set icon_v = '2' %}
+<link rel="icon" href="{{ url_for('static', filename='img/favicon.ico') }}?v={{ icon_v }}" sizes="32x32">
+<link rel="icon" type="image/png" sizes="16x16" href="{{ url_for('static', filename='img/favicon-16.png') }}?v={{ icon_v }}">
+<link rel="icon" type="image/png" sizes="32x32" href="{{ url_for('static', filename='img/favicon-32.png') }}?v={{ icon_v }}">
+<link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='img/app-icon-mark.svg') }}?v={{ icon_v }}">
+<link rel="apple-touch-icon" sizes="180x180" href="{{ url_for('static', filename='img/apple-touch-icon.png') }}?v={{ icon_v }}">
+<link rel="manifest" href="{{ url_for('static', filename='manifest.webmanifest') }}?v={{ icon_v }}">
+<meta name="theme-color" content="#7c3aed">
+<meta name="apple-mobile-web-app-title" content="Dough">

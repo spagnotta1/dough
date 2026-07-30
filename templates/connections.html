@@ -1,178 +1,181 @@
 {% extends "base.html" %}
-{% block title %}Connections - Checkbook App{% endblock %}
+{% block title %}Connections · Dough{% endblock %}
 
 {% block content %}
-<div class="space-y-6" x-data="connectionsApp()">
+{# Phase 9 Wave 2. Linked stylesheet, not an inline <style>: SPA navigation
+   replaces <main> only, so a <link> in <head> would never arrive on a
+   client-side navigation to this page. #}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/connections.css') }}">
 
-    <!-- Header -->
-    <div class="flex items-center justify-between flex-wrap gap-3">
-        <div>
-            <h1 class="text-2xl font-bold text-gray-900">Financial Connections</h1>
-            <p class="text-sm text-gray-500 mt-0.5">Connect an institution once — balances, holdings, and transactions sync automatically every 12 hours</p>
-        </div>
-        <div class="flex items-center gap-3">
-            <span x-show="syncing" class="flex items-center gap-2 text-sm text-violet-600">
-                <svg class="animate-spin h-4 w-4" fill="none" viewBox="0 0 24 24">
-                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
-                </svg>
-                Syncing…
-            </span>
-            <button @click="syncAll()" :disabled="syncing"
-                class="inline-flex items-center gap-2 px-4 py-2 bg-violet-600 text-white text-sm font-medium rounded-lg hover:bg-violet-700 transition-colors shadow-sm disabled:opacity-50">
-                <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor">
-                    <path stroke-linecap="round" stroke-linejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99"/>
-                </svg>
-                Refresh All
-            </button>
-            <a href="/sync-history"
-                class="px-4 py-2 border border-gray-300 text-gray-700 text-sm font-medium rounded-lg hover:bg-gray-50 transition-colors">
-                Sync History
-            </a>
-        </div>
+<div id="connections-page" class="ds-stack ds-stack-6" x-data="connectionsApp()">
+
+  <!-- Header -->
+  <div class="ds-row ds-row--between ds-row--wrap">
+    <div>
+      <h1 class="ds-section__title">Financial Connections</h1>
+      <p class="ds-section__sub">Connect an institution once — balances, holdings, and transactions sync automatically every 12 hours</p>
     </div>
-
-    <!-- Connected institutions -->
-    {% set active_connections = connections|rejectattr('status', 'equalto', 'disconnected')|list %}
-    <div class="bg-white shadow sm:rounded-xl">
-        <div class="px-5 py-5">
-            <h3 class="text-base font-semibold text-gray-900 mb-4">Connected Institutions</h3>
-            {% if active_connections %}
-            <div class="divide-y divide-gray-200">
-                {% for c in active_connections %}
-                <div class="py-4 flex items-center justify-between flex-wrap gap-3" id="conn-{{ c.id }}">
-                    <div class="flex items-center gap-3 min-w-0">
-                        <span class="w-2.5 h-2.5 rounded-full inline-block flex-shrink-0
-                            {% if c.status == 'connected' %}bg-green-500
-                            {% elif c.status == 'expired' %}bg-yellow-500
-                            {% else %}bg-red-500{% endif %}"
-                            title="{{ c.status }}"></span>
-                        <div class="min-w-0">
-                            <p class="text-sm font-semibold text-gray-900">{{ c.display_name }}</p>
-                            <p class="text-xs text-gray-500">
-                                {{ c.account_count }} account{% if c.account_count != 1 %}s{% endif %}
-                                {% if c.last_sync_at %} · Last sync {{ c.last_sync_at }}{% else %} · Never synced{% endif %}
-                                {% if c.status != 'connected' %}
-                                    · <span class="text-red-500">{{ c.last_error or c.status }}</span>
-                                {% endif %}
-                            </p>
-                        </div>
-                    </div>
-                    <div class="flex items-center gap-2">
-                        <button @click="syncOne({{ c.id }})" :disabled="syncing"
-                            class="px-3 py-1.5 text-xs font-medium text-violet-600 border border-violet-200 rounded-md hover:bg-violet-50 transition-colors disabled:opacity-50">
-                            Refresh
-                        </button>
-                        <button @click="disconnect({{ c.id }}, '{{ c.display_name }}')"
-                            class="px-3 py-1.5 text-xs font-medium text-red-500 border border-red-200 rounded-md hover:bg-red-50 transition-colors">
-                            Disconnect
-                        </button>
-                    </div>
-                </div>
-                {% endfor %}
-            </div>
-            {% else %}
-            <p class="text-center text-sm text-gray-400 py-8">No institutions connected yet. Connect one below to start syncing automatically.</p>
-            {% endif %}
-        </div>
+    <div class="ds-row">
+      <span x-show="syncing" class="ds-row conn-syncing">
+        <svg class="ds-spin" width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <circle opacity=".25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+          <path opacity=".75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
+        </svg>
+        Syncing…
+      </span>
+      <button @click="syncAll()" :disabled="syncing" class="ds-btn ds-btn--primary">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke="currentColor" aria-hidden="true">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99"/>
+        </svg>
+        Refresh All
+      </button>
+      <a href="/sync-history" class="ds-btn ds-btn--secondary">Sync History</a>
     </div>
+  </div>
 
-    <!-- Synced accounts -->
-    {% if accounts %}
-    <div class="bg-white shadow sm:rounded-xl overflow-hidden">
-        <div class="px-5 py-5">
-            <h3 class="text-base font-semibold text-gray-900 mb-4">Synced Accounts</h3>
-            <div class="overflow-x-auto">
-                <table class="min-w-full divide-y divide-gray-200">
-                    <thead class="bg-gray-50">
-                        <tr>
-                            <th class="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase">Institution</th>
-                            <th class="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase">Account</th>
-                            <th class="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase">Type</th>
-                            <th class="px-3 py-3 text-right text-xs font-medium text-gray-500 uppercase">Balance</th>
-                            <th class="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase">Last Synced</th>
-                        </tr>
-                    </thead>
-                    <tbody class="bg-white divide-y divide-gray-200">
-                        {% for a in accounts %}
-                        <tr class="hover:bg-gray-50">
-                            <td class="px-3 py-3 text-sm text-gray-700 capitalize">{{ a.institution.replace('_', ' ') }}</td>
-                            <td class="px-3 py-3 text-sm font-medium text-gray-900">
-                                {{ a.name }}{% if a.mask %} <span class="text-gray-400">••{{ a.mask }}</span>{% endif %}
-                            </td>
-                            <td class="px-3 py-3">
-                                <span class="px-2 py-0.5 text-xs rounded-full font-medium
-                                    {% if a.account_type == 'checking' %}bg-blue-100 text-blue-700
-                                    {% elif a.account_type == 'savings' %}bg-green-100 text-green-700
-                                    {% elif a.account_type == 'brokerage' %}bg-indigo-100 text-indigo-700
-                                    {% elif a.account_type == 'crypto' %}bg-orange-100 text-orange-700
-                                    {% else %}bg-gray-100 text-gray-600{% endif %} capitalize">
-                                    {{ a.account_type }}
-                                </span>
-                            </td>
-                            <td class="px-3 py-3 text-sm font-semibold text-gray-900 text-right">${{ "{:,.2f}".format(a.balance) }}</td>
-                            <td class="px-3 py-3 text-sm text-gray-500">{{ a.last_synced_at or '—' }}</td>
-                        </tr>
-                        {% endfor %}
-                    </tbody>
-                </table>
-            </div>
+  <!-- Connected institutions -->
+  {% set active_connections = connections|rejectattr('status', 'equalto', 'disconnected')|list %}
+  <section class="ds-card" aria-labelledby="connectedHeading">
+    <div class="ds-card__head">
+      <h2 id="connectedHeading" class="ds-section__title">Connected Institutions</h2>
+    </div>
+    {% if active_connections %}
+    <div class="conn-list">
+      {% for c in active_connections %}
+      <div class="conn-row ds-row ds-row--between ds-row--wrap" id="conn-{{ c.id }}">
+        <div class="ds-row conn-row__info">
+          <span class="conn-dot conn-dot--{{ 'ok' if c.status == 'connected' else 'warn' if c.status == 'expired' else 'danger' }}"
+                title="{{ c.status }}"></span>
+          <div class="conn-row__info">
+            <p class="conn-row__name">{{ c.display_name }}</p>
+            <p class="conn-row__meta">
+              {{ c.account_count }} account{% if c.account_count != 1 %}s{% endif %}
+              {% if c.last_sync_at %} · Last sync {{ c.last_sync_at }}{% else %} · Never synced{% endif %}
+              {% if c.status != 'connected' %}
+                · <span class="conn-row__error">{{ c.last_error or c.status }}</span>
+              {% endif %}
+            </p>
+          </div>
         </div>
+        <div class="ds-row">
+          <button @click="syncOne({{ c.id }})" :disabled="syncing" class="ds-btn ds-btn--sm ds-btn--secondary">
+            Refresh
+          </button>
+          <button @click="disconnect({{ c.id }}, '{{ c.display_name }}')" class="ds-btn ds-btn--sm ds-btn--danger">
+            Disconnect
+          </button>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+    {% else %}
+    <div class="ds-empty">
+      <span class="ds-empty__art" data-dough="greeting" data-dough-size="104"></span>
+      <p class="ds-empty__title">No banks connected yet</p>
+      <p class="ds-empty__body">Connect one below and I'll keep your
+        transactions up to date on my own — you won't have to upload
+        anything again.</p>
     </div>
     {% endif %}
+  </section>
 
-    <!-- Available institutions -->
-    <div class="bg-white shadow sm:rounded-xl">
-        <div class="px-5 py-5">
-            <h3 class="text-base font-semibold text-gray-900 mb-1">Add an Institution</h3>
-            <p class="text-xs text-gray-400 mb-4">
-                Connect an institution to sync its live data. Balances, holdings, and transactions
-                update automatically every 12 hours.
-            </p>
-            <div class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-                {% for inst in institutions %}
-                <div class="border border-gray-200 rounded-xl p-4 flex flex-col gap-3">
-                    <div class="flex items-center gap-2">
-                        <span class="w-8 h-8 rounded-lg flex items-center justify-center text-white text-sm font-bold"
-                              style="background: {{ inst.accent_color }}">
-                            {{ inst.display_name[0] }}
-                        </span>
-                        <div>
-                            <p class="text-sm font-semibold text-gray-900">{{ inst.display_name }}</p>
-                            <p class="text-xs text-gray-400">
-                                {% if inst.mode == 'live' %}Live API
-                                {% elif not inst.live_api_available %}Sandbox · no public API
-                                {% else %}Sandbox{% endif %}
-                            </p>
-                        </div>
-                    </div>
-                    <p class="text-xs text-gray-500 flex-1">
-                        {% if inst.institution == 'plaid' %}Aggregator — link any supported bank, brokerage, or
-                        crypto exchange through one connection.
-                        {% elif inst.supports_transactions and inst.supports_holdings %}Balances, holdings &amp; transactions
-                        {% elif inst.supports_transactions %}Balances &amp; transactions
-                        {% elif inst.supports_holdings %}Balances &amp; holdings
-                        {% else %}Balances{% endif %}
-                    </p>
-                    {% if inst.connected and inst.institution != 'plaid' %}
-                    <span class="inline-flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-medium text-green-700 bg-green-50 border border-green-200 rounded-lg">
-                        <svg class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke-width="2.5" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="m4.5 12.75 6 6 9-13.5"/></svg>
-                        Connected
-                    </span>
-                    {% else %}
-                    <button @click="connect('{{ inst.institution }}', '{{ inst.display_name }}', '{{ inst.mode }}')"
-                        :disabled="connecting === '{{ inst.institution }}'"
-                        class="px-3 py-2 text-xs font-medium text-white rounded-lg transition-opacity hover:opacity-90 disabled:opacity-50"
-                        style="background: {{ inst.accent_color }}">
-                        <span x-show="connecting !== '{{ inst.institution }}'">{% if inst.institution == 'plaid' and inst.connected %}Link another institution{% else %}Connect{% endif %}</span>
-                        <span x-show="connecting === '{{ inst.institution }}'">Connecting…</span>
-                    </button>
-                    {% endif %}
-                </div>
-                {% endfor %}
-            </div>
-        </div>
+  <!-- Synced accounts -->
+  {% if accounts %}
+  <section class="ds-card" aria-labelledby="syncedHeading">
+    <div class="ds-card__head">
+      <h2 id="syncedHeading" class="ds-section__title">Synced Accounts</h2>
     </div>
+    <div class="ds-table-wrap ds-scroll">
+      <table class="ds-table ds-table--hover">
+        <thead>
+          <tr>
+            <th scope="col">Institution</th>
+            <th scope="col">Account</th>
+            <th scope="col">Type</th>
+            <th scope="col" class="ds-table__num">Balance</th>
+            <th scope="col">Last Synced</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for a in accounts %}
+          <tr>
+            <td class="conn-capitalize">{{ a.institution.replace('_', ' ') }}</td>
+            <td>
+              {{ a.name }}{% if a.mask %} <span class="conn-mask">••{{ a.mask }}</span>{% endif %}
+            </td>
+            <td>
+              <span class="ds-badge conn-capitalize {{ 'ds-badge--info' if a.account_type == 'checking'
+                else 'ds-badge--ok' if a.account_type == 'savings'
+                else 'ds-badge--ai' if a.account_type == 'brokerage'
+                else 'ds-badge--warn' if a.account_type == 'crypto'
+                else '' }}">
+                {{ a.account_type }}
+              </span>
+            </td>
+            <td class="ds-table__num">${{ "{:,.2f}".format(a.balance) }}</td>
+            <td>{{ a.last_synced_at or '—' }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+  {% endif %}
+
+  <!-- Available institutions -->
+  <section class="ds-card" aria-labelledby="addInstitutionHeading">
+    <div class="ds-card__head">
+      <div>
+        <h2 id="addInstitutionHeading" class="ds-section__title">Add an Institution</h2>
+        <p class="ds-section__sub">
+          Connect an institution to sync its live data. Balances, holdings, and transactions
+          update automatically every 12 hours.
+        </p>
+      </div>
+    </div>
+    <div class="conn-institutions">
+      {% for inst in institutions %}
+      <div class="ds-card ds-card--compact ds-stack ds-stack-3">
+        <div class="conn-inst__head">
+          <span class="conn-inst__icon"
+                style="background: {{ inst.accent_color }}; color: {{ inst.ink_color }}">
+            {{ inst.display_name[0] }}
+          </span>
+          <div>
+            <p class="conn-inst__name">{{ inst.display_name }}</p>
+            <p class="conn-inst__mode">
+              {% if inst.mode == 'live' %}Live API
+              {% elif not inst.live_api_available %}Sandbox · no public API
+              {% else %}Sandbox{% endif %}
+            </p>
+          </div>
+        </div>
+        <p class="conn-inst__desc">
+          {% if inst.institution == 'plaid' %}Aggregator — link any supported bank, brokerage, or
+          crypto exchange through one connection.
+          {% elif inst.supports_transactions and inst.supports_holdings %}Balances, holdings &amp; transactions
+          {% elif inst.supports_transactions %}Balances &amp; transactions
+          {% elif inst.supports_holdings %}Balances &amp; holdings
+          {% else %}Balances{% endif %}
+        </p>
+        {% if inst.connected and inst.institution != 'plaid' %}
+        <span class="ds-badge ds-badge--ok ds-badge--pill">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke-width="2.5" stroke="currentColor" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="m4.5 12.75 6 6 9-13.5"/></svg>
+          Connected
+        </span>
+        {% else %}
+        <button @click="connect('{{ inst.institution }}', '{{ inst.display_name }}', '{{ inst.mode }}')"
+            :disabled="connecting === '{{ inst.institution }}'"
+            class="ds-btn ds-btn--sm conn-inst__connect"
+            style="background: {{ inst.accent_color }}; color: {{ inst.ink_color }}">
+            <span x-show="connecting !== '{{ inst.institution }}'">{% if inst.institution == 'plaid' and inst.connected %}Link another institution{% else %}Connect{% endif %}</span>
+            <span x-show="connecting === '{{ inst.institution }}'">Connecting…</span>
+        </button>
+        {% endif %}
+      </div>
+      {% endfor %}
+    </div>
+  </section>
 
 </div>
 

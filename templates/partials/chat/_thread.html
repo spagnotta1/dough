@@ -1,0 +1,16 @@
+{# Ask Dough — message thread and hero. Split out of chat.html in Phase 9
+   Wave 1b and migrated to the design system in Wave 1c. Ids here are
+   contracts: static/js/chat.js looks every one of them up by name. #}
+      <div id="thread" class="ds-scroll" role="log" aria-label="Conversation" tabindex="0">
+        <div id="turns"></div>
+        <div id="hero">
+          <div class="col">
+            <div class="hero-mark" aria-hidden="true">
+              <span data-dough="greeting" data-dough-size="118"></span>
+            </div>
+            <h1 class="hero-title" id="hero-title">Hi, I'm Dough.</h1>
+            <p class="hero-sub">I've been keeping an eye on your finances.
+               What would you like to explore today?</p>
+          </div>
+        </div>
+      </div>

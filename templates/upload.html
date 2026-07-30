@@ -1,31 +1,30 @@
 {% extends "base.html" %}
 
-{% block title %}Upload Transactions - Checkbook App{% endblock %}
+{% block title %}Upload · Dough{% endblock %}
 
 {% block content %}
-<style>
-/* Mobile-only layout — no effect ≥640px */
-@media (max-width: 640px) {
-  .undo-banner { flex-wrap: wrap; gap: 10px; }
-  #uploadBtn { flex: 1; justify-content: center; padding-top: 12px; padding-bottom: 12px; }
-}
-</style>
-<div class="space-y-6">
+{# Phase 9 Wave 2. Linked stylesheet, not an inline <style>: SPA navigation
+   replaces <main> only, so a <link> in <head> would never arrive on a
+   client-side navigation to this page. #}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/upload.css') }}">
+
+<div class="ds-stack ds-stack-6">
 
     <!-- Undo last import banner -->
     {% if last_batch_id %}
-    <div class="undo-banner bg-yellow-50 border border-yellow-300 rounded-lg px-4 py-3 flex items-center justify-between">
-        <div class="flex items-center space-x-3">
-            <svg class="h-5 w-5 text-yellow-500" viewBox="0 0 20 20" fill="currentColor">
+    <div class="ds-card ds-card--warn ds-card--compact upload-undo">
+        <div class="upload-undo__msg">
+            <svg class="upload-undo__icon" width="20" height="20" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
                 <path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd"/>
             </svg>
-            <span class="text-sm text-yellow-800 font-medium">
+            <span class="ds-meta">
                 Last import added <strong>{{ last_batch_count }}</strong> transaction(s).
             </span>
         </div>
-        <form method="POST" action="{{ url_for('undo_import', batch_id=last_batch_id) }}"
+        <form method="POST" action="{{ url_for('transactions.undo_import', batch_id=last_batch_id) }}"
               onsubmit="return confirm('Remove all {{ last_batch_count }} transaction(s) from the last import? This cannot be undone.')">
-            <button type="submit" class="inline-flex items-center px-3 py-1.5 text-sm font-medium text-yellow-800 bg-yellow-100 border border-yellow-400 rounded hover:bg-yellow-200">
+          {{ csrf_field() }}
+            <button type="submit" class="ds-btn ds-btn--sm ds-btn--secondary">
                 Undo Import
             </button>
         </form>
@@ -33,67 +32,70 @@
     {% endif %}
 
     <!-- Upload form -->
-    <div class="bg-white shadow sm:rounded-lg">
-        <div class="px-4 py-5 sm:p-6">
-            <h3 class="text-lg leading-6 font-medium text-gray-900">Upload Transactions</h3>
-            <p class="mt-1 text-sm text-gray-500">Upload Capital One CSV exports. Multiple files are supported.</p>
-
-            <form id="uploadForm" class="mt-5 space-y-4" method="POST" enctype="multipart/form-data">
-                <div>
-                    <label for="account_name" class="block text-sm font-medium text-gray-700">Account</label>
-                    <select id="account_name" name="account_name" class="mt-1 block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm rounded-md">
-                        <option value="">Select an account</option>
-                        <option value="Checking">Checking</option>
-                        <option value="Savings">Savings</option>
-                    </select>
-                </div>
-
-                <div>
-                    <label class="block text-sm font-medium text-gray-700">CSV Files</label>
-                    <div id="dropZone" class="mt-1 flex justify-center px-6 pt-5 pb-6 border-2 border-gray-300 border-dashed rounded-md cursor-pointer hover:border-indigo-400 transition-colors">
-                        <div class="space-y-1 text-center">
-                            <svg class="mx-auto h-12 w-12 text-gray-400" stroke="currentColor" fill="none" viewBox="0 0 48 48">
-                                <path d="M28 8H12a4 4 0 00-4 4v20m32-12v8m0 0v8a4 4 0 01-4 4H12a4 4 0 01-4-4v-4m32-4l-3.172-3.172a4 4 0 00-5.656 0L28 28M8 32l9.172-9.172a4 4 0 015.656 0L28 28m0 0l4 4m4-24h8m-4-4v8m-12 4h.02" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
-                            </svg>
-                            <div class="flex text-sm text-gray-600 justify-center">
-                                <span class="font-medium text-indigo-600 hover:text-indigo-500">Click to browse</span>
-                                <p class="pl-1">or drag and drop</p>
-                            </div>
-                            <p id="fileLabel" class="text-xs text-gray-500">CSV files only</p>
-                        </div>
-                    </div>
-                    <input id="files" name="files[]" type="file" class="sr-only" multiple accept=".csv">
-                </div>
-
-                <!-- Preview table (hidden until files selected) -->
-                <div id="previewSection" class="hidden">
-                    <div class="flex items-center justify-between mb-2">
-                        <h4 class="text-sm font-medium text-gray-700" id="previewTitle">Preview</h4>
-                        <button type="button" onclick="clearFiles()" class="text-xs text-gray-500 hover:text-gray-700">Clear</button>
-                    </div>
-                    <div class="overflow-x-auto border border-gray-200 rounded-lg max-h-64 overflow-y-auto">
-                        <table class="min-w-full divide-y divide-gray-200 text-xs">
-                            <thead class="bg-gray-50 sticky top-0">
-                                <tr>
-                                    <th class="px-3 py-2 text-left font-medium text-gray-500 uppercase">Date</th>
-                                    <th class="px-3 py-2 text-left font-medium text-gray-500 uppercase">Description</th>
-                                    <th class="px-3 py-2 text-right font-medium text-gray-500 uppercase">Amount</th>
-                                </tr>
-                            </thead>
-                            <tbody id="previewBody" class="bg-white divide-y divide-gray-100"></tbody>
-                        </table>
-                    </div>
-                </div>
-
-                <div class="flex items-center space-x-3">
-                    <button type="submit" id="uploadBtn" class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500">
-                        Upload
-                    </button>
-                    <span id="uploadStatus" class="text-sm text-gray-500 hidden">Uploading…</span>
-                </div>
-            </form>
+    <section class="ds-card" aria-labelledby="uploadHeading">
+        <div class="ds-card__head">
+            <div>
+                <h2 id="uploadHeading" class="ds-section__title">Upload Transactions</h2>
+                <p class="ds-section__sub">Drop in your Capital One CSV exports and I'll sort and categorise everything for you. Multiple files are fine.</p>
+            </div>
         </div>
-    </div>
+
+        <form id="uploadForm" class="ds-stack ds-stack-4" method="POST" enctype="multipart/form-data">
+          {{ csrf_field() }}
+            <div class="ds-field">
+                <label class="ds-label" for="account_name">Account</label>
+                <select id="account_name" name="account_name" class="ds-select">
+                    <option value="">Select an account</option>
+                    <option value="Checking">Checking</option>
+                    <option value="Savings">Savings</option>
+                </select>
+            </div>
+
+            <div class="ds-field">
+                <label class="ds-label">CSV Files</label>
+                <div id="dropZone" class="upload-dropzone">
+                    <div class="upload-dropzone__body">
+                        <svg class="upload-dropzone__icon" width="48" height="48" stroke="currentColor" fill="none" viewBox="0 0 48 48" aria-hidden="true">
+                            <path d="M28 8H12a4 4 0 00-4 4v20m32-12v8m0 0v8a4 4 0 01-4 4H12a4 4 0 01-4-4v-4m32-4l-3.172-3.172a4 4 0 00-5.656 0L28 28M8 32l9.172-9.172a4 4 0 015.656 0L28 28m0 0l4 4m4-24h8m-4-4v8m-12 4h.02" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+                        </svg>
+                        <div class="ds-row">
+                            <span class="upload-dropzone__cta">Click to browse</span>
+                            <span class="upload-dropzone__hint">or drag and drop</span>
+                        </div>
+                        <p id="fileLabel" class="ds-meta">CSV files only</p>
+                    </div>
+                </div>
+                <input id="files" name="files[]" type="file" class="ds-input ds-sr" multiple accept=".csv">
+            </div>
+
+            <!-- Preview table (hidden until files selected) -->
+            <div id="previewSection" hidden>
+                <div class="ds-row ds-row--between upload-preview__head">
+                    <h4 id="previewTitle" class="ds-card__title">Preview</h4>
+                    <button type="button" onclick="clearFiles()" class="ds-btn ds-btn--sm ds-btn--ghost">Clear</button>
+                </div>
+                <div class="upload-preview ds-table-wrap ds-scroll">
+                    <table class="ds-table ds-table--sticky">
+                        <thead>
+                            <tr>
+                                <th scope="col">Date</th>
+                                <th scope="col">Description</th>
+                                <th scope="col" class="ds-table__num">Amount</th>
+                            </tr>
+                        </thead>
+                        <tbody id="previewBody"></tbody>
+                    </table>
+                </div>
+            </div>
+
+            <div class="ds-row">
+                <button type="submit" id="uploadBtn" class="ds-btn ds-btn--primary">
+                    Upload
+                </button>
+                <span id="uploadStatus" class="ds-meta" hidden>Uploading…</span>
+            </div>
+        </form>
+    </section>
 </div>
 
 <script src="{{ url_for('static', filename='js/upload.js') }}"></script>

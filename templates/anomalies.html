@@ -1,113 +1,107 @@
 {% extends "base.html" %}
 
-{% block title %}Anomalies - Checkbook App{% endblock %}
+{% block title %}Anomalies · Dough{% endblock %}
 
 {% block content %}
-<style>
-/* Mobile-only layout — no effect ≥640px */
-@media (max-width: 640px) {
-  #anomTable, #anomTable tbody { display: block; min-width: 0 !important; }
-  #anomTable thead { display: none; }
-  #anomTable tbody tr {
-    display: grid;
-    grid-template-columns: 1fr auto;
-    column-gap: 10px; row-gap: 2px;
-    padding: 12px 16px;
-    border-bottom: 1px solid var(--border);
-  }
-  #anomTable td { display: block; padding: 0 !important; border: none !important; white-space: normal !important; }
-  #anomTable td[colspan] { grid-column: 1 / -1; padding: 24px 0 !important; }
-  #anomTable td:nth-child(1) { display: none; }                                   /* id */
-  #anomTable td:nth-child(3) { grid-column: 1; grid-row: 1; font-weight: 600; max-width: none !important; overflow: hidden; text-overflow: ellipsis; white-space: nowrap !important; }
-  #anomTable td:nth-child(4) { grid-column: 2; grid-row: 1; text-align: right; font-size: .95rem; }
-  #anomTable td:nth-child(2) { grid-column: 1; grid-row: 2; font-size: .72rem; opacity: .6; }
-  #anomTable td:nth-child(5) { grid-column: 2; grid-row: 2; text-align: right; font-size: .72rem; opacity: .6; }
-  #anomTable td:nth-child(6) { grid-column: 1 / -1; grid-row: 3; margin-top: 8px; text-align: right; }
-  #anomTable td:nth-child(6) button { padding: 8px 14px; font-size: .8rem; }
+{# Phase 9 Wave 2. Linked stylesheet, not an inline <style>: SPA navigation
+   replaces <main> only, so a <link> in <head> would never arrive on a
+   client-side navigation to this page. #}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/anomalies.css') }}">
 
-  /* Pagination fits the screen */
-  .anom-pager { flex-wrap: wrap; gap: 10px; }
-  .anom-pager nav { overflow-x: auto; max-width: 100%; }
-}
-</style>
-<div class="space-y-6">
-    <div class="bg-white shadow sm:rounded-lg">
-        <div class="px-4 py-5 sm:px-6">
-            <div class="flex flex-wrap items-center justify-between gap-4">
-                <div>
-                    <h2 class="text-xl font-semibold text-gray-800">Anomaly Detection</h2>
-                    <p class="text-sm text-gray-500 mt-1">Transactions flagged as statistically unusual by amount, day of week, and day of month.</p>
-                </div>
-                <div class="flex items-center gap-3 flex-wrap">
-                    <form action="{{ url_for('anomalies') }}" method="get" class="flex items-center gap-2">
-                        {% if show_reviewed %}
-                        <input type="hidden" name="show_reviewed" value="1">
-                        {% endif %}
-                        <input type="hidden" name="sort" value="{{ sort_by }}">
-                        <input type="text" name="search_id" placeholder="Search by ID"
-                               class="rounded-md border-gray-300 shadow-sm text-sm focus:ring-indigo-500 focus:border-indigo-500 px-3 py-2 w-36">
-                        <button type="submit" class="px-3 py-2 text-sm font-medium text-white bg-indigo-600 rounded-md hover:bg-indigo-700">Search</button>
-                    </form>
-                    <a href="{{ url_for('anomalies', show_reviewed=('0' if show_reviewed else '1'), sort=sort_by) }}"
-                       class="px-3 py-2 text-sm font-medium border border-gray-300 rounded-md text-gray-700 bg-white hover:bg-gray-50">
-                        {% if show_reviewed %}Hide Reviewed{% else %}Show Reviewed{% endif %}
-                    </a>
-                    {% if anomalies.items and not show_reviewed %}
-                    <button type="button" onclick="dismissAllAnomalies()"
-                            class="px-3 py-2 text-sm font-medium border border-gray-300 rounded-md text-gray-700 bg-white hover:bg-red-50 hover:text-red-600 hover:border-red-300">
-                        Dismiss All
-                    </button>
+{# One definition for all five sortable headers, mirroring transactions.html's
+   sort_th: the sort state goes on the <th> as aria-sort, which is what a
+   screen reader reads when it lands in the column. This page's backend takes
+   a single combined `sort` param (e.g. "date_desc") rather than transactions'
+   separate sort_by/sort_dir, so the macro is local rather than shared. #}
+{% macro sort_th(key, label, numeric=false) %}
+  {% set active = (sort_by == key + '_asc' or sort_by == key + '_desc') %}
+  {% set current_dir = 'asc' if sort_by == key + '_asc' else ('desc' if active else none) %}
+  {% set next_dir = 'asc' if current_dir == 'desc' else 'desc' %}
+  <th scope="col"
+      {% if numeric %}class="ds-table__num"{% endif %}
+      {% if active %}aria-sort="{{ 'ascending' if current_dir == 'asc' else 'descending' }}"{% endif %}>
+    <a class="ds-table__sort"
+       href="{{ url_for('insights.anomalies', sort=key + '_' + next_dir, show_reviewed=('1' if show_reviewed else '0')) }}">
+      <span>{{ label }}</span>
+      <span class="ds-table__sort__dir" aria-hidden="true">{% if active %}{{ '▲' if current_dir == 'asc' else '▼' }}{% else %}⇅{% endif %}</span>
+    </a>
+  </th>
+{% endmacro %}
+
+<div class="ds-stack ds-stack-6">
+    <section class="ds-card" aria-labelledby="anomaliesHeading">
+        <div class="ds-card__head anom-head">
+            <div>
+                <h2 id="anomaliesHeading" class="ds-section__title">Anomaly Detection</h2>
+                <p class="ds-section__sub">Transactions flagged as statistically unusual by amount, day of week, and day of month.</p>
+            </div>
+            <div class="anom-actions">
+                <form action="{{ url_for('insights.anomalies') }}" method="get" class="ds-row">
+                    {% if show_reviewed %}
+                    <input type="hidden" name="show_reviewed" value="1">
                     {% endif %}
-                </div>
+                    <input type="hidden" name="sort" value="{{ sort_by }}">
+                    <input type="text" name="search_id" placeholder="Search by ID" class="ds-input anom-search">
+                    <button type="submit" class="ds-btn ds-btn--sm ds-btn--secondary">Search</button>
+                </form>
+                <a href="{{ url_for('insights.anomalies', show_reviewed=('0' if show_reviewed else '1'), sort=sort_by) }}"
+                   class="ds-btn ds-btn--sm ds-btn--secondary">
+                    {% if show_reviewed %}Hide Reviewed{% else %}Show Reviewed{% endif %}
+                </a>
+                {% if anomalies.items and not show_reviewed %}
+                <button type="button" onclick="dismissAllAnomalies()" class="ds-btn ds-btn--sm ds-btn--danger">
+                    Dismiss All
+                </button>
+                {% endif %}
             </div>
         </div>
 
-        <div class="border-t border-gray-200 overflow-x-auto">
-            <table id="anomTable" class="min-w-full divide-y divide-gray-200">
-                <thead class="bg-gray-50">
+        <div class="ds-table-wrap ds-scroll">
+            <table id="anomTable" class="ds-table ds-table--hover">
+                <thead>
                     <tr>
-                        {% set cols = [('id','ID'),('date','Date'),('description','Description'),('amount','Amount'),('category','Category')] %}
-                        {% for key, label in cols %}
-                        {% set asc_key = key + '_asc' %}
-                        {% set desc_key = key + '_desc' %}
-                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                            <div class="flex items-center space-x-1">
-                                <span>{{ label }}</span>
-                                <a href="{{ url_for('anomalies', sort=asc_key, show_reviewed=('1' if show_reviewed else '0')) }}"
-                                   class="{{ 'text-indigo-600' if sort_by == asc_key else 'text-gray-400' }} hover:text-indigo-800">&#x25B2;</a>
-                                <a href="{{ url_for('anomalies', sort=desc_key, show_reviewed=('1' if show_reviewed else '0')) }}"
-                                   class="{{ 'text-indigo-600' if sort_by == desc_key else 'text-gray-400' }} hover:text-indigo-800">&#x25BC;</a>
-                            </div>
-                        </th>
-                        {% endfor %}
-                        <th class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Action</th>
+                        {{ sort_th('id', 'ID') }}
+                        {{ sort_th('date', 'Date') }}
+                        {{ sort_th('description', 'Description') }}
+                        {{ sort_th('amount', 'Amount', numeric=true) }}
+                        {{ sort_th('category', 'Category') }}
+                        <th scope="col"><span class="ds-sr">Action</span></th>
                     </tr>
                 </thead>
-                <tbody class="bg-white divide-y divide-gray-200" id="anomalyBody">
+                <tbody id="anomalyBody">
                     {% for anomaly in anomalies.items %}
-                    <tr id="arow-{{ anomaly.id }}" class="{% if anomaly.anomaly_reviewed %}opacity-50{% endif %}">
-                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{{ anomaly.id }}</td>
-                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{{ anomaly.date.strftime('%Y-%m-%d') }}</td>
-                        <td class="px-6 py-4 text-sm text-gray-700 max-w-sm truncate">{{ anomaly.description }}</td>
-                        <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-right {% if anomaly.amount > 0 %}text-green-600{% else %}text-red-600{% endif %}">
+                    <tr id="arow-{{ anomaly.id }}" class="{{ 'anom-row--reviewed' if anomaly.anomaly_reviewed }}">
+                        <td>{{ anomaly.id }}</td>
+                        <td class="ds-meta">{{ anomaly.date.strftime('%Y-%m-%d') }}</td>
+                        <td>{{ anomaly.description }}</td>
+                        <td class="ds-table__num {{ 'anom-amt--pos' if anomaly.amount > 0 else 'anom-amt--neg' }}">
                             ${{ "{:,.2f}".format(anomaly.amount) }}
                         </td>
-                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{{ anomaly.category }}</td>
-                        <td class="px-6 py-4 whitespace-nowrap text-right text-sm">
+                        <td class="ds-meta">{{ anomaly.category }}</td>
+                        <td class="ds-table__num">
                             {% if not anomaly.anomaly_reviewed %}
-                            <button onclick="dismissAnomaly({{ anomaly.id }})"
-                                    class="text-gray-400 hover:text-green-600 font-medium text-xs border border-gray-300 rounded px-2 py-1 hover:border-green-400 transition-colors">
+                            <button onclick="dismissAnomaly({{ anomaly.id }})" class="ds-btn ds-btn--sm ds-btn--secondary anom-dismiss-btn">
                                 Dismiss
                             </button>
                             {% else %}
-                            <span class="text-xs text-gray-400 italic">Reviewed</span>
+                            <span class="anom-reviewed-label">Reviewed</span>
                             {% endif %}
                         </td>
                     </tr>
                     {% else %}
                     <tr>
-                        <td colspan="6" class="px-6 py-10 text-center text-sm text-gray-400">
-                            {% if show_reviewed %}No anomalies found.{% else %}No unreviewed anomalies. <a href="{{ url_for('anomalies', show_reviewed='1') }}" class="text-indigo-600 hover:underline">Show reviewed</a>.{% endif %}
+                        <td colspan="6">
+                            <div class="ds-empty">
+                              {% if show_reviewed %}
+                              <span class="ds-empty__art" data-dough="searching" data-dough-size="104"></span>
+                              <p class="ds-empty__title">Nothing unusual here</p>
+                              <p class="ds-empty__body">I went through every charge in this range and none of them looked out of place.</p>
+                              {% else %}
+                              <span class="ds-empty__art" data-dough="proud" data-dough-size="104"></span>
+                              <p class="ds-empty__title">You're all caught up</p>
+                              <p class="ds-empty__body">Nothing left for you to review. <a href="{{ url_for('insights.anomalies', show_reviewed='1') }}">Show the ones you've already seen</a>.</p>
+                              {% endif %}
+                            </div>
                         </td>
                     </tr>
                     {% endfor %}
@@ -117,33 +111,33 @@
 
         <!-- Pagination -->
         {% if anomalies.pages > 1 %}
-        <div class="anom-pager px-6 py-3 border-t border-gray-200 flex items-center justify-between">
-            <p class="text-sm text-gray-600">
-                Page <span class="font-medium">{{ anomalies.page }}</span> of
-                <span class="font-medium">{{ anomalies.pages }}</span>
-                &nbsp;({{ anomalies.total }} total)
+        <div class="anom-pager anom-pager-wrap">
+            <p class="ds-meta">
+                Page <strong>{{ anomalies.page }}</strong> of
+                <strong>{{ anomalies.pages }}</strong>
+                ({{ anomalies.total }} total)
             </p>
-            <nav class="inline-flex rounded-md shadow-sm -space-x-px">
+            <nav class="anom-pager__pages" aria-label="Pagination">
                 {% if anomalies.has_prev %}
-                <a href="{{ url_for('anomalies', page=anomalies.prev_num, sort=sort_by, show_reviewed=('1' if show_reviewed else '0')) }}"
-                   class="relative inline-flex items-center px-2 py-2 rounded-l-md border border-gray-300 bg-white text-sm text-gray-500 hover:bg-gray-50">&#8592;</a>
+                <a href="{{ url_for('insights.anomalies', page=anomalies.prev_num, sort=sort_by, show_reviewed=('1' if show_reviewed else '0')) }}"
+                   class="ds-chip anom-pager__link">&#8592; Prev</a>
                 {% endif %}
                 {% for p in anomalies.iter_pages() %}
                     {% if p %}
-                    <a href="{{ url_for('anomalies', page=p, sort=sort_by, show_reviewed=('1' if show_reviewed else '0')) }}"
-                       class="relative inline-flex items-center px-4 py-2 border border-gray-300 bg-white text-sm {{ 'text-indigo-600 bg-indigo-50' if p == anomalies.page else 'text-gray-700 hover:bg-gray-50' }}">{{ p }}</a>
+                    <a href="{{ url_for('insights.anomalies', page=p, sort=sort_by, show_reviewed=('1' if show_reviewed else '0')) }}"
+                       class="ds-chip anom-pager__link" {% if p == anomalies.page %}aria-current="page"{% endif %}>{{ p }}</a>
                     {% else %}
-                    <span class="relative inline-flex items-center px-4 py-2 border border-gray-300 bg-white text-sm text-gray-700">…</span>
+                    <span class="anom-pager__ellipsis">…</span>
                     {% endif %}
                 {% endfor %}
                 {% if anomalies.has_next %}
-                <a href="{{ url_for('anomalies', page=anomalies.next_num, sort=sort_by, show_reviewed=('1' if show_reviewed else '0')) }}"
-                   class="relative inline-flex items-center px-2 py-2 rounded-r-md border border-gray-300 bg-white text-sm text-gray-500 hover:bg-gray-50">&#8594;</a>
+                <a href="{{ url_for('insights.anomalies', page=anomalies.next_num, sort=sort_by, show_reviewed=('1' if show_reviewed else '0')) }}"
+                   class="ds-chip anom-pager__link">Next &#8594;</a>
                 {% endif %}
             </nav>
         </div>
         {% endif %}
-    </div>
+    </section>
 </div>
 
 <script>

@@ -1,0 +1,1024 @@
+/* ═════════════════════════════════════════════════════════════════════════
+   Ask Dough — chat surface.
+   ───────────────────────────────────────────────────────────────────────
+   Phase 9 Wave 1b lifted this out of an inline <style> block verbatim;
+   Wave 1c rebuilt it on the design system. What is left here is only what
+   is genuinely particular to a conversation surface — the layout, the
+   message rhythm, the markdown and chart rendering. Buttons, chips, tables,
+   fields, dialogs and empty states now come from design-system.css.
+
+   ── The one thing to know before editing ──
+   This file used to define --ink, --surface, --accent and --accent-ink on
+   #chat-root. Three of those are design-system token names, and two of them
+   meant something *different* here: --surface was the page background
+   rather than a panel, and --accent-ink was the text laid *on* the accent
+   (which the design system calls --accent-on, and which base.html computes
+   per theme for contrast). Any .ds-* component dropped inside #chat-root
+   inherited those redefinitions and rendered wrong — invisibly, because
+   nothing used a .ds-* component in here until Wave 1c did.
+
+   So: tokens defined here are namespaced --chat-*, and everything else
+   resolves through the design system. test_ui_invariants.py enforces it.
+
+   Loaded from inside {% block content %} rather than <head>, because SPA
+   navigation swaps <main> only — a <link> in the head would never arrive on
+   a client-side navigation to this page.
+   ═════════════════════════════════════════════════════════════════════════ */
+
+/* The chat owns the full viewport below the nav — undo <main>'s page padding */
+main.is-chat {
+  max-width: none !important;
+  padding: 0 !important;
+  overflow: hidden !important;
+}
+
+#chat-root {
+  /* ── Surfaces particular to this page ──────────────────────────────────
+     The design system's surfaces are built up from --panel, because a card
+     sits on the page. The chat *is* the page: it is full-bleed on --bg, so
+     its raised steps have to be mixed from --bg instead. That is the whole
+     reason these three exist rather than reusing --surface-raised. */
+  --chat-sidebar:  color-mix(in srgb, var(--fg) 4%,  var(--bg));
+  --chat-raised:   color-mix(in srgb, var(--fg) 6%,  var(--bg));
+  --chat-raised-2: color-mix(in srgb, var(--fg) 10%, var(--bg));
+
+  --chat-col:      44rem;   /* conversation column width */
+  --chat-nav-h:    64px;
+  --chat-tabbar-h: 0px;
+
+  position: relative;
+  display: flex;
+  height: calc(100vh - var(--chat-nav-h) - var(--chat-tabbar-h));
+  height: calc(100dvh - var(--chat-nav-h) - var(--chat-tabbar-h));
+  overflow: hidden;
+  background: var(--surface-page);
+  color: var(--ink);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+#chat-root *,
+#chat-root *::before,
+#chat-root *::after { box-sizing: border-box; }
+
+#chat-root button { font-family: inherit; }
+
+/* Focus rings: keyboard only, never on tap */
+#chat-root :focus { outline: none; }
+#chat-root :focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent) 70%, transparent);
+  outline-offset: 2px;
+  border-radius: var(--r-xs);
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   SIDEBAR
+   ═══════════════════════════════════════════════════════════════ */
+#side {
+  width: 268px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--chat-sidebar);
+  border-right: 1px solid var(--hairline);
+  overflow: hidden;
+  transition: width .24s cubic-bezier(.32,.72,0,1),
+              opacity .18s ease;
+}
+#chat-root.side-hidden #side {
+  width: 0;
+  opacity: 0;
+  border-right-color: transparent;
+  pointer-events: none;
+}
+
+.side-top {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 10px 6px;
+  flex-shrink: 0;
+}
+.side-brand {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 4px 6px;
+  font-size: .9rem;
+  font-weight: 650;
+  letter-spacing: -.01em;
+  white-space: nowrap;
+}
+/* Generic square icon button */
+.ibtn {
+  flex-shrink: 0;
+  width: 34px; height: 34px;
+  display: grid; place-items: center;
+  border: none;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--ink-body);
+  cursor: pointer;
+  transition: background .14s ease, color .14s ease;
+}
+.ibtn:hover { background: var(--chat-raised-2); color: var(--ink); }
+.ibtn:active { transform: scale(.94); }
+
+#new-chat {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 2px 10px 8px;
+  padding: 10px 12px;
+  width: calc(100% - 20px);
+  border: 1px solid var(--hairline-firm);
+  border-radius: 12px;
+  background: transparent;
+  color: var(--ink);
+  font-size: .875rem;
+  font-weight: 550;
+  text-align: left;
+  cursor: pointer;
+  transition: background .14s ease, border-color .14s ease;
+}
+#new-chat:hover { background: var(--chat-raised); border-color: var(--hairline-firm); }
+
+/* Search is a .ds-control: the shell owns the border and the focus ring, the
+   input inside is bare. Only the sidebar's flatter fill is local. */
+.side-search {
+  margin: 0 10px 6px;
+  flex-shrink: 0;
+  border-color: transparent;
+  background: var(--chat-raised);
+  border-radius: 10px;
+}
+.side-search:hover { border-color: transparent; background: var(--chat-raised-2); }
+.side-search:focus-within { background: var(--chat-raised-2); }
+#conv-search { font-size: .82rem; }
+
+#conv-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 2px 8px 14px;
+  -webkit-overflow-scrolling: touch;
+}
+
+.conv-group {
+  padding: 14px 8px 4px;
+  font-size: .68rem;
+  font-weight: 650;
+  letter-spacing: .04em;
+  color: var(--ink-body);
+}
+
+.conv {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 8px 4px 8px 10px;
+  margin-bottom: 1px;
+  border-radius: 10px;
+  cursor: pointer;
+  transition: background .12s ease;
+}
+.conv:hover { background: var(--chat-raised); }
+.conv.active { background: var(--chat-raised-2); }
+.conv-title {
+  flex: 1;
+  min-width: 0;
+  font-size: .845rem;
+  line-height: 1.35;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--ink-body);
+}
+.conv.active .conv-title { color: var(--ink); font-weight: 550; }
+
+.conv-menu-btn {
+  flex-shrink: 0;
+  width: 26px; height: 26px;
+  display: grid; place-items: center;
+  border: none; border-radius: 7px;
+  background: transparent;
+  color: var(--ink-muted);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity .12s ease, background .12s ease, color .12s ease;
+}
+.conv:hover .conv-menu-btn,
+.conv.active .conv-menu-btn,
+.conv.menu-open .conv-menu-btn { opacity: 1; }
+.conv-menu-btn:hover { background: var(--chat-raised-2); color: var(--ink); }
+
+/* Renaming happens in place, inside the row. A .ds-input at the size of the
+   title it replaces, with the accent border standing in for a focus ring the
+   row is too tight to show. */
+.conv-rename {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  padding: 3px 6px;
+  border-color: var(--accent);
+  border-radius: 7px;
+  font-size: .845rem;
+}
+
+/* The empty conversation list is .ds-empty.ds-empty--tight; only the narrower
+   column needs saying. */
+#conv-list .ds-empty { padding: 18px 10px; }
+
+/* Popover menu (conversation actions + model picker) */
+.pop {
+  position: fixed;
+  z-index: 60;
+  min-width: 176px;
+  padding: 6px;
+  border: 1px solid var(--hairline-firm);
+  border-radius: 14px;
+  background: var(--panel);
+  box-shadow: var(--e-5);
+  animation: pop-in .13s cubic-bezier(.32,.72,0,1) both;
+}
+@keyframes pop-in { from { opacity: 0; transform: translateY(-4px) scale(.97); } }
+.pop-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 9px 10px;
+  border: none;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--ink);
+  font-size: .85rem;
+  text-align: left;
+  cursor: pointer;
+}
+.pop-item:hover { background: var(--chat-raised-2); }
+.pop-item.danger { color: var(--danger-mark); }
+.pop-item svg { flex-shrink: 0; opacity: .75; }
+
+/* ═══════════════════════════════════════════════════════════════
+   MAIN COLUMN
+   ═══════════════════════════════════════════════════════════════ */
+#main-col {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+#topbar {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 9px 12px;
+  min-height: 52px;
+  background: var(--surface-page);
+  z-index: 5;
+}
+#topbar .spacer { flex: 1; }
+
+#model-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 10px 7px 12px;
+  border: none;
+  border-radius: 11px;
+  background: transparent;
+  color: var(--ink);
+  font-size: .93rem;
+  font-weight: 600;
+  letter-spacing: -.01em;
+  cursor: pointer;
+  transition: background .14s ease;
+}
+#model-btn:hover { background: var(--chat-raised); }
+#model-btn .chev { color: var(--ink-muted); transition: transform .18s ease; }
+#model-btn[aria-expanded="true"] .chev { transform: rotate(180deg); }
+
+.model-opt {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  width: 100%;
+  padding: 10px;
+  border: none;
+  border-radius: 11px;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+.model-opt:hover { background: var(--chat-raised-2); }
+.model-opt .mo-body { flex: 1; min-width: 0; }
+.model-opt .mo-name {
+  display: block;
+  font-size: .875rem;
+  font-weight: 600;
+  color: var(--ink);
+}
+.model-opt .mo-desc {
+  display: block;
+  margin-top: 2px;
+  font-size: .765rem;
+  line-height: 1.45;
+  color: var(--ink-body);
+}
+.model-opt .mo-check { flex-shrink: 0; width: 16px; margin-top: 3px; color: var(--accent); opacity: 0; }
+.model-opt.active .mo-check { opacity: 1; }
+
+/* ── Conversation body ── */
+#chat-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+}
+#chat-root.is-empty #chat-body { justify-content: center; }
+
+#thread {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
+  -webkit-overflow-scrolling: touch;
+  scroll-behavior: smooth;
+  padding: 8px 0 20px;
+}
+#chat-root.is-empty #thread {
+  flex: 0 1 auto;
+  overflow: visible;
+  padding-bottom: 4px;
+}
+#thread::-webkit-scrollbar { width: 10px; }
+#thread::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--fg) 15%, transparent);
+  border: 3px solid transparent;
+  background-clip: padding-box;
+  border-radius: 10px;
+}
+#thread::-webkit-scrollbar-thumb:hover { background: color-mix(in srgb, var(--fg) 28%, transparent); background-clip: padding-box; }
+
+.col {
+  width: 100%;
+  max-width: var(--chat-col);
+  margin: 0 auto;
+  padding: 0 24px;
+}
+
+/* ── Messages ── */
+.turn { margin: 0 auto; padding: 12px 0; }
+.turn.enter { animation: turn-in .32s cubic-bezier(.32,.72,0,1) both; }
+@keyframes turn-in { from { opacity: 0; transform: translateY(10px); } }
+
+/* User: compact bubble, right aligned, actions tucked underneath */
+.turn.user .col { display: flex; flex-direction: column; align-items: flex-end; }
+.u-bubble {
+  max-width: 85%;
+  padding: 11px 16px;
+  border-radius: 20px 20px 6px 20px;
+  background: var(--chat-raised-2);
+  color: var(--ink);
+  font-size: .975rem;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* Assistant: no bubble — the conversation is the page.
+   The one thing that does get a chrome of its own is the byline, so an answer
+   is attributed to Dough without wrapping it in a card. */
+.a-from {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-bottom: 7px;
+  font-size: .8rem;
+  font-weight: 600;
+  letter-spacing: .01em;
+  color: var(--ink-body);
+}
+
+.a-body {
+  font-size: .975rem;
+  line-height: 1.72;
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+
+/* Row of hover actions under a turn */
+.acts {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-top: 6px;
+  opacity: 0;
+  transition: opacity .16s ease;
+}
+.turn.user .acts { justify-content: flex-end; }
+.turn:hover .acts,
+.turn:focus-within .acts,
+.acts.pinned { opacity: 1; }
+
+.act {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 8px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--ink-body);
+  font-size: .76rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background .13s ease, color .13s ease;
+}
+.act:hover { background: var(--chat-raised); color: var(--ink); }
+.act.done { color: var(--ok-mark); }
+
+/* Inline edit box for a user turn — a .ds-control laid out as a block, since
+   the actions row sits under the textarea rather than beside it. */
+.edit-wrap {
+  display: block;
+  width: 100%;
+  padding: 12px 14px;
+  border-radius: 20px;
+  background: var(--chat-raised);
+}
+.edit-wrap .ds-control__input {
+  width: 100%;
+  padding: 0;
+  font-size: .975rem;
+  line-height: 1.6;
+  max-height: 40vh;
+}
+.edit-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 10px; }
+
+/* Chat's buttons are pills; the design system's are rounded rects. That is a
+   surface-level idiom, not a different component, so it is set here rather
+   than forked into a .ds-btn variant. */
+#chat-root .ds-btn { border-radius: var(--r-full); }
+
+/* ── Thinking / streaming indicators ── */
+.thinking {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--ink-body);
+  font-size: .9rem;
+}
+/* Dough does the waiting. The mascot is pulled left by the transparent
+   margin its viewBox leaves for props, so the label sits at a normal
+   text gap from him rather than a wide one. */
+.think-dough { display: inline-flex; margin: -6px 0 -6px -9px; }
+.orb {
+  width: 15px; height: 15px;
+  border-radius: 50%;
+  background: var(--accent);
+  animation: orb 1.4s ease-in-out infinite;
+}
+@keyframes orb {
+  0%, 100% { transform: scale(.72); opacity: .5; }
+  50%      { transform: scale(1);   opacity: 1; }
+}
+.thinking-label {
+  background: linear-gradient(90deg, var(--ink-muted) 25%, var(--ink) 50%, var(--ink-muted) 75%);
+  background-size: 200% 100%;
+  -webkit-background-clip: text; background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: shimmer 1.7s linear infinite;
+}
+@keyframes shimmer { to { background-position: -200% 0; } }
+
+/* Caret trailing the streamed text */
+.streaming > *:last-child::after,
+.streaming.is-blank::after {
+  content: '';
+  display: inline-block;
+  width: .5em; height: 1.05em;
+  margin-left: 2px;
+  vertical-align: text-bottom;
+  border-radius: 2px;
+  background: var(--accent);
+  animation: caret 1.05s steps(1) infinite;
+}
+@keyframes caret { 50% { opacity: 0; } }
+
+/* Error notice inside a turn. Built on .ds-card--danger, so a failure here
+   reads the same as a failure anywhere else in the product — and, more to
+   the point, it carries the status tokens rather than a red of its own. */
+.err {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px 14px;
+  font-size: .88rem;
+  line-height: 1.55;
+}
+.err svg { flex-shrink: 0; color: var(--danger-mark); margin-top: 1px; }
+/* The message itself stays at body contrast; only the mark is red. Red text
+   on a red wash is the combination that fails contrast on the dark themes. */
+.err__msg { color: var(--ink); }
+
+/* Collapse only genuinely enormous answers (height set inline, see clampIfLong) */
+.a-body.clipped {
+  overflow: hidden;
+  -webkit-mask-image: linear-gradient(180deg, var(--fg) 82%, transparent 100%);
+          mask-image: linear-gradient(180deg, var(--fg) 82%, transparent 100%);
+}
+/* .expand-btn is a .ds-btn.ds-btn--sm.ds-btn--secondary; it only needs
+   centring under the answer it uncovers. */
+.expand-btn { display: flex; margin: 6px auto 0; }
+
+/* ═══════════════════════════════════════════════════════════════
+   MARKDOWN
+   ═══════════════════════════════════════════════════════════════ */
+.a-body > *:first-child { margin-top: 0; }
+.a-body > *:last-child  { margin-bottom: 0; }
+.a-body p { margin: 0 0 1em; }
+.a-body h1, .a-body h2, .a-body h3, .a-body h4 {
+  margin: 1.5em 0 .55em;
+  font-weight: 650;
+  line-height: 1.3;
+  letter-spacing: -.012em;
+}
+.a-body h1 { font-size: 1.32rem; }
+.a-body h2 { font-size: 1.14rem; }
+.a-body h3 { font-size: 1.02rem; }
+.a-body h4 { font-size: .95rem; color: var(--ink-body); }
+.a-body ul, .a-body ol { margin: 0 0 1em; padding-left: 1.35em; }
+.a-body ul { list-style: disc; }
+.a-body ol { list-style: decimal; }
+.a-body li { margin: .3em 0; padding-left: .15em; }
+.a-body li::marker { color: var(--ink-muted); }
+.a-body li > ul, .a-body li > ol { margin: .35em 0 .1em; }
+.a-body li > p { margin: 0; }
+.a-body strong { font-weight: 650; }
+.a-body em { font-style: italic; }
+.a-body del { opacity: .6; }
+.a-body a {
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  text-decoration-thickness: 1px;
+}
+.a-body a:hover { text-decoration-thickness: 2px; }
+.a-body hr { margin: 1.6em 0; border: none; border-top: 1px solid var(--hairline-firm); }
+.a-body blockquote {
+  margin: 0 0 1em;
+  padding: 2px 0 2px 16px;
+  border-left: 3px solid color-mix(in srgb, var(--accent) 45%, transparent);
+  color: var(--ink-body);
+}
+.a-body blockquote > *:last-child { margin-bottom: 0; }
+
+/* Money reads as a value, not prose */
+.a-body .amt {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  letter-spacing: -.01em;
+}
+
+.a-body code {
+  padding: .14em .38em;
+  border-radius: 5px;
+  background: var(--chat-raised-2);
+  font-family: var(--font-mono);
+  font-size: .87em;
+}
+
+/* Code block with language chip + copy */
+.cb {
+  margin: 0 0 1.15em;
+  border: 1px solid var(--hairline-firm);
+  border-radius: 14px;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--fg) 5%, var(--bg));
+}
+.cb-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 8px 6px 14px;
+  border-bottom: 1px solid var(--hairline);
+  background: color-mix(in srgb, var(--fg) 3%, transparent);
+}
+.cb-lang {
+  font-family: var(--font-mono);
+  font-size: .7rem;
+  letter-spacing: .04em;
+  text-transform: lowercase;
+  color: var(--ink-muted);
+}
+.cb pre {
+  margin: 0;
+  padding: 14px;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+.cb code {
+  padding: 0;
+  background: none;
+  font-family: var(--font-mono);
+  font-size: .82rem;
+  line-height: 1.62;
+  white-space: pre;
+}
+.tk-com { color: var(--ink-muted); font-style: italic; }
+.tk-str { color: color-mix(in srgb, var(--ok-mark) 82%, var(--fg)); }
+.tk-num { color: color-mix(in srgb, var(--accent) 70%, var(--fg)); }
+.tk-kw  { color: var(--accent); font-weight: 600; }
+.tk-fn  { color: color-mix(in srgb, var(--fg) 72%, var(--accent)); }
+
+/* Tables in an answer are .ds-table inside .ds-table-wrap. A table is one of
+   the few things a financial assistant renders where the presentation has to
+   match the rest of the product exactly — the same numbers appear on the
+   transactions ledger, and reading them two different ways is its own kind
+   of wrong answer.
+
+   The wrap is what keeps a wide table from stretching the conversation
+   column; it scrolls in place instead. */
+.a-body .ds-table-wrap { margin: 0 0 1.15em; }
+.a-body .ds-table th, .a-body .ds-table td { white-space: nowrap; }
+.a-body .ds-table td.num, .a-body .ds-table th.num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   CHARTS
+   Marks are thin, chrome is recessive, and every figure ships a
+   data table — that table is also the contrast relief for the
+   lighter palette slots.
+   ═══════════════════════════════════════════════════════════════ */
+.figure {
+  margin: 0 0 1.15em;
+  padding: 14px 16px 12px;
+  border: 1px solid var(--hairline-firm);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--fg) 2.5%, var(--bg));
+}
+.fig-title {
+  margin: 0 0 2px;
+  font-size: .9rem;
+  font-weight: 650;
+  letter-spacing: -.01em;
+  color: var(--ink);
+}
+.fig-sub {
+  margin: 0 0 10px;
+  font-size: .78rem;
+  line-height: 1.45;
+  color: var(--ink-body);
+}
+.fig-plot {
+  position: relative;
+  width: 100%;
+  height: 240px;
+}
+.fig-foot {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+/* The figure's controls are .ds-chip. The design system already gives a chip
+   its pressed state from [aria-pressed="true"]; these two also use
+   [aria-expanded], which it does not know about. */
+.fig-toggle[aria-expanded="true"] {
+  background: var(--accent-bg);
+  border-color: color-mix(in srgb, var(--accent) 34%, var(--border));
+  color: var(--accent-ink);
+}
+.fig-toggle svg { opacity: .7; }
+/* The one control that leaves the figure sits apart from the two that don't */
+.fig-expand { margin-left: auto; }
+.fig-data { margin-top: 10px; }
+.fig-data[hidden] { display: none; }
+.fig-data table { font-size: .82rem; }
+.fig-fallback {
+  padding: 10px 0 2px;
+  font-size: .82rem;
+  color: var(--ink-body);
+}
+
+/* Expanded view — the same figure with room to breathe, because the
+   conversation column is narrower than a chart wants.
+
+   This was a fixed-position <div> with role="dialog" and a hand-rolled
+   backdrop, which meant Tab walked straight out of it into the conversation
+   behind and Esc did nothing. It is a native <dialog class="ds-dialog
+   ds-dialog--wide"> now: focus trapping, Esc, and inertness of the page
+   behind all come from the platform. */
+#fig-modal .figure {
+  margin: 0;
+  border: none;
+  border-radius: var(--r-lg);
+  padding: 20px 22px 18px;
+}
+#fig-modal .fig-title { font-size: 1rem; }
+/* Clear of the close button */
+#fig-modal .fig-title, #fig-modal .fig-sub { padding-right: 42px; }
+.fig-lg .fig-plot { height: min(62vh, 520px); }
+
+/* Placeholder while a chart is still arriving in the stream */
+.chart-pending {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin: 0 0 1.15em;
+  padding: 18px 16px;
+  border: 1px dashed var(--hairline-firm);
+  border-radius: 14px;
+  color: var(--ink-body);
+  font-size: .84rem;
+}
+.chart-pending .orb { width: 12px; height: 12px; }
+
+@media (max-width: 860px) {
+  .figure { padding: 12px 12px 10px; }
+  .fig-plot { height: 210px; }
+  #fig-modal .figure { padding: 16px 14px 12px; }
+  .fig-lg .fig-plot { height: min(58vh, 400px); }
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   EMPTY STATE
+   ═══════════════════════════════════════════════════════════════ */
+#hero { display: none; padding: 8px 0 26px; text-align: center; }
+#chat-root.is-empty #hero { display: block; }
+.hero-mark {
+  margin: 0 auto 10px;
+  display: grid; place-items: center;
+  animation: mark-in .5s cubic-bezier(.32,.72,0,1) both;
+}
+@keyframes mark-in { from { opacity: 0; transform: translateY(10px) scale(.9); } }
+.hero-title {
+  font-size: 1.7rem;
+  font-weight: 650;
+  letter-spacing: -.025em;
+  line-height: 1.25;
+  animation: turn-in .45s cubic-bezier(.32,.72,0,1) .04s both;
+}
+.hero-sub {
+  margin-top: 8px;
+  font-size: .95rem;
+  color: var(--ink-body);
+  animation: turn-in .45s cubic-bezier(.32,.72,0,1) .09s both;
+}
+
+#suggest {
+  display: none;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 14px;
+  animation: turn-in .45s cubic-bezier(.32,.72,0,1) .14s both;
+}
+#chat-root.is-empty #suggest { display: flex; }
+/* Suggestions are .ds-chip. They are the first thing a new user is asked to
+   read, so they run larger than a chip elsewhere in the product and lift on
+   hover — an invitation rather than a filter. */
+#suggest .ds-chip {
+  min-height: 38px;
+  padding: 9px 15px;
+  font-size: .845rem;
+  font-weight: var(--w-normal);
+  white-space: normal;
+}
+#suggest .ds-chip:hover {
+  border-color: color-mix(in srgb, var(--accent) 40%, var(--border));
+  transform: translateY(-1px);
+}
+#suggest .ds-chip:active { transform: translateY(0) scale(.98); }
+
+/* ═══════════════════════════════════════════════════════════════
+   COMPOSER
+   ═══════════════════════════════════════════════════════════════ */
+#dock {
+  flex-shrink: 0;
+  position: relative;
+  padding-top: 6px;
+  background: linear-gradient(180deg, transparent, var(--surface-page) 22px);
+}
+#chat-root.is-empty #dock { background: none; }
+
+/* The composer is a .ds-control: the pill owns the border and the focus ring,
+   the textarea and the send button sit inside it bare. align-items is the one
+   real departure — the send button stays pinned to the bottom edge as the
+   textarea grows, instead of drifting to the middle of a four-line question. */
+#composer {
+  align-items: flex-end;
+  gap: 8px;
+  padding: 9px 9px 9px 18px;
+  border-radius: var(--r-xl);
+  background: var(--chat-raised);
+  box-shadow: var(--e-2);
+}
+#input {
+  padding: 9px 0;
+  font-size: 1rem;
+  line-height: 1.55;
+  max-height: 42vh;
+}
+/* The design system's placeholder is --ink-ghost, which is right for a hint
+   in a filled-in form. This one is not a hint: on an empty conversation it is
+   the only instruction on screen, so it keeps body contrast. Same for the
+   sidebar search, which is the sole label for its field. */
+#input::placeholder, #conv-search::placeholder { color: var(--ink-body); }
+
+#send {
+  flex-shrink: 0;
+  width: 38px; height: 38px;
+  display: grid; place-items: center;
+  border: none;
+  border-radius: 50%;
+  background: var(--accent);
+  color: var(--accent-on);
+  cursor: pointer;
+  transition: transform .16s cubic-bezier(.32,.72,0,1), opacity .16s ease, background .16s ease;
+}
+#send:hover:not(:disabled) { filter: brightness(1.1); }
+#send:active:not(:disabled) { transform: scale(.9); }
+#send:disabled {
+  background: var(--chat-raised-2);
+  color: var(--ink-muted);
+  cursor: default;
+}
+#send.stop { background: var(--ink); color: var(--surface-page); }
+
+.dock-note {
+  padding: 8px 0 10px;
+  font-size: .715rem;
+  line-height: 1.4;
+  text-align: center;
+  color: var(--ink-body);
+}
+#chat-root.is-empty .dock-note { display: none; }
+
+/* Jump to latest */
+#jump {
+  position: absolute;
+  left: 50%;
+  top: -46px;
+  transform: translateX(-50%) scale(.85);
+  width: 34px; height: 34px;
+  display: grid; place-items: center;
+  border: 1px solid var(--hairline-firm);
+  border-radius: 50%;
+  background: var(--panel);
+  color: var(--ink-body);
+  cursor: pointer;
+  opacity: 0;
+  pointer-events: none;
+  box-shadow: var(--e-4);
+  transition: opacity .18s ease, transform .18s cubic-bezier(.32,.72,0,1);
+  z-index: 4;
+}
+#jump.show { opacity: 1; transform: translateX(-50%) scale(1); pointer-events: auto; }
+#jump:hover { color: var(--ink); background: var(--chat-raised-2); }
+
+/* Drawer scrim (phones only) */
+#scrim {
+  display: none;
+  position: absolute;
+  inset: 0;
+  z-index: 40;
+  background: var(--scrim);
+  animation: fade-in .2s ease both;
+}
+@keyframes fade-in { from { opacity: 0; } }
+
+/* ═══════════════════════════════════════════════════════════════
+   PHONE / TOUCH
+   ───────────────────────────────────────────────────────────────
+   1023.98px, and it has to be exactly the number base.html's touch block
+   uses, because the first declaration below reserves room for the bottom
+   tab bar that block is what displays. They used to disagree — this file
+   said 860px, base.html said 640px — so between 641px and 860px chat left
+   54px empty at the bottom for a bar that had already been hidden, and had
+   base.html been widened on its own, the composer would have ended up
+   underneath a bar chat did not know was there.
+
+   test_ui_invariants.py::test_the_touch_breakpoint_agrees_across_files
+   fails if they drift apart again.
+   ═══════════════════════════════════════════════════════════════ */
+@media (max-width: 1023.98px) {
+  #chat-root { --chat-col: 100%; --chat-tabbar-h: calc(54px + env(safe-area-inset-bottom)); }
+
+  /* Sidebar becomes an overlay drawer */
+  #side,
+  #chat-root.side-hidden #side {
+    position: absolute;
+    left: 0; top: 0; bottom: 0;
+    z-index: 41;
+    width: min(310px, 86vw);
+    opacity: 1;
+    background: var(--panel);
+    border-right: 1px solid var(--hairline-firm);
+    box-shadow: var(--e-5);
+    transform: translateX(-102%);
+    transition: transform .26s cubic-bezier(.32,.72,0,1);
+    pointer-events: auto;
+  }
+  #chat-root:not(.side-hidden) #side { transform: translateX(0); }
+  #chat-root:not(.side-hidden) #scrim { display: block; }
+
+  .col { padding: 0 16px; }
+  #topbar { padding: 6px 8px; min-height: 48px; }
+
+  /* Touch targets */
+  .ibtn { width: 40px; height: 40px; }
+  .conv { padding: 12px 6px 12px 12px; }
+  .conv-title { font-size: .9rem; }
+  .conv-menu-btn { opacity: 1; width: 34px; height: 34px; }
+  .act { padding: 8px 10px; font-size: .8rem; }
+  .acts { opacity: 1; }        /* no hover on touch — always visible */
+  #suggest .ds-chip { min-height: var(--tap-min); padding: 11px 16px; }
+  #new-chat { padding: 13px 14px; }
+  .side-search { min-height: var(--tap-min); }
+
+  #model-btn { padding-top: 11px; padding-bottom: 11px; }
+
+  .u-bubble { max-width: 92%; font-size: 1rem; }
+  .a-body   { font-size: 1rem; }
+
+  #composer { padding: 7px 7px 7px 16px; border-radius: 1.4rem; }
+  #send { width: 40px; height: 40px; }
+  .dock-note { padding: 7px 12px 9px; font-size: .68rem; }
+
+  /* Message actions are left-aligned on a narrow column — keep the jump
+     button out of their way rather than floating over the labels. */
+  #jump { left: auto; right: 14px; transform: scale(.85); }
+  #jump.show { transform: scale(1); }
+
+  .hero-title { font-size: 1.42rem; }
+  .hero-sub { font-size: .9rem; }
+  #suggest { flex-wrap: nowrap; overflow-x: auto; justify-content: flex-start;
+             padding: 2px 16px 4px; margin-left: -16px; margin-right: -16px;
+             scrollbar-width: none; -webkit-overflow-scrolling: touch; }
+  #suggest::-webkit-scrollbar { display: none; }
+  #suggest .ds-chip { flex-shrink: 0; white-space: nowrap; }
+
+  /* Keyboard up: the tab bar hides (base.html), composer rides the keyboard */
+  html.kb-open #chat-root {
+    --chat-tabbar-h: 0px;
+    height: calc(100vh - var(--chat-nav-h) - var(--kb, 0px));
+    height: calc(100dvh - var(--chat-nav-h) - var(--kb, 0px));
+  }
+  html.kb-open .dock-note { display: none; }
+}
+
+@media (max-width: 380px) {
+  .col { padding: 0 12px; }
+  #model-btn { font-size: .88rem; padding-left: 8px; }
+}
+
+/* base.html forces a background/color-only transition onto every <button> with
+   !important, which would otherwise strip the motion off these controls. */
+#chat-root .ibtn,
+#chat-root .act,
+#chat-root .ds-chip,
+#chat-root .ds-btn,
+#chat-root .conv-menu-btn,
+#chat-root #new-chat,
+#chat-root #model-btn,
+#chat-root #send,
+#chat-root #jump {
+  transition: background-color .15s ease, color .15s ease, border-color .15s ease,
+              opacity .16s ease, filter .16s ease,
+              transform .16s cubic-bezier(.32,.72,0,1) !important;
+}
+
+/* Respect the OS motion preference.
+   The doubled id out-specifies the rule above (and anything else here). */
+@media (prefers-reduced-motion: reduce) {
+  #chat-root#chat-root *,
+  #chat-root#chat-root *::before,
+  #chat-root#chat-root *::after {
+    animation-duration: .01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: .01ms !important;
+  }
+  #chat-root *, #chat-root *::before, #chat-root *::after {
+    animation-duration: .01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: .01ms !important;
+  }
+  #thread { scroll-behavior: auto; }
+  .orb { animation: none !important; opacity: .8; }
+  .thinking-label { -webkit-text-fill-color: currentColor; color: var(--ink-body); }
+}

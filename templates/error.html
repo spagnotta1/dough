@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{{ title }} · Dough</title>
+  {% include '_head_icons.html' %}
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/dough.css') }}">
+  {# Phase 9 Wave 4. Shared with login.html, join.html and setup.html — see
+     the header comment in auth.css. This page in particular must never
+     depend on the theme system loading, since it is what renders when
+     something has already gone wrong. #}
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/auth.css') }}">
+</head>
+<body class="auth-shell">
+  <div class="auth-notice">
+    {# Dough is here for the same reason he is on every empty state: this is a
+       moment where the app has to say something went wrong, and the tone should
+       not change just because the news is bad. Never the only signal -- the
+       heading below says it in words. #}
+    <div class="auth-notice__hero" aria-hidden="true">
+      <span data-dough="{{ expression }}" data-dough-size="104"></span>
+    </div>
+
+    <h1>{{ title }}</h1>
+    <p>{{ message }}</p>
+
+    <a class="auth-cta" href="/">Back to the dashboard</a>
+
+    {% if trace_id %}
+      {# The one piece of internal detail a user gets, and the only one worth
+         giving: it is the key that finds every log line for what just happened.
+         It says nothing about the failure by itself. #}
+      <p class="auth-notice__ref">If you report this, quote <code>{{ trace_id }}</code>.</p>
+    {% endif %}
+  </div>
+  <script src="{{ url_for('static', filename='js/dough.js') }}" defer></script>
+</body>
+</html>

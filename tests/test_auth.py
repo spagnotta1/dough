@@ -36,7 +36,7 @@ def _create_account(client, username='sal', password='hunter2boat'):
 
 def test_first_run_redirects_to_setup(auth_client):
     resp = auth_client.get('/', follow_redirects=True)
-    assert b'create the owner account' in resp.data
+    assert b"I'm Dough" in resp.data   # the first-run introduction
 
 
 def test_setup_validates_input(auth_client):

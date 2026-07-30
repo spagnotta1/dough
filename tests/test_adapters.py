@@ -24,6 +24,17 @@ def test_unknown_institution_raises():
         get_adapter_class("bank_of_narnia")
 
 
+def test_unoffered_adapter_is_hidden_but_still_resolvable():
+    """Withdrawing an institution hides the card; it must not break sync.
+
+    Existing connections are looked up by slug through get_adapter_class, so an
+    adapter that leaves the catalog has to stay in the registry or every stored
+    connection using it would start failing.
+    """
+    assert "coinbase" not in {c.institution for c in available_institutions()}
+    assert get_adapter_class("coinbase").institution == "coinbase"
+
+
 @pytest.mark.parametrize("institution", sorted(EXPECTED_INSTITUTIONS))
 def test_connect_and_full_sync(institution):
     """Every adapter must complete the full pipeline and produce valid data."""

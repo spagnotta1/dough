@@ -239,7 +239,6 @@
 .inv-tile__value--up   { color: var(--ok-ink); }
 .inv-tile__value--down { color: var(--danger-ink); }
 .inv-tile__foot { font-size: var(--f-xs); color: var(--ink-faint); margin: auto 0 0; padding-top: var(--sp-2); }
-.inv-tile__hit { position: absolute; inset: 0; border-radius: inherit; }
 
 /* ══════════════════════════════════════════════════════════════════════════
    LAYER 2 — Wealth copilot
@@ -247,16 +246,10 @@
 
 .inv-copilot { display: flex; flex-direction: column; gap: var(--sp-4); }
 .inv-copilot__head { display: flex; align-items: center; gap: var(--sp-3); }
-.inv-copilot__mark {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 32px; height: 32px;
-  border-radius: var(--r-sm);
-  background: var(--ai-bg);
-  color: var(--ai-ink);
-  flex-shrink: 0;
-}
+/* Dough's face marks the review as his, in the same disc he wears in the nav
+   and the chat thread — see .dash-copilot__mark, which is the same idea on
+   the dashboard. Shape and centring come from .dough-avatar in the markup. */
+.inv-copilot__mark { --dough-size: 36px; }
 .inv-copilot__title {
   font-size: var(--f-lg);
   font-weight: var(--w-semi);
@@ -698,7 +691,9 @@
   font-size: var(--f-xs);
   font-weight: var(--w-bold);
   letter-spacing: -.01em;
-  color: #fff;
+  /* Text colour is set by paintMarks() alongside the background: the
+     background is a palette hue chosen at runtime, so only the code that
+     picks it can know whether white or near-black ink is readable on it. */
 }
 .inv-pos__id { flex: 1; min-width: 0; }
 .inv-pos__ticker {
@@ -721,8 +716,6 @@
 }
 .inv-pos__figs { text-align: right; flex-shrink: 0; }
 .inv-pos__value { font-size: var(--f-md); font-weight: var(--w-semi); color: var(--ink-strong); margin: 0; }
-
-.inv-pos__spark { height: 30px; margin: calc(var(--sp-1) * -1) 0; }
 
 .inv-pos__meta {
   display: flex;

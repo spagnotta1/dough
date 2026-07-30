@@ -49,7 +49,7 @@ def test_page_renders_with_no_data_at_all(client):
     resp = client.get("/investments")
     assert resp.status_code == 200
     body = resp.data.decode()
-    assert "Wealth Copilot" in body
+    assert "Dough's Portfolio Review" in body
     assert "No holdings yet" in body
 
 
@@ -62,7 +62,7 @@ def test_page_renders_with_synced_holdings(client):
     assert "Refresh" in body          # sync control survived the redesign
     assert "Synced" in body           # per-holding sync marker
     assert "Portfolio health" in body
-    assert "Wealth Copilot" in body
+    assert "Dough's Portfolio Review" in body
 
 
 def test_alpine_binding_is_deferred_for_the_spa_router(client):

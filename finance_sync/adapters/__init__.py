@@ -37,8 +37,14 @@ def get_adapter_class(institution: str) -> Type["FinancialInstitutionAdapter"]:
 
 
 def available_institutions() -> List[Type["FinancialInstitutionAdapter"]]:
-    """All registered adapter classes, sorted by display name."""
-    return sorted(ADAPTER_REGISTRY.values(), key=lambda c: c.display_name)
+    """Adapter classes offered in the connect catalog, sorted by display name.
+
+    Adapters with ``offered = False`` are withheld from the picker but stay in
+    the registry, so :func:`get_adapter_class` still resolves them for existing
+    connections. Use ``ADAPTER_REGISTRY`` directly to see everything.
+    """
+    return sorted((c for c in ADAPTER_REGISTRY.values() if c.offered),
+                  key=lambda c: c.display_name)
 
 
 # Import concrete adapters so they self-register on package import.

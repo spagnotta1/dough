@@ -81,7 +81,7 @@ class PlaidAdapter(FinancialInstitutionAdapter):
     def create_link_token(self, client_user_id: str) -> str:
         """Create a Link token for the frontend to open Plaid Link with."""
         payload = {
-            "client_name": "Checkbook App",
+            "client_name": "Dough",
             "user": {"client_user_id": client_user_id},
             # Only *require* transactions — requiring a product hides every
             # institution that can't provide it (e.g. Capital One has no

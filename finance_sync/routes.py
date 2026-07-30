@@ -15,13 +15,16 @@ from flask import (
     url_for,
 )
 
+from dough.services import audit
+from dough.tenancy import find_owned
 from models import (
+    EVENT_CONNECTION_CREATED,
+    EVENT_CONNECTION_REMOVED,
     FinancialAccount,
     InstitutionConnection,
     PortfolioSnapshotRow,
     SyncErrorLog,
     SyncRun,
-    db,
 )
 
 from .adapters import get_adapter_class
@@ -37,6 +40,20 @@ _service = ConnectionService()
 # Single-user local app (see README) — Plaid still requires a stable
 # per-end-user id to scope Link sessions to.
 _PLAID_CLIENT_USER_ID = "checkbook-app-user"
+
+
+def _audit_connected(connection, how):
+    """One record for the three routes that can create a connection.
+
+    The credential is never in scope here -- `_service.connect*` encrypts it
+    into `auth_blob` and hands back the row -- and the metadata below is chosen
+    so it stays that way if a future field is added to `to_dict()`.
+    """
+    audit.record(EVENT_CONNECTION_CREATED, entity_type="connection",
+                 entity_id=connection.id,
+                 metadata={"institution": connection.institution,
+                           "display_name": connection.display_name,
+                           "how": how})
 
 
 # ---------------------------------------------------------------------------
@@ -107,6 +124,7 @@ def api_create_connection():
         return jsonify({"error": str(exc)}), 404
     except SyncError as exc:
         return jsonify({"error": str(exc)}), 400
+    _audit_connected(connection, "direct")
     scheduler = get_scheduler()
     if scheduler:
         # queue=True: never drop the initial sync, even if another is running
@@ -121,10 +139,10 @@ def oauth_callback(institution: str):
     state = request.args.get("state")
     expected_state = session.pop(f"oauth_state_{institution}", None)
     if expected_state and state and state != expected_state:
-        flash("Connection failed: OAuth state mismatch.", "error")
+        flash("That connection didn't complete safely, so I stopped it. Please try connecting again.", "error")
         return redirect(url_for("finance_sync.connections_page"))
     if not code:
-        flash("Connection cancelled.", "warning")
+        flash("No problem — I've cancelled that connection.", "warning")
         return redirect(url_for("finance_sync.connections_page"))
     try:
         redirect_uri = url_for("finance_sync.oauth_callback",
@@ -134,10 +152,11 @@ def oauth_callback(institution: str):
     except SyncError as exc:
         flash(f"Connection failed: {exc}", "error")
         return redirect(url_for("finance_sync.connections_page"))
+    _audit_connected(connection, "oauth")
     scheduler = get_scheduler()
     if scheduler:
         scheduler.run_sync(trigger="connect", connection_id=connection.id, queue=True)
-    flash(f"{connection.display_name} connected — syncing now.", "success")
+    flash(f"{connection.display_name} is connected — I'm pulling your transactions in now.", "success")
     return redirect(url_for("finance_sync.connections_page"))
 
 
@@ -167,6 +186,7 @@ def api_plaid_exchange():
         connection = _service.connect_plaid(public_token, institution_name)
     except SyncError as exc:
         return jsonify({"error": str(exc)}), 400
+    _audit_connected(connection, "plaid_link")
     scheduler = get_scheduler()
     if scheduler:
         scheduler.run_sync(trigger="connect", connection_id=connection.id, queue=True)
@@ -175,10 +195,17 @@ def api_plaid_exchange():
 
 @sync_bp.route("/api/connections/<int:connection_id>", methods=["DELETE"])
 def api_delete_connection(connection_id: int):
+    # Read before disconnect: afterwards the row is gone and "connection 3 was
+    # removed" names nothing.
+    doomed = find_owned(InstitutionConnection, connection_id)
+    was = ({"institution": doomed.institution,
+            "display_name": doomed.display_name} if doomed else {})
     try:
         _service.disconnect(connection_id)
     except SyncError as exc:
         return jsonify({"error": str(exc)}), 404
+    audit.record(EVENT_CONNECTION_REMOVED, entity_type="connection",
+                 entity_id=connection_id, metadata=was)
     return jsonify({"ok": True})
 
 
@@ -189,7 +216,7 @@ def api_delete_connection(connection_id: int):
 @sync_bp.route("/api/connections/<int:connection_id>/sync", methods=["POST"])
 def api_sync_connection(connection_id: int):
     """Refresh a single institution (background, non-blocking)."""
-    if db.session.get(InstitutionConnection, connection_id) is None:
+    if find_owned(InstitutionConnection, connection_id) is None:
         return jsonify({"error": "Connection not found"}), 404
     scheduler = get_scheduler()
     if scheduler is None:

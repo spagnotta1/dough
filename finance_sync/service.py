@@ -10,6 +10,8 @@ from __future__ import annotations
 from datetime import datetime
 from typing import List, Optional
 
+from dough.contrast import on_color
+from dough.tenancy import find_owned
 from models import InstitutionConnection, db
 
 from .adapters import available_institutions, get_adapter_class
@@ -38,6 +40,11 @@ class ConnectionService:
                 "supports_transactions": cls.supports_transactions,
                 "supports_holdings": cls.supports_holdings,
                 "accent_color": cls.accent_color,
+                # Derived here, not in CSS or JS: the brand colour is data, so
+                # no theme token can know what it will be laid over, and a
+                # script that derives it leaves the label unreadable until it
+                # runs. Plaid's #000000 made that visible — black on black.
+                "ink_color": on_color(cls.accent_color),
                 "connected": cls.institution in connected,
             })
         return catalog
@@ -123,7 +130,7 @@ class ConnectionService:
         the connection; imported transactions are kept (they are the user's
         historical record, same as CSV imports).
         """
-        connection = db.session.get(InstitutionConnection, connection_id)
+        connection = find_owned(InstitutionConnection, connection_id)
         if connection is None:
             raise ConfigurationError(f"Connection {connection_id} not found")
         adapter_cls = get_adapter_class(connection.institution)

@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Join {{ household.name if household else 'a household' }} · Dough</title>
+  {% include '_head_icons.html' %}
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/dough.css') }}">
+  {#
+    Standalone, like setup.html and login.html, rather than extending base.html.
+    The visitor is anonymous and has no household bound, so the shared chrome —
+    every nav link, the profile menu, the theme picker — is either broken or
+    meaningless here. A page reached by strangers should also load nothing it
+    does not need.
+
+    Phase 9 Wave 3. Shared with login.html and setup.html — see the header
+    comment in auth.css for why these three pages lock their own light-theme
+    tokens instead of reading base.html's runtime ones.
+  #}
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/auth.css') }}">
+</head>
+<body class="auth-shell">
+  {# The message-only branches (no form) use .auth-solo rather than
+     .auth-split: the latter is a two-column grid built for an intro beside a
+     card, and reserving that empty second column with only one child on
+     screen pushed the message off-centre at desktop widths — a real,
+     visible bug in the version of this page these three templates
+     consolidate. #}
+  <div class="{{ 'auth-split' if not invalid and not already_signed_in else 'auth-solo' }}">
+
+    {% if invalid %}
+    {# One message for unknown, expired, revoked and already-used alike. The
+       route does not distinguish them either; telling somebody which one it
+       was confirms that a token they guessed was once real. #}
+    <div class="auth-intro">
+      <span data-dough="concerned" data-dough-size="130"></span>
+      <h2>That link doesn't work.</h2>
+      <p>
+        Invitation links are single-use and expire on their own, so this one has
+        probably already been used or has run out of time.
+      </p>
+      <p>Ask whoever sent it to create a new one.</p>
+    </div>
+
+    {% elif already_signed_in %}
+    <div class="auth-intro">
+      <span data-dough="thinking" data-dough-size="130"></span>
+      <h2>You're already in a household.</h2>
+      <p>
+        Each Dough login belongs to exactly one household, so this invitation
+        can't be accepted from an account that already has one.
+      </p>
+      <p>
+        If you meant to join this one instead, sign out first and use the link
+        again — but note that whatever is in your current household stays there
+        and you would no longer be able to reach it.
+      </p>
+      <p><a href="/">Back to your household</a></p>
+    </div>
+
+    {% else %}
+    <div class="auth-intro">
+      <span data-dough="greeting" data-dough-size="130"></span>
+      <h2>You've been invited.</h2>
+      <p>
+        <strong>{{ household.name }}</strong> wants you in on their money.
+        You'll see the same accounts, transactions, balances and budgets they
+        do{% if invite.role == 'owner' %}, and as an owner you'll also be able to
+        invite and remove people{% endif %}.
+      </p>
+      <p>Pick a username and a password and you're in.</p>
+    </div>
+
+    <form class="auth-card" method="post">
+      {{ csrf_field() }}
+      <h1>Join {{ household.name }}</h1>
+      <p>This becomes your own login — the people who invited you never see your password.</p>
+      {% if error %}<p class="auth-error" role="alert">{{ error }}</p>{% endif %}
+      <div class="auth-field">
+        <label class="auth-sr" for="joinUsername">Username</label>
+        <input class="auth-input" type="text" name="username" id="joinUsername" placeholder="Choose a username" autofocus
+               autocomplete="username" autocapitalize="none" spellcheck="false"
+               value="{{ request.form.get('username', '') }}" {% if error %}aria-invalid="true"{% endif %}>
+      </div>
+      <div class="auth-field">
+        <label class="auth-sr" for="joinPassword">Password</label>
+        <input class="auth-input" type="password" name="password" id="joinPassword" placeholder="Create a password"
+               autocomplete="new-password" aria-describedby="joinPasswordHint"
+               {% if error %}aria-invalid="true"{% endif %}>
+      </div>
+      <p class="auth-hint" id="joinPasswordHint">At least 8 characters. A passphrase of a few random words works well.</p>
+      <div class="auth-field">
+        <label class="auth-sr" for="joinConfirm">Confirm password</label>
+        <input class="auth-input" type="password" name="confirm" id="joinConfirm" placeholder="Confirm password"
+               autocomplete="new-password" {% if error %}aria-invalid="true"{% endif %}>
+      </div>
+      <button type="submit" class="auth-btn">Join {{ household.name }}</button>
+    </form>
+    {% endif %}
+
+  </div>
+  <script defer src="{{ url_for('static', filename='js/dough.js') }}"></script>
+</body>
+</html>

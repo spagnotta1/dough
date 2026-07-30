@@ -1,0 +1,76 @@
+/* ══════════════════════════════════════════════════════════════════════════
+   Budgets — cards, not rows.
+   ──────────────────────────────────────────────────────────────────────────
+   Extracted from an inline <style> block during the Phase 9 ledger audit
+   (dashboard.html, investments.html, household.html and this page were
+   already built on the design system by earlier work, just never added to
+   test_ui_invariants.py's MIGRATED list). Everything here already resolved
+   through design-system.css tokens; only the block itself needed to move
+   into its own stylesheet, per the "no inline <style>" rule every other
+   migrated page holds to.
+
+   Shares static/css/dashboard.css for the .dash-budget-grid / .dash-budget /
+   .dash-input classes this page's cards and fields reuse from the dashboard.
+   ══════════════════════════════════════════════════════════════════════════ */
+
+.bud { display: flex; flex-direction: column; gap: var(--sp-8); padding-bottom: var(--sp-12); }
+.bud-title {
+  font-size: var(--f-display);
+  font-weight: var(--w-semi);
+  letter-spacing: -.026em;
+  color: var(--ink-strong);
+  margin: 0;
+}
+.bud-head { align-items: flex-end; }
+.bud-summary { min-width: 240px; display: flex; flex-direction: column; gap: var(--sp-2); }
+.bud-summary__figures { display: flex; align-items: baseline; gap: var(--sp-2); }
+.bud-summary__spent { font-size: var(--f-xl); font-weight: var(--w-bold); color: var(--ink-strong); }
+.bud-summary__of { font-size: var(--f-xs); color: var(--ink-faint); }
+
+.bud-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-top: auto;
+  padding-top: var(--sp-3);
+  border-top: 1px solid var(--hairline);
+}
+.bud-actions__spacer { flex: 1; }
+.bud-actions .ds-btn--sm { padding: 0 var(--sp-2); }
+.bud-inline { display: flex; }
+
+.bud-edit[hidden] { display: none; }
+.bud-edit__form { display: flex; flex-direction: column; gap: var(--sp-3); }
+.bud-edit__actions { display: flex; gap: var(--sp-2); }
+
+.bud-field { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+.bud-field .dash-input { min-height: 40px; width: 100%; }
+
+.bud-add__hint { max-width: 62ch; margin: var(--sp-2) 0 var(--sp-5); }
+/* Explicit tracks rather than auto-fit: with a trailing `auto` for the
+   button, auto-fit resolved to a single column and stacked the whole form. */
+.bud-add__form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr) auto;
+  gap: var(--sp-4);
+  align-items: end;
+  max-width: 900px;
+}
+.bud-add__form .ds-btn { min-height: 40px; }
+.bud-empty { padding: var(--sp-6) 0; }
+
+/* Dough beside his line, rather than above it: at this size the bubble reads
+   as him talking to you, which is the whole point of the component. */
+.bud-coach { display: flex; align-items: flex-start; gap: var(--sp-3); }
+.bud-coach .dough-bubble { flex: 1; min-width: 0; }
+
+@media (max-width: 860px) {
+  .bud-add__form { grid-template-columns: 1fr 1fr; }
+  .bud-add__form .ds-btn { grid-column: 1 / -1; }
+}
+@media (max-width: 640px) {
+  .bud-add__form { grid-template-columns: 1fr; }
+  .bud-add__form .ds-btn { width: 100%; }
+  .bud-head { align-items: flex-start; }
+  .bud-summary { width: 100%; }
+}

@@ -8,11 +8,16 @@
 # Databases
 *.db
 *.db.pre-sync-backup
+backups/
 
 # Python
 __pycache__/
 *.pyc
 .pytest_cache/
+
+# Playwright writes screenshots, videos and traces here when a browser test
+# fails. Useful locally, never worth committing.
+test-results/
 
 # Node
 node_modules/

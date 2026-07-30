@@ -1,0 +1,15 @@
+# Browser regression suite (tests/browser/). Separate from requirements.txt on
+# purpose: `playwright install chromium` pulls down ~130MB of browser, and
+# nothing outside tests/browser/ needs any of it. tests/browser/conftest.py
+# skips the whole directory when this is not installed, so the other ~640 tests
+# run exactly as before on a machine that has never heard of Playwright.
+#
+#   pip install -r requirements-browser.txt
+#   python -m playwright install chromium
+#
+# Same rule as requirements.txt: pinned to what the suite is verified green
+# against, and an upgrade is a deliberate change with its own test run.
+
+-r requirements.txt
+
+pytest-playwright==0.8.0

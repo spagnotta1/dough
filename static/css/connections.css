@@ -1,0 +1,112 @@
+/* ══════════════════════════════════════════════════════════════════════════
+   Connections — institution status, synced accounts, and the connect grid.
+   ──────────────────────────────────────────────────────────────────────────
+   Phase 9 Wave 2. Everything visual resolves through design-system.css
+   tokens; what is left here is this page's own composition: the status dot
+   on a connection row, the account-type badge mapping, and the "add an
+   institution" tile grid.
+
+   Tokens defined here are namespaced --conn-*. Loaded from inside
+   {% block content %} rather than <head> — SPA navigation swaps <main> only.
+   ══════════════════════════════════════════════════════════════════════════ */
+
+/* ── Status dot ────────────────────────────────────────────────────────── */
+
+.conn-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: var(--r-full);
+  display: inline-block;
+  flex-shrink: 0;
+}
+.conn-dot--ok     { background: var(--ok-mark); }
+.conn-dot--warn   { background: var(--warn-mark); }
+.conn-dot--danger { background: var(--danger-mark); }
+
+.conn-syncing {
+  color: var(--accent-ink);
+  font-size: var(--f-sm);
+}
+
+/* ── Connected institutions list ──────────────────────────────────────── */
+
+.conn-list > * + * { border-top: 1px solid var(--hairline); }
+
+.conn-row {
+  padding: var(--sp-4) 0;
+}
+.conn-row__info { min-width: 0; }
+.conn-row__name {
+  font-size: var(--f-sm);
+  font-weight: var(--w-semi);
+  color: var(--ink-strong);
+  margin: 0;
+}
+.conn-row__meta {
+  font-size: var(--f-xs);
+  color: var(--ink-faint);
+  margin: 2px 0 0;
+}
+.conn-row__error { color: var(--danger-ink); }
+
+/* ── Synced accounts table ────────────────────────────────────────────── */
+
+.conn-mask { color: var(--ink-faint); }
+.conn-capitalize { text-transform: capitalize; }
+
+/* ── Add-an-institution grid ──────────────────────────────────────────── */
+
+.conn-institutions {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: var(--sp-4);
+}
+
+.conn-inst__head {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+}
+
+/* The tile's accent square carries the institution's own brand colour, set
+   inline from server data (inst.accent_color) — a per-institution colour is
+   inherently data-driven, not a literal this stylesheet could tokenise. Its
+   ink is inline too (inst.ink_color, derived from that same background by
+   dough/contrast.py), so this rule deliberately sets no `color`. */
+.conn-inst__icon {
+  width: 32px;
+  height: 32px;
+  border-radius: var(--r-sm);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: var(--f-sm);
+  font-weight: var(--w-bold);
+  flex-shrink: 0;
+}
+.conn-inst__name {
+  font-size: var(--f-sm);
+  font-weight: var(--w-semi);
+  color: var(--ink-strong);
+  margin: 0;
+}
+.conn-inst__mode {
+  font-size: var(--f-xs);
+  color: var(--ink-faint);
+  margin: 2px 0 0;
+}
+.conn-inst__desc {
+  font-size: var(--f-xs);
+  color: var(--ink-muted);
+  flex: 1;
+  margin: 0;
+}
+
+/* Ink comes from the server with the background (see .conn-inst__icon): both
+   are inline, derived together from the brand colour, so no rule here may set
+   `color` — --accent-on is the theme's ink and painted black on Plaid. */
+.conn-inst__connect {
+  transition: opacity var(--dur-1) var(--ease-out);
+}
+.conn-inst__connect:hover { opacity: .9; }
+.conn-inst__connect:disabled { opacity: .5; }

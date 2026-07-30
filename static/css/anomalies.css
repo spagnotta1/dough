@@ -1,0 +1,93 @@
+/* ══════════════════════════════════════════════════════════════════════════
+   Anomalies — statistically unusual transactions, with sort and pagination.
+   ──────────────────────────────────────────────────────────────────────────
+   Phase 9 Wave 2. Everything visual resolves through design-system.css
+   tokens; what is left here is this page's own composition: the search box
+   width, the reviewed-row treatment, and the pager.
+
+   Tokens defined here are namespaced --anom-*.
+   ══════════════════════════════════════════════════════════════════════════ */
+
+.anom-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-4);
+}
+.anom-pager-wrap { margin-top: var(--sp-4); padding-top: var(--sp-4); border-top: 1px solid var(--hairline); }
+.anom-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  flex-wrap: wrap;
+}
+.anom-search { width: 9rem; }
+
+.anom-row--reviewed { opacity: .5; }
+.anom-reviewed-label {
+  color: var(--ink-faint);
+  font-style: italic;
+  font-size: var(--f-xs);
+}
+
+.anom-amt--pos { color: var(--ok-ink); }
+.anom-amt--neg { color: var(--danger-ink); }
+
+.anom-dismiss-btn:hover {
+  color: var(--ok-ink);
+  border-color: color-mix(in srgb, var(--ok-mark) 45%, var(--border));
+  background: var(--ok-bg);
+}
+
+/* ── Pagination ────────────────────────────────────────────────────────── */
+
+.anom-pager {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-3);
+}
+.anom-pager__pages {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-1);
+  flex-wrap: wrap;
+}
+.anom-pager__link[aria-current="page"] {
+  background: var(--accent-bg);
+  border-color: var(--accent);
+  color: var(--accent-ink);
+  font-weight: var(--w-semi);
+}
+.anom-pager__ellipsis { color: var(--ink-ghost); padding: 0 var(--sp-1); }
+
+/* ── Touch / narrow ────────────────────────────────────────────────────── */
+
+@media (max-width: 640px) {
+  #anomTable, #anomTable tbody { display: block; min-width: 0; }
+  #anomTable thead { display: none; }
+  #anomTable tbody tr {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    column-gap: var(--sp-3);
+    row-gap: 2px;
+    padding: var(--sp-3) var(--sp-4);
+    border-bottom: 1px solid var(--hairline);
+  }
+  #anomTable td { display: block; padding: 0; border: none; white-space: normal; }
+  #anomTable td[colspan] { grid-column: 1 / -1; padding: var(--sp-6) 0; }
+  #anomTable td:nth-child(1) { display: none; }                                   /* id */
+  #anomTable td:nth-child(3) {
+    grid-column: 1; grid-row: 1; font-weight: var(--w-semi);
+    max-width: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  #anomTable td:nth-child(4) { grid-column: 2; grid-row: 1; text-align: right; font-size: var(--f-md); }
+  #anomTable td:nth-child(2) { grid-column: 1; grid-row: 2; font-size: var(--f-xs); opacity: .6; }
+  #anomTable td:nth-child(5) { grid-column: 2; grid-row: 2; text-align: right; font-size: var(--f-xs); opacity: .6; }
+  #anomTable td:nth-child(6) { grid-column: 1 / -1; grid-row: 3; margin-top: var(--sp-2); text-align: right; }
+
+  .anom-pager { flex-wrap: wrap; gap: var(--sp-3); }
+  .anom-pager__pages { overflow-x: auto; max-width: 100%; }
+}

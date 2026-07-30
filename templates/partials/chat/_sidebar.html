@@ -1,0 +1,29 @@
+{# Ask Dough — conversation sidebar. Split out of chat.html in Phase 9
+   Wave 1b and migrated to the design system in Wave 1c. Ids here are
+   contracts: static/js/chat.js looks every one of them up by name. #}
+  <!-- ══════════ Sidebar ══════════ -->
+  <aside id="side" aria-label="Conversations">
+    <div class="side-top">
+      <div class="side-brand">
+        <span class="dough-avatar dough-avatar-xs" aria-hidden="true">
+          <span data-dough="happy" data-dough-size="28" data-dough-tight></span>
+        </span>
+        <span>Ask Dough</span>
+      </div>
+      <button class="ibtn" id="side-close" type="button" title="Hide sidebar" aria-label="Hide sidebar">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2.5"/><path d="M9.5 4v16"/></svg>
+      </button>
+    </div>
+
+    <button id="new-chat" type="button">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
+      New chat
+    </button>
+
+    <div class="ds-control side-search">
+      <svg class="ds-control__icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+      <input class="ds-control__input" id="conv-search" type="search" placeholder="Search chats" autocomplete="off" aria-label="Search conversations">
+    </div>
+
+    <div id="conv-list" class="ds-scroll" role="list"></div>
+  </aside>

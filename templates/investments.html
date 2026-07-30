@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}Investments – Checkbook App{% endblock %}
+{% block title %}Investments · Dough{% endblock %}
 
 {#
   ════════════════════════════════════════════════════════════════════════════
@@ -334,23 +334,33 @@
   </section>
 
   {# ══════════════════════════════════════════════════════════════════════
-     LAYER 2 — Wealth copilot
-     The numbers above are already on screen; this is where they get
-     explained and acted on. Unlike the dashboard copilot this one keeps its
-     turns, because "should I rebalance?" is rarely the last question.
+     LAYER 2 — Dough's Portfolio Review
+     The numbers above are already on screen; this is where Dough explains
+     them and says what to do about it. Unlike his dashboard insight this one
+     keeps its turns, because "should I rebalance?" is rarely the last
+     question.
      ══════════════════════════════════════════════════════════════════════ #}
   <section class="ds-card ds-card--hero ds-card--wash-ai inv-copilot ds-rise"
            style="--ds-delay:330ms" aria-labelledby="copilot-h" id="invCopilot">
     <div class="inv-copilot__head">
-      <span class="inv-copilot__mark" aria-hidden="true">{{ icon('sparkle', 18) }}</span>
-      <h2 class="inv-copilot__title" id="copilot-h">Wealth Copilot</h2>
-      <a href="/chat" class="ds-btn ds-btn--ghost ds-btn--sm">Open full chat →</a>
+      <span class="inv-copilot__mark dough-avatar" aria-hidden="true">
+        <span data-dough="reviewing" data-dough-size="36" data-dough-tight></span>
+      </span>
+      <h2 class="inv-copilot__title" id="copilot-h">Dough's Portfolio Review</h2>
+      <a href="/chat" class="ds-btn ds-btn--ghost ds-btn--sm">Ask Dough →</a>
     </div>
 
     {# The deterministic read is already on screen above; this is only the
        part that needs judgement, and it arrives a moment later. #}
     <div class="inv-copilot__ai" id="invNarrative" aria-live="polite">
       <div class="inv-copilot__loading" id="invNarrativeLoading">
+        {# Dough visibly reads the portfolio while the model works. The label
+           beside him is what conveys the state to a screen reader or under
+           reduced motion — the mascot is never the only signal. #}
+        <div class="dough-working">
+          <span data-dough="reviewing" data-dough-size="42"></span>
+          <span class="dough-working__label">Dough is reading your portfolio…</span>
+        </div>
         <span class="ds-skeleton ds-skeleton--text" style="width:94%"></span>
         <span class="ds-skeleton ds-skeleton--text" style="width:71%"></span>
       </div>
@@ -361,13 +371,13 @@
     <div class="inv-thread" id="invThread" hidden></div>
     <div class="inv-thread__foot" id="invThreadFoot" hidden>
       <button type="button" class="ds-btn ds-btn--ghost ds-btn--sm" id="invThreadClear">Clear conversation</button>
-      <a href="/chat" class="ds-btn ds-btn--ghost ds-btn--sm">Continue in full chat →</a>
+      <a href="/chat" class="ds-btn ds-btn--ghost ds-btn--sm">Keep talking to Dough →</a>
     </div>
 
     <form class="inv-ask" id="invAskForm">
-      <label class="ds-sr" for="invAskInput">Ask about your portfolio</label>
-      <input type="text" id="invAskInput" class="inv-ask__input" autocomplete="off"
-             placeholder="Ask anything about your portfolio…">
+      <label class="ds-sr" for="invAskInput">Ask Dough about your portfolio</label>
+      <input type="text" id="invAskInput" class="inv-ask__input ds-control__input" autocomplete="off"
+             placeholder="Ask Dough anything about your portfolio…">
       <button type="submit" class="ds-btn ds-btn--primary ds-btn--sm inv-ask__send" aria-label="Send question">
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 19V5"/><path d="m5 12 7-7 7 7"/></svg>
       </button>
@@ -399,7 +409,7 @@
     <div class="ds-section__head">
       <div>
         <h2 class="ds-section__title" id="story-h">What changed</h2>
-        <p class="ds-section__sub">The portfolio in a few sentences, before any table</p>
+        <p class="ds-section__sub">Your portfolio in a few sentences from Dough, before any table</p>
       </div>
     </div>
     <div class="inv-story">
@@ -426,13 +436,13 @@
     <div class="ds-section__head">
       <div>
         <h2 class="ds-section__title" id="insights-h">
-          {% if actionable %}Worth your attention{% else %}Nothing needs attention{% endif %}
+          {% if actionable %}What I'd keep an eye on{% else %}Nothing needs your attention{% endif %}
         </h2>
         <p class="ds-section__sub">
           {% if actionable %}
-            {{ actionable|length }} observation{{ 's' if actionable|length != 1 }} — most consequential first
+            {{ actionable|length }} thing{{ 's' if actionable|length != 1 }} Dough noticed — most consequential first
           {% else %}
-            No concentration, allocation, or cash issues stand out right now
+            Dough found no concentration, allocation, or cash issues worth raising
           {% endif %}
         </p>
       </div>
@@ -663,7 +673,7 @@
         <div class="inv-panel__body" id="inv-panel-benchmark" hidden>
           <form method="GET" class="ds-row ds-row--wrap" style="margin-bottom: var(--sp-4)">
             <label class="inv-control__label" for="benchmark">Reference</label>
-            <select name="benchmark" id="benchmark" class="inv-input" onchange="this.form.submit()">
+            <select name="benchmark" id="benchmark" class="inv-input ds-select" onchange="this.form.submit()">
               {% for key, spec in benchmarks.items() %}
               <option value="{{ key }}" {% if key == benchmark_key %}selected{% endif %}>
                 {{ spec.label }} ({{ spec.annual_pct }}%/yr)
@@ -745,7 +755,7 @@
             <input type="hidden" name="benchmark" value="{{ benchmark_key }}">
             <div class="inv-control">
               <label class="inv-control__label" for="horizon">Horizon</label>
-              <select name="horizon" id="horizon" class="inv-input">
+              <select name="horizon" id="horizon" class="inv-input ds-select">
                 {% for y in [5, 10, 15, 20, 25, 30] %}
                 <option value="{{ y }}" {% if y == horizon %}selected{% endif %}>{{ y }} years</option>
                 {% endfor %}
@@ -754,7 +764,7 @@
             <div class="inv-control">
               <label class="inv-control__label" for="contribution">Monthly contribution</label>
               <input type="number" min="0" step="50" name="contribution" id="contribution"
-                     class="inv-input" value="{{ contribution|int }}" style="width:130px">
+                     class="inv-input ds-input" value="{{ contribution|int }}" style="width:130px">
             </div>
             <button type="submit" class="ds-btn ds-btn--secondary ds-btn--sm">Update</button>
           </form>
@@ -813,11 +823,11 @@
           <div class="inv-form">
             <div class="inv-field">
               <label class="inv-field__label" for="cashChecking">Checking</label>
-              <input type="number" step="0.01" id="cashChecking" class="inv-input" x-model.number="checking">
+              <input type="number" step="0.01" id="cashChecking" class="inv-input ds-input" x-model.number="checking">
             </div>
             <div class="inv-field">
               <label class="inv-field__label" for="cashSavings">Savings</label>
-              <input type="number" step="0.01" id="cashSavings" class="inv-input" x-model.number="savings">
+              <input type="number" step="0.01" id="cashSavings" class="inv-input ds-input" x-model.number="savings">
             </div>
             <div class="inv-field">
               <span class="inv-field__label">Total cash</span>
@@ -924,7 +934,7 @@
 
     <div class="inv-holdings__bar">
       <label class="ds-sr" for="invSearch">Filter holdings</label>
-      <input type="search" id="invSearch" class="inv-search" placeholder="Filter by ticker, name or sector…">
+      <input type="search" id="invSearch" class="inv-search ds-input" placeholder="Filter by ticker, name or sector…">
       <div class="ds-row" role="group" aria-label="Holdings view">
         <button type="button" class="ds-chip" data-view="cards" aria-pressed="true">Cards</button>
         <button type="button" class="ds-chip" data-view="table" aria-pressed="false">Table</button>
@@ -973,7 +983,7 @@
 
     {# Table — the same data for people who want density. #}
     <div class="ds-card ds-card--flush inv-table-wrap ds-scroll" id="invTableWrap" hidden>
-      <table class="inv-table" id="holdingsTable">
+      <table class="inv-table ds-table" id="holdingsTable">
         <thead>
           <tr>
             <th><button type="button" class="inv-sort" data-sort="ticker">Ticker</button></th>
@@ -1055,29 +1065,29 @@
     <div class="inv-form">
       <div class="inv-field">
         <label class="inv-field__label" for="newTicker">Ticker</label>
-        <input id="newTicker" x-model="newHolding.ticker" type="text" placeholder="AAPL" class="inv-input" style="text-transform:uppercase">
+        <input id="newTicker" x-model="newHolding.ticker" type="text" placeholder="AAPL" class="inv-input ds-input" style="text-transform:uppercase">
       </div>
       <div class="inv-field inv-field--wide">
         <label class="inv-field__label" for="newName">Name</label>
-        <input id="newName" x-model="newHolding.name" type="text" placeholder="Apple Inc." class="inv-input">
+        <input id="newName" x-model="newHolding.name" type="text" placeholder="Apple Inc." class="inv-input ds-input">
       </div>
       <div class="inv-field">
         <label class="inv-field__label" for="newShares">Shares</label>
-        <input id="newShares" x-model.number="newHolding.shares" type="number" step="0.000001" placeholder="10" class="inv-input">
+        <input id="newShares" x-model.number="newHolding.shares" type="number" step="0.000001" placeholder="10" class="inv-input ds-input">
       </div>
       <div class="inv-field">
         <label class="inv-field__label" for="newValue">Current value</label>
-        <input id="newValue" x-model.number="newHolding.current_value" type="number" step="0.01" placeholder="1500.00" class="inv-input">
+        <input id="newValue" x-model.number="newHolding.current_value" type="number" step="0.01" placeholder="1500.00" class="inv-input ds-input">
       </div>
       <div class="inv-field">
         <label class="inv-field__label" for="newClass">Asset class</label>
-        <select id="newClass" x-model="newHolding.asset_class" class="inv-input">
+        <select id="newClass" x-model="newHolding.asset_class" class="inv-input ds-select">
           {% for ac in asset_classes %}<option value="{{ ac }}">{{ ac }}</option>{% endfor %}
         </select>
       </div>
       <div class="inv-field inv-field--wide">
         <label class="inv-field__label" for="newAccount">Broker / exchange</label>
-        <input id="newAccount" x-model="newHolding.account_name" type="text" placeholder="Fidelity" class="inv-input">
+        <input id="newAccount" x-model="newHolding.account_name" type="text" placeholder="Fidelity" class="inv-input ds-input">
       </div>
     </div>
     <div class="inv-form__actions">
@@ -1103,29 +1113,29 @@
         <div class="inv-form">
           <div class="inv-field">
             <label class="inv-field__label" for="editTicker">Ticker</label>
-            <input id="editTicker" x-model="editData.ticker" type="text" class="inv-input">
+            <input id="editTicker" x-model="editData.ticker" type="text" class="inv-input ds-input">
           </div>
           <div class="inv-field">
             <label class="inv-field__label" for="editClass">Asset class</label>
-            <select id="editClass" x-model="editData.asset_class" class="inv-input">
+            <select id="editClass" x-model="editData.asset_class" class="inv-input ds-select">
               {% for ac in asset_classes %}<option value="{{ ac }}">{{ ac }}</option>{% endfor %}
             </select>
           </div>
           <div class="inv-field inv-field--wide">
             <label class="inv-field__label" for="editName">Name</label>
-            <input id="editName" x-model="editData.name" type="text" class="inv-input">
+            <input id="editName" x-model="editData.name" type="text" class="inv-input ds-input">
           </div>
           <div class="inv-field">
             <label class="inv-field__label" for="editShares">Shares</label>
-            <input id="editShares" x-model.number="editData.shares" type="number" step="0.000001" class="inv-input">
+            <input id="editShares" x-model.number="editData.shares" type="number" step="0.000001" class="inv-input ds-input">
           </div>
           <div class="inv-field">
             <label class="inv-field__label" for="editValue">Current value</label>
-            <input id="editValue" x-model.number="editData.current_value" type="number" step="0.01" class="inv-input">
+            <input id="editValue" x-model.number="editData.current_value" type="number" step="0.01" class="inv-input ds-input">
           </div>
           <div class="inv-field inv-field--wide">
             <label class="inv-field__label" for="editAccount">Broker / exchange</label>
-            <input id="editAccount" x-model="editData.account_name" type="text" class="inv-input">
+            <input id="editAccount" x-model="editData.account_name" type="text" class="inv-input ds-input">
           </div>
         </div>
         <div class="inv-form__actions">

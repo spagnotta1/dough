@@ -1024,7 +1024,8 @@
       })
       .catch(function (err) {
         if (err.name === 'AbortError') return;
-        aEl.textContent = err.message || 'Something went wrong. Try again.';
+        aEl.textContent = err.message ||
+          "I couldn't get to that just now. Give it another go in a moment.";
         finish();
       });
 

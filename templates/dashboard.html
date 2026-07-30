@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 
-{% block title %}Dashboard – Checkbook App{% endblock %}
+{% block title %}Dashboard · Dough{% endblock %}
 
 {#
   ════════════════════════════════════════════════════════════════════════════
@@ -111,7 +111,12 @@
       </h1>
       {% if greeting.tag %}
       <p class="dash-header__tag">
-        <span class="dash-header__tag-icon">{{ icon(greeting.tag.icon, 14) }}</span>
+        {# This line is an observation, not a label — it is Dough noticing
+           something as you walk in. His face says who is speaking; the
+           tag's own icon would only say "AI". #}
+        <span class="dash-header__tag-icon dough-avatar">
+          <span data-dough="watching" data-dough-size="28" data-dough-tight></span>
+        </span>
         {{ greeting.tag.text }}
       </p>
       {% endif %}
@@ -151,11 +156,11 @@
         <span class="dash-filter__legend" id="datesLegend">Dates</span>
         <div class="dash-filter__group dash-filter__group--fields" role="group" aria-labelledby="datesLegend">
           <label class="dash-filter__label" for="start_date">From</label>
-          <input type="date" name="start_date" id="start_date" value="{{ start_date }}" class="dash-input">
+          <input type="date" name="start_date" id="start_date" value="{{ start_date }}" class="dash-input ds-input">
           <label class="dash-filter__label" for="end_date">To</label>
-          <input type="date" name="end_date" id="end_date" value="{{ end_date }}" class="dash-input">
+          <input type="date" name="end_date" id="end_date" value="{{ end_date }}" class="dash-input ds-input">
           <label class="dash-filter__label" for="account">Account</label>
-          <select name="account" id="account" class="dash-input">
+          <select name="account" id="account" class="dash-input ds-select">
             <option value="both" {% if account_filter=='both' %}selected{% endif %}>Both accounts</option>
             <option value="Checking" {% if account_filter=='Checking' %}selected{% endif %}>Checking</option>
             <option value="Savings" {% if account_filter=='Savings' %}selected{% endif %}>Savings</option>
@@ -185,7 +190,7 @@
           Apply
           <span class="dash-filter__dirty" id="filterDirty" hidden aria-hidden="true"></span>
         </button>
-        <a href="{{ url_for('clear_filters', next=url_for('dashboard')) }}"
+        <a href="{{ url_for('transactions.clear_filters', next=url_for('core.dashboard')) }}"
            class="ds-btn ds-btn--ghost ds-btn--sm">Reset all</a>
         <span class="dash-filter__hint" id="filterHint" role="status"></span>
         <span class="dash-filter__spacer"></span>
@@ -210,8 +215,8 @@
       </p>
     </div>
     <div class="dash-noresults__actions">
-      <a href="{{ url_for('clear_filters', next=url_for('dashboard')) }}" class="ds-btn ds-btn--secondary ds-btn--sm">Clear filters</a>
-      <a href="{{ url_for('upload') }}" class="ds-btn ds-btn--primary ds-btn--sm">Upload data</a>
+      <a href="{{ url_for('transactions.clear_filters', next=url_for('core.dashboard')) }}" class="ds-btn ds-btn--secondary ds-btn--sm">Clear filters</a>
+      <a href="{{ url_for('transactions.upload') }}" class="ds-btn ds-btn--primary ds-btn--sm">Upload data</a>
     </div>
   </div>
   {% endif %}
@@ -272,9 +277,9 @@
         ('Cash available', nw.cash|money, nw.cash,
          'Checking + savings + sweep', None, 'cash', None),
         ('Income', total_income|money, total_income,
-         None, income_delta, 'income', url_for('transactions', start_date=start_date, end_date=end_date, account=account_filter, type='inbound')),
+         None, income_delta, 'income', url_for('transactions.index', start_date=start_date, end_date=end_date, account=account_filter, type='inbound')),
         ('Spending', total_outgo|money, total_outgo,
-         None, outgo_delta, 'outgo', url_for('transactions', start_date=start_date, end_date=end_date, account=account_filter, type='outgo')),
+         None, outgo_delta, 'outgo', url_for('transactions.index', start_date=start_date, end_date=end_date, account=account_filter, type='outgo')),
         ('Net cash flow', net_cashflow|money, net_cashflow,
          None, net_delta, 'net', None)
       ] %}
@@ -359,19 +364,21 @@
   </section>
 
   {# ══════════════════════════════════════════════════════════════════════
-     LAYER 2 — Financial Copilot
+     LAYER 2 — Dough's Insight
      The conversational centre of the app. The numbers above are already on
-     screen; this is where they get explained and acted on.
+     screen; this is where Dough explains them and says what to do about it.
+     Everything intelligent in the product is attributed to him, so this
+     card is the dashboard's half of that one voice.
      ══════════════════════════════════════════════════════════════════════ #}
   <section class="dash-copilot ds-card ds-card--hero ds-card--wash-ai ds-rise"
            style="--ds-delay:340ms" aria-labelledby="copilot-h">
     <div class="dash-copilot__head">
-      <span class="dash-copilot__mark" aria-hidden="true">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2.2l2.1 5.9 5.9 2.1-5.9 2.1L12 18.2l-2.1-5.9L4 10.2l5.9-2.1z"/></svg>
+      <span class="dash-copilot__mark dough-avatar" aria-hidden="true">
+        <span data-dough="reviewing" data-dough-size="36" data-dough-tight></span>
       </span>
-      <h2 class="dash-copilot__title" id="copilot-h">Financial Copilot</h2>
+      <h2 class="dash-copilot__title" id="copilot-h">Dough's Insight</h2>
       <a href="/chat" class="ds-btn ds-btn--ghost ds-btn--sm dash-copilot__full">
-        Open full chat
+        Ask Dough
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 17 17 7"/><path d="M8 7h9v9"/></svg>
       </a>
     </div>
@@ -404,6 +411,13 @@
       <!-- Model-written narrative + opportunities -->
       <div class="dash-copilot__ai" id="copilotNarrative" aria-live="polite">
         <div class="dash-copilot__loading" id="copilotLoading">
+          {# Dough is visibly doing the work rather than a bare skeleton —
+             the wait is the moment the character is most useful. The text
+             carries the state for screen readers and reduced-motion. #}
+          <div class="dough-working">
+            <span data-dough="searching" data-dough-size="42"></span>
+            <span class="dough-working__label">Dough is digging through your numbers…</span>
+          </div>
           <span class="ds-skeleton ds-skeleton--text" style="width:92%"></span>
           <span class="ds-skeleton ds-skeleton--text" style="width:74%"></span>
         </div>
@@ -417,16 +431,16 @@
         <div class="dash-answer__a" id="copilotAnswerA" aria-live="polite"></div>
         <div class="dash-answer__foot">
           <button type="button" class="ds-btn ds-btn--ghost ds-btn--sm" id="copilotAnswerClose">Dismiss</button>
-          <a href="/chat" class="ds-btn ds-btn--ghost ds-btn--sm">Continue in full chat →</a>
+          <a href="/chat" class="ds-btn ds-btn--ghost ds-btn--sm">Keep talking to Dough →</a>
         </div>
       </div>
     </div>
 
     <!-- Ask -->
     <form class="dash-ask" id="copilotForm">
-      <label class="ds-sr" for="copilotInput">Ask about your finances</label>
-      <input type="text" id="copilotInput" class="dash-ask__input" autocomplete="off"
-             placeholder="Ask anything about your money…">
+      <label class="ds-sr" for="copilotInput">Ask Dough about your finances</label>
+      <input type="text" id="copilotInput" class="dash-ask__input ds-control__input" autocomplete="off"
+             placeholder="Ask Dough anything about your money…">
       <button type="submit" class="ds-btn ds-btn--primary ds-btn--sm dash-ask__send" aria-label="Send question">
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 19V5"/><path d="m5 12 7-7 7 7"/></svg>
       </button>
@@ -617,7 +631,7 @@
         <h2 class="ds-section__title" id="budgets-h">Budgets</h2>
         <p class="ds-section__sub">Monthly average over {{ period_label }}</p>
       </div>
-      <a href="{{ url_for('budgets') }}" class="ds-btn ds-btn--secondary ds-btn--sm">Manage budgets</a>
+      <a href="{{ url_for('budgets.index') }}" class="ds-btn ds-btn--secondary ds-btn--sm">Manage budgets</a>
     </div>
 
     <div class="dash-budget-grid">
@@ -664,7 +678,7 @@
           {% endif %}
         </p>
         <a class="dash-budget__hit"
-           href="{{ url_for('transactions', start_date=start_date, end_date=end_date, account=account_filter, category=cat, type='outgo') }}">
+           href="{{ url_for('transactions.index', start_date=start_date, end_date=end_date, account=account_filter, category=cat, type='outgo') }}">
           <span class="ds-sr">View {{ cat }} transactions</span>
         </a>
       </article>
@@ -697,7 +711,7 @@
         {{ panel_head('categories', 'Category breakdown', 'Click a category to filter the whole dashboard') }}
         <div class="dash-panel__body" id="panel-body-categories">
           <div class="dash-table-wrap ds-scroll">
-            <table class="dash-table">
+            <table class="dash-table ds-table">
               <caption class="ds-sr">Income, spending and budget by category for {{ period_label }}</caption>
               <thead>
                 <tr>
@@ -716,19 +730,19 @@
                     <span class="dash-swatch" data-swatch="{{ category }}" aria-hidden="true"></span>
                     {% if is_active %}
                     <a class="dash-cat dash-cat--on"
-                       href="{{ url_for('dashboard', start_date=start_date, end_date=end_date, account=account_filter, category=category_filter|reject('equalto', category)|list) }}"
+                       href="{{ url_for('core.dashboard', start_date=start_date, end_date=end_date, account=account_filter, category=category_filter|reject('equalto', category)|list) }}"
                        title="Remove {{ category }} from the filter">{{ category }} ✕</a>
                     {% else %}
                     <a class="dash-cat"
-                       href="{{ url_for('dashboard', start_date=start_date, end_date=end_date, account=account_filter, category=category_filter + [category]) }}"
+                       href="{{ url_for('core.dashboard', start_date=start_date, end_date=end_date, account=account_filter, category=category_filter + [category]) }}"
                        title="{% if category_filter %}Add {{ category }} to the dashboard filter{% else %}Filter the whole dashboard to {{ category }}{% endif %}">{{ category }}</a>
                     {% endif %}
                   </td>
                   <td class="is-num">
-                    <a class="dash-amt dash-amt--in" href="{{ url_for('transactions', start_date=start_date, end_date=end_date, account=account_filter, category=category, type='inbound') }}">{{ stats.inbound|money }}</a>
+                    <a class="dash-amt dash-amt--in" href="{{ url_for('transactions.index', start_date=start_date, end_date=end_date, account=account_filter, category=category, type='inbound') }}">{{ stats.inbound|money }}</a>
                   </td>
                   <td class="is-num">
-                    <a class="dash-amt dash-amt--out" href="{{ url_for('transactions', start_date=start_date, end_date=end_date, account=account_filter, category=category, type='outgo') }}">{{ stats.outbound|money }}</a>
+                    <a class="dash-amt dash-amt--out" href="{{ url_for('transactions.index', start_date=start_date, end_date=end_date, account=account_filter, category=category, type='outgo') }}">{{ stats.outbound|money }}</a>
                   </td>
                   <td class="is-num">
                     <span class="ds-num {{ 'is-positive' if stats.inbound - stats.outbound >= 0 else 'is-negative' }}">{{ (stats.inbound - stats.outbound)|money }}</span>
@@ -748,7 +762,7 @@
                         <span class="dash-minibudget__txt {{ 'is-over' if over }} ds-num">{{ mo_avg|money }}/{{ lim|money }}</span>
                       </div>
                     {% else %}
-                      <a class="dash-setbudget" href="{{ url_for('budgets') }}">+ set budget</a>
+                      <a class="dash-setbudget" href="{{ url_for('budgets.index') }}">+ set budget</a>
                     {% endif %}
                   </td>
                 </tr>

@@ -1,0 +1,271 @@
+/* ══════════════════════════════════════════════════════════════════════════
+   Category rules — the layout the design system does not generalise.
+   ──────────────────────────────────────────────────────────────────────────
+   Phase 9 Wave 1d. Everything visual resolves through design-system.css
+   tokens; what is left here is this page's own composition and the three
+   things that are genuinely particular to it:
+
+     * a segmented model picker, which is a control the design system has no
+       opinion about yet — one appears here and a differently-shaped one in
+       chat's topbar, and two instances is too few to generalise from;
+     * the AI suggestion card, which is a card with a state machine
+       (proposed → accepted → skipped) rather than a container;
+     * the phone treatment of the rules table, where a five-column grid
+       becomes a stack of blocks.
+
+   Tokens defined here are namespaced --rules-*. The design system's names are
+   off limits: a page stylesheet that redefines --surface or --accent silently
+   changes every .ds-* component rendered inside it, which is a bug this
+   project has already had once. See
+   test_ui_invariants.py::test_page_css_does_not_shadow_a_design_system_token.
+
+   Loaded from inside {% block content %} rather than <head>, because SPA
+   navigation swaps <main> only — a <link> in the head would never arrive on
+   a client-side navigation to this page.
+   ══════════════════════════════════════════════════════════════════════════ */
+
+#rules-page {
+  /* The segmented picker's trough. Mixed from --fg rather than taken from
+     --surface-sunken because it sits *on* a card, and a sunken surface on a
+     raised one reads as a hole rather than as a group of buttons. */
+  --rules-trough: color-mix(in srgb, var(--fg) 6%, transparent);
+}
+
+/* ── AI suggestions ─────────────────────────────────────────────────────── */
+
+.rules-ai__controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-3);
+  margin-bottom: var(--sp-4);
+}
+
+/* Segmented control. One trough, N buttons, the active one lifted out of it. */
+.rules-seg {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-1);
+  padding: var(--sp-1);
+  background: var(--rules-trough);
+  border-radius: var(--r-md);
+}
+.rules-seg__btn {
+  padding: var(--sp-1) var(--sp-3);
+  border: 0;
+  border-radius: var(--r-sm);
+  background: none;
+  color: var(--ink-muted);
+  font: inherit;
+  font-size: var(--f-xs);
+  font-weight: var(--w-medium);
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background var(--dur-2) var(--ease-out),
+              color var(--dur-2) var(--ease-out);
+}
+.rules-seg__btn:hover:not([aria-pressed="true"]) {
+  background: color-mix(in srgb, var(--fg) 6%, transparent);
+  color: var(--ink-body);
+}
+/* aria-pressed is the state, so it is also the selector. A separate .active
+   class is a second source of truth that can disagree with the one screen
+   readers actually announce. */
+.rules-seg__btn[aria-pressed="true"] {
+  background: var(--surface-raised);
+  color: var(--accent);
+  font-weight: var(--w-semi);
+  box-shadow: var(--e-1);
+}
+.rules-seg__btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.rules-ai__cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: var(--sp-3);
+}
+
+/* The suggestion card is a .ds-card--compact with a lifecycle. */
+.rules-sugg { transition: opacity var(--dur-3) var(--ease-out),
+                          border-color var(--dur-3) var(--ease-out); }
+.rules-sugg__row { display: flex; align-items: flex-start; gap: var(--sp-3); }
+.rules-sugg__main { flex: 1; min-width: 0; }
+.rules-sugg__actions {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  flex-shrink: 0;
+}
+.rules-sugg__badges {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-2);
+  margin-bottom: var(--sp-2);
+}
+.rules-sugg__name {
+  font-size: var(--f-sm);
+  font-weight: var(--w-semi);
+  color: var(--ink-strong);
+}
+/* The pattern, shown as what it is: a literal to be matched, not prose. */
+.rules-sugg__pattern {
+  display: block;
+  font-family: var(--font-mono);
+  font-size: var(--f-xs);
+  background: var(--surface-sunken);
+  color: var(--ink-body);
+  padding: var(--sp-1) var(--sp-2);
+  border-radius: var(--r-sm);
+  margin-bottom: var(--sp-1);
+  overflow-wrap: anywhere;
+}
+.rules-sugg__reason { font-size: var(--f-xs); color: var(--ink-muted); font-style: italic; }
+.rules-sugg__examples {
+  font-size: var(--f-xs);
+  color: var(--ink-faint);
+  margin-top: var(--sp-1);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Accepted stays on screen rather than disappearing: the list is a record of
+   what you just decided, and a card that vanishes on click gives you no way to
+   tell an accepted suggestion from one you never saw. */
+.rules-sugg--accepted {
+  border-color: color-mix(in srgb, var(--ok-mark) 55%, var(--hairline));
+  background: color-mix(in srgb, var(--ok-mark) 6%, var(--surface));
+  opacity: .8;
+}
+.rules-sugg--skipped { display: none; }
+.rules-sugg__done { display: flex; flex-direction: column; gap: 2px; text-align: right; }
+
+/* ── Add-rule form ──────────────────────────────────────────────────────── */
+
+.rules-form__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: var(--sp-4);
+}
+
+/* Live preview of what a keyword would match, under the field that produces
+   it. Informational rather than a warning, so it uses the info wash. */
+.rules-preview__row {
+  display: flex;
+  align-items: baseline;
+  gap: var(--sp-3);
+  font-size: var(--f-xs);
+  padding: 2px 0;
+}
+.rules-preview__date { color: var(--ink-faint); flex-shrink: 0; }
+.rules-preview__desc {
+  flex: 1;
+  min-width: 0;
+  color: var(--ink-body);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.rules-preview__amt { flex-shrink: 0; font-variant-numeric: tabular-nums; font-weight: var(--w-medium); }
+.rules-preview__amt--in  { color: var(--ok-ink); }
+.rules-preview__amt--out { color: var(--ink-body); }
+
+/* ── Existing rules table ───────────────────────────────────────────────── */
+
+/* `table-layout: fixed`, and this is the load-bearing declaration on the page.
+
+   Under the default `auto` layout a cell is as wide as its widest content, and
+   the keywords cell holds an unbounded list of chips: a household with a
+   well-tuned Groceries rule produced a 3,288px cell and a 3,678px table. The
+   .ds-table-wrap around it did scroll, so the table was *reachable* — but the
+   overflow also escaped to the document, and the whole page scrolled sideways
+   by 2,250px.
+
+   Fixing the escape alone would have been the wrong fix. A keywords column you
+   read by dragging a scrollbar two and a half metres is not a column anyone
+   reads. Fixed layout makes the cell take the width it is given and the chips
+   wrap down the page instead, which is what the flex-wrap on .rules-keywords
+   was always for.
+
+   The percentages are on the <th> because that is where fixed layout reads
+   them from — the first row decides every column. */
+#rulesTable { table-layout: fixed; }
+#rulesTable th:nth-child(1) { width: 2rem; }    /* grip     */
+#rulesTable th:nth-child(2) { width: 18%; }     /* category */
+#rulesTable th:nth-child(4) { width: 7rem; }    /* count    */
+#rulesTable th:nth-child(5) { width: 10rem; }   /* actions  */
+
+/* A category is one token, so it cannot be hyphenated at a sensible place —
+   break it anywhere rather than let it push its column open. */
+.rules-cell--category { overflow-wrap: anywhere; }
+
+/* The grip is an affordance, so it has to look like one before it is grabbed. */
+.rules-row { cursor: grab; }
+.rules-row:active { cursor: grabbing; }
+.rules-row--dragging { opacity: .4; }
+.rules-grip { width: 1.5rem; color: var(--ink-ghost); user-select: none; }
+
+.rules-keywords { display: flex; flex-wrap: wrap; gap: var(--sp-2); }
+/* A keyword and its remove button are one object, so the button lives inside
+   the chip rather than beside it. */
+.rules-keyword { display: inline-flex; align-items: center; gap: var(--sp-1); }
+.rules-keyword form { display: inline-flex; }
+.rules-keyword__x {
+  display: inline-flex;
+  border: 0;
+  background: none;
+  padding: 0;
+  color: currentColor;
+  opacity: .55;
+  cursor: pointer;
+  transition: opacity var(--dur-2) var(--ease-out);
+}
+.rules-keyword__x:hover { opacity: 1; }
+.rules-keyword__x:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* ── Touch / narrow ─────────────────────────────────────────────────────── */
+
+@media (max-width: 640px) {
+  .rules-seg__btn { padding: var(--sp-2) var(--sp-3); }
+  #ai-analyze-btn { width: 100%; }
+
+  /* The rules table stops being a table below this width and becomes one
+     block per rule. Five columns cannot be read at 375px, and a horizontal
+     scroller for the *primary* list on a page is a worse answer than a
+     reflow — you would have to scroll sideways to find out how many
+     transactions a rule has caught, which is the number you came for.
+
+     Reordering is a drag interaction, so the grip goes: there is no touch
+     drag here, and an affordance that does nothing is worse than none. */
+  #rulesTable, #rulesTable tbody { display: block; min-width: 0; }
+  #rulesTable thead { display: none; }
+  #rulesTable tbody tr {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    column-gap: var(--sp-3);
+    row-gap: var(--sp-1);
+    padding: var(--sp-3) var(--sp-1);
+    border-bottom: 1px solid var(--hairline);
+    cursor: default;
+  }
+  #rulesTable td {
+    display: block;
+    padding: 0;
+    border: none;
+    white-space: normal;
+  }
+  #rulesTable td.rules-grip { display: none; }
+  #rulesTable td.rules-cell--category { grid-column: 1; grid-row: 1; font-weight: var(--w-semi); }
+  #rulesTable td.rules-cell--count    { grid-column: 2; grid-row: 1; text-align: right; }
+  #rulesTable td.rules-cell--count::after {
+    content: ' txns';
+    font-size: var(--f-xs);
+    color: var(--ink-faint);
+  }
+  #rulesTable td.rules-cell--keywords { grid-column: 1 / -1; grid-row: 2; }
+  #rulesTable td.rules-cell--actions  { grid-column: 1 / -1; grid-row: 3; text-align: right; }
+}
