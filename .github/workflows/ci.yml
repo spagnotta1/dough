@@ -76,10 +76,14 @@ jobs:
       - name: Run browser regressions
         run: python -m pytest tests/browser -q
 
-  audit:
+  # Advisory only: a new CVE in a transitive dependency should raise a flag,
+  # not block an unrelated pull request at 2am. `continue-on-error` keeps the
+  # overall run green, but this job still shows a red X of its own when it
+  # finds something — that is the flag, not a broken build. Read it as "there
+  # is security debt", and check the `test` and `browser` jobs for whether the
+  # code is actually failing.
+  audit-advisory:
     runs-on: ubuntu-latest
-    # Advisory only: a new CVE in a transitive dependency should raise a flag,
-    # not block an unrelated pull request at 2am.
     continue-on-error: true
     steps:
       - uses: actions/checkout@v4
@@ -88,7 +92,7 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Audit dependencies for known vulnerabilities
+      - name: Audit dependencies (advisory — a finding here does not block)
         run: |
           python -m pip install --upgrade pip pip-audit
           pip-audit -r requirements.txt --desc

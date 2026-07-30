@@ -11,8 +11,15 @@
 # an unpinned install.
 
 # --- Web framework ---
-Flask==3.0.2
-Werkzeug==3.1.3
+# Flask 3.1.3: below it, reading a session key with `in` skipped the
+# `Vary: Cookie` header, so a caching proxy could serve one user's page to
+# another (PYSEC-2026-2151).
+# Werkzeug 3.1.6: `safe_join` accepted Windows device names (`CON`, `NUL`,
+# including `example/NUL` and `CON.txt.html`), and `send_from_directory`
+# serves static files through it — a GET could hang the server forever. This
+# app is developed and run on Windows, so it was directly exposed.
+Flask==3.1.3
+Werkzeug==3.1.6
 Flask-SQLAlchemy==3.1.1
 Flask-Migrate==4.0.5
 SQLAlchemy==2.0.27
@@ -28,18 +35,31 @@ python-dateutil==2.9.0.post0
 scikit-learn==1.7.0
 
 # --- Integrations ---
-anthropic==0.86.0
-requests==2.32.4
+anthropic==0.87.0
+requests==2.33.0
 # Fernet, for encrypting stored institution tokens at rest, and the
 # self-signed dev certificate Plaid's HTTPS redirect requirement forces.
-cryptography==41.0.7
+#
+# 41.0.7 -> 48.0.1 is the one upgrade here that could have destroyed data
+# rather than just breaking a test: it holds the key to every stored bank
+# token. Verified before pinning -- all four `auth_blob` values in the live
+# database still decrypt, and a fresh round-trip still reads back. Fernet's
+# on-disk format is unchanged; the CVEs were in the statically linked OpenSSL
+# and in EC/PKCS12 parsing paths this app never reaches.
+cryptography==48.0.1
 
 # --- Utilities ---
-python-dotenv==1.0.0
+python-dotenv==1.2.2
 Markdown==3.8.2
 # Icon rasterisation in tools/build_icons.py. Was an undeclared dependency of
 # that script -- it imported Pillow without the file ever asking for it.
-pillow==11.2.1
+# None of its many image-parsing CVEs are reachable from the running app: it
+# is a build-time tool fed the repo's own artwork, and no request path decodes
+# an image. Kept current anyway, because "unreachable today" is a property of
+# the code as it stands, not a guarantee about the next feature.
+pillow==12.3.0
 
 # --- Tests ---
-pytest==8.4.1
+# 9.x is a major bump; the suite (921 tests, browser included) was run against
+# it before this pin moved.
+pytest==9.0.3
