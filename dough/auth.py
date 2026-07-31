@@ -73,7 +73,7 @@ import secrets
 import time
 from urllib.parse import urlsplit
 
-from flask import current_app, jsonify, redirect, request, session, url_for
+from flask import current_app, flash, jsonify, redirect, request, session, url_for
 from sqlalchemy import event, inspect as sa_inspect
 from sqlalchemy.orm import Session as OrmSession
 from werkzeug.exceptions import Forbidden
@@ -241,6 +241,85 @@ def unauthorized_response():
                 '`Authorization: Bearer <token>`.')
         return jsonify({'error': 'authentication required'}), 401
     return redirect(url_for('auth.login', next=request.full_path.rstrip('?')))
+
+
+# ---------------------------------------------------------------------------
+# Saying why the login page is on screen
+# ---------------------------------------------------------------------------
+#
+# Four ways a browser arrives at `/login`, and until now they were indis-
+# tinguishable once you got there: one of them is a button the person pressed
+# and three of them are the application deciding for them. An unexplained login
+# form is read as "it logged me out again" whichever it was, and the security
+# ones are exactly the cases where somebody needs to know something happened.
+#
+# The wording lives here rather than at the call sites because there are five of
+# those across two modules, and the same event described two ways reads as two
+# different events.
+
+#: The person pressed Sign out.
+SIGN_OUT_DELIBERATE = 'deliberate'
+#: An idle or absolute session limit ran out. Nothing is wrong.
+SIGN_OUT_EXPIRED = 'expired'
+#: `session_version` moved past what this session was minted under -- today,
+#: that means the account's password changed. Anyone else holding a session for
+#: this account was signed out at the same moment, which is the point of it.
+SIGN_OUT_CREDENTIALS = 'credentials'
+#: The AppUser row is gone: removed from the household while signed in.
+SIGN_OUT_ACCOUNT_GONE = 'account_gone'
+
+_SIGN_OUT_NOTICES = {
+    SIGN_OUT_DELIBERATE: (
+        'success', "You've been signed out successfully."),
+    SIGN_OUT_EXPIRED: (
+        'info', 'Your session has expired. Please sign in again.'),
+    SIGN_OUT_CREDENTIALS: (
+        'warning', 'Your password was changed, so every session using the old '
+                   'one was signed out. Please sign in again.'),
+    SIGN_OUT_ACCOUNT_GONE: (
+        'warning', 'This account is no longer active. Ask whoever runs the '
+                   'household if you think that is a mistake.'),
+}
+
+
+def notify_signed_out(reason):
+    """Leave a message on the login page explaining why it is being shown.
+
+    **Call this after `session.clear()`, never before.** Flask keeps flashes in
+    the session, so a message queued first is wiped by the very call that signs
+    the person out, and the login page renders silently — which is the bug this
+    function exists to prevent, reintroduced. Clearing and then flashing leaves
+    a session holding nothing but the message, which is what should survive.
+
+    Silent for callers that want JSON. `unauthorized_response` answers those
+    with a 401 they can act on, and a flash queued alongside it would be read by
+    whichever page the browser loaded next — arriving with no relation to
+    anything the person had just done.
+    """
+    if wants_json():
+        return
+    category, message = _SIGN_OUT_NOTICES[reason]
+    flash(message, category)
+
+
+def sign_out_reason(user_id):
+    """Which of the two involuntary sign-outs `current_user() is None` meant.
+
+    `current_user` collapses "the row is gone" and "the credential generation
+    moved" into one None, correctly — neither session can be repaired, only
+    replaced, so the *handling* is identical. The two are not the same thing to
+    read on a login page, though: one says somebody changed the password on this
+    account, the other says the account is not there any more.
+
+    Read before `session.clear()`, because it needs the id the session is
+    carrying.
+    """
+    from models import AppUser
+
+    if not user_id:
+        return SIGN_OUT_ACCOUNT_GONE
+    return (SIGN_OUT_ACCOUNT_GONE if AppUser.query.get(user_id) is None
+            else SIGN_OUT_CREDENTIALS)
 
 
 # ---------------------------------------------------------------------------

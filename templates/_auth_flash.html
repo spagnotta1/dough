@@ -1,0 +1,63 @@
+{# Flashed messages on the signed-out pages.
+
+   The six auth-shell templates (login, register, join, setup, forgot_password,
+   reset_password) deliberately do not extend base.html — see the header comment
+   in auth.css — and base.html is where `get_flashed_messages` was called. So
+   until this partial existed, a flash queued on any path that lands on one of
+   them was not merely invisible: it stayed in the session and surfaced as a
+   toast on whatever page rendered flashes next, which is the dashboard after
+   the next sign-in. `/reset-password` has been doing exactly that since Phase
+   10.5 — its "your password has been changed" confirmation arrived one sign-in
+   late, attached to nothing.
+
+   Include it once per page, first inside the card, so a screen reader in
+   document order meets it before the form it is about.
+
+   Rendered as a banner rather than reusing base.html's toast system, which
+   these pages do not load. A toast also auto-dismisses, and "your password was
+   changed" is not a message to take off screen on a timer.
+
+   ## Roles
+
+   `alert` (assertive) for the two security categories, `status` (polite) for
+   the rest. Both are also the correct *role* independent of announcement
+   timing, which matters here: this markup is present when the document loads,
+   and a live region is defined to announce *changes* to itself. Screen readers
+   vary in whether they announce a page-load alert at all — the roles are what
+   let one classify the message when it reaches it in document order, and what
+   make the dismissal below observable. Placement, not aria-live, is what
+   guarantees it gets read. #}
+{% with messages = get_flashed_messages(with_categories=true) %}
+{% if messages %}
+<div class="auth-flashes">
+  {% for category, message in messages %}
+  {%- set kind = {'success': 'ok', 'error': 'danger', 'warning': 'warn'}.get(category, 'info') -%}
+  {%- set urgent = kind in ('warn', 'danger') -%}
+  <div class="auth-flash auth-flash--{{ kind }}"
+       role="{{ 'alert' if urgent else 'status' }}"
+       aria-live="{{ 'assertive' if urgent else 'polite' }}">
+    <p class="auth-flash__msg">{{ message }}</p>
+    <button type="button" class="auth-flash__close"
+            aria-label="Dismiss this message">&times;</button>
+  </div>
+  {% endfor %}
+</div>
+<script>
+  /* Delegated from the container: one listener regardless of how many messages
+     are queued, and no per-message handler to leak. Removing the node rather
+     than hiding it takes it out of the accessibility tree too, so a dismissed
+     message cannot still be reached by a screen reader cursor. */
+  (function () {
+    var box = document.querySelector('.auth-flashes');
+    if (!box) return;
+    box.addEventListener('click', function (e) {
+      var btn = e.target.closest('.auth-flash__close');
+      if (!btn) return;
+      var note = btn.closest('.auth-flash');
+      if (note) note.remove();
+      if (!box.querySelector('.auth-flash')) box.remove();
+    });
+  })();
+</script>
+{% endif %}
+{% endwith %}

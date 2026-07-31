@@ -29,6 +29,7 @@
   <div class="{{ 'auth-split' if not invalid and not already_signed_in else 'auth-solo' }}">
 
     {% if invalid %}
+    {% include '_auth_flash.html' %}
     {# One message for unknown, expired, revoked and already-used alike. The
        route does not distinguish them either; telling somebody which one it
        was confirms that a token they guessed was once real. #}
@@ -43,6 +44,7 @@
     </div>
 
     {% elif already_signed_in %}
+    {% include '_auth_flash.html' %}
     <div class="auth-intro">
       <span data-dough="thinking" data-dough-size="130"></span>
       <h2>You're already in a household.</h2>
@@ -73,6 +75,7 @@
 
     <form class="auth-card" method="post">
       {{ csrf_field() }}
+      {% include '_auth_flash.html' %}
       <h1>Join {{ household.name }}</h1>
       <p>This becomes your own login — the people who invited you never see your password.</p>
       {% if error %}<p class="auth-error" role="alert">{{ error }}</p>{% endif %}

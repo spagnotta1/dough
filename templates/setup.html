@@ -28,6 +28,7 @@
     </div>
     <form class="auth-card" method="post">
       {{ csrf_field() }}
+      {% include '_auth_flash.html' %}
       <h1>Let's set you up</h1>
       <p>This is your account — you'll use it to sign in from your PC and your phone.</p>
       {% if error %}<p class="auth-error" role="alert">{{ error }}</p>{% endif %}

@@ -16,6 +16,11 @@
     <div class="auth-hello"><span data-dough="greeting" data-dough-size="104"></span></div>
     <form class="auth-card" method="post">
       {{ csrf_field() }}
+      {# Why the login page in particular carries this: it is where every
+         involuntary sign-out lands, and without a message all four of them —
+         a pressed button, an expiry, a password change elsewhere, a removed
+         account — look identical to "it logged me out again". #}
+      {% include '_auth_flash.html' %}
       <h1>Welcome back</h1>
       <p>I've been keeping an eye on things. Sign in and I'll show you what I found.</p>
       {% if error %}<p class="auth-error" role="alert">{{ error }}</p>{% endif %}

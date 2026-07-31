@@ -40,9 +40,9 @@ import time
 from flask import (Blueprint, current_app, flash, redirect, render_template,
                    request, session, url_for)
 
-from dough.auth import (LoginThrottle, SESSION_VERSION_KEY, client_address,
-                        hash_password, public, upgrade_password_hash,
-                        verify_password)
+from dough.auth import (LoginThrottle, SESSION_VERSION_KEY, SIGN_OUT_DELIBERATE,
+                        client_address, hash_password, notify_signed_out,
+                        public, upgrade_password_hash, verify_password)
 from dough.services import audit, identity
 from dough.services.email import EmailError, current_email
 from dough.services.membership import MembershipError, accept_invite, find_redeemable_invite
@@ -577,6 +577,10 @@ def logout():
                      actor_user_id=user.id,
                      entity_type='user', entity_id=user.id)
     session.clear()
+    # After the clear, not before: flashes live in the session, so a message
+    # queued first would be discarded by the line above and the login page
+    # would render silently. See `dough.auth.notify_signed_out`.
+    notify_signed_out(SIGN_OUT_DELIBERATE)
     return redirect(url_for('auth.login'))
 
 

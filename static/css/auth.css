@@ -53,6 +53,24 @@
      theme-accented, so it does not need the same derivation as the above. */
   --auth-danger: #b91c1c;
 
+  /* The rest of the semantic ramp, for .auth-flash. Copied verbatim from
+     design-system.css's light-theme block (--ok-ink / --warn-ink / --info-ink
+     and their -mark pairs) for the same reason --auth-danger is: these are
+     static in the design system too, so there is nothing to derive.
+
+     The tints mirror design-system.css's own `-bg` recipe, with --auth-panel
+     substituted for --panel — these pages are always on the light card, so the
+     mix has a fixed base rather than a runtime one. */
+  --auth-ok:    #15803d;  --auth-ok-mark:    #16a34a;
+  --auth-warn:  #a1620a;  --auth-warn-mark:  #f59e0b;
+  --auth-info:  #1d4ed8;  --auth-info-mark:  #3b82f6;
+  --auth-danger-mark: #ef4444;
+
+  --auth-ok-bg:     color-mix(in srgb, var(--auth-ok-mark)     11%, var(--auth-panel));
+  --auth-warn-bg:   color-mix(in srgb, var(--auth-warn-mark)   13%, var(--auth-panel));
+  --auth-info-bg:   color-mix(in srgb, var(--auth-info-mark)   11%, var(--auth-panel));
+  --auth-danger-bg: color-mix(in srgb, var(--auth-danger-mark) 11%, var(--auth-panel));
+
   --auth-muted: color-mix(in srgb, var(--auth-fg) 70%, transparent);
   --auth-ghost: color-mix(in srgb, var(--auth-fg) 45%, transparent);
   --auth-code-bg: color-mix(in srgb, var(--auth-fg) 12%, var(--auth-bg));
@@ -215,6 +233,86 @@ body.auth-shell {
   font-size: .8rem;
   color: var(--auth-danger);
   margin: 0 0 12px;
+}
+
+/* ── Flashed messages ──────────────────────────────────────────────────────
+   Why a system, when .auth-error above is one line: .auth-error is *this
+   form's* validation result and belongs beside the fields it invalidated.
+   These are about something that already happened somewhere else — a sign-out,
+   an expiry, a password change — and read as a banner over the whole card.
+
+   Sized to the 320px card, which is also the phone width: the card does not
+   change size across breakpoints (only .auth-split's surrounding grid does),
+   so this needs no media query to work on a phone. `overflow-wrap: anywhere`
+   is what actually earns that — the longest message here is comfortably over
+   one line at 320px.
+   ────────────────────────────────────────────────────────────────────────── */
+.auth-flashes {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0 0 16px;
+}
+
+.auth-flash {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--auth-border);
+  /* Colour is carried by a left rule and a tint, never by the text alone —
+     the same pattern as .ds-toast, and the reason the message still reads as
+     the right kind of message in a screenshot with no colour. */
+  border-left: 3px solid var(--auth-ghost);
+  border-radius: var(--auth-r-sm);
+  background: var(--auth-panel);
+}
+
+.auth-flash__msg {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  margin: 0;
+  font-size: .8rem;
+  line-height: 1.5;
+}
+
+.auth-flash--ok     { border-left-color: var(--auth-ok-mark);     background: var(--auth-ok-bg); }
+.auth-flash--warn   { border-left-color: var(--auth-warn-mark);   background: var(--auth-warn-bg); }
+.auth-flash--info   { border-left-color: var(--auth-info-mark);   background: var(--auth-info-bg); }
+.auth-flash--danger { border-left-color: var(--auth-danger-mark); background: var(--auth-danger-bg); }
+
+.auth-flash--ok     .auth-flash__msg { color: var(--auth-ok); }
+.auth-flash--warn   .auth-flash__msg { color: var(--auth-warn); }
+.auth-flash--info   .auth-flash__msg { color: var(--auth-info); }
+.auth-flash--danger .auth-flash__msg { color: var(--auth-danger); }
+
+.auth-flash__close {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  /* 24px, not the 16px the glyph wants. This is the only control on the page
+     that is not full width, and on a phone it is the one that gets missed. */
+  width: 24px;
+  height: 24px;
+  margin: -2px -4px 0 0;
+  padding: 0;
+  border: 0;
+  border-radius: var(--auth-r-sm);
+  background: transparent;
+  color: currentColor;
+  opacity: .6;
+  font-family: inherit;
+  font-size: 1.1rem;
+  line-height: 1;
+  cursor: pointer;
+}
+.auth-flash__close:hover { opacity: 1; }
+.auth-flash__close:focus-visible {
+  outline: none;
+  opacity: 1;
+  box-shadow: 0 0 0 2px var(--auth-panel), 0 0 0 4px var(--auth-accent);
 }
 
 .auth-btn {

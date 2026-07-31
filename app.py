@@ -228,12 +228,8 @@ def create_app(test_config=None, config_name=None):
     def _inject_current_user():
         uid = session.get('user_id')
         user = AppUser.query.get(uid) if uid else None
-        # The id as well as the name. `base.html` uses it to notice that the
-        # browser's localStorage was written by a *different* account and throw
-        # it away -- see the "client state belongs to a user" script there. The
-        # id rather than the username because a rename must not read as a
-        # different person, and because it is the same value the server scopes
-        # by.
+        # The id as well: base.html stamps it into localStorage to detect a
+        # change of account. Not the username -- a rename is not a new person.
         return {'current_username': user.username if user else None,
                 'current_user_id': user.id if user else None}
 
@@ -279,22 +275,27 @@ def create_app(test_config=None, config_name=None):
             The two limits were declared in `config.py` in Phase 1 and nothing
             has read them until now.
             """
-            from dough.auth import current_user as _lookup_user
+            from dough.auth import (SIGN_OUT_EXPIRED, current_user as _lookup_user,
+                                    notify_signed_out, sign_out_reason)
 
             now = int(time.time())
             if _lookup_user() is None:
+                # Reason first (it needs the id), flash after the clear -- a
+                # flash lives in the session. See notify_signed_out.
+                reason = sign_out_reason(session.get('user_id'))
                 session.clear()
+                notify_signed_out(reason)
                 return unauthorized_response()
 
             started = session.get('signed_in_at')
             seen = session.get('seen_at')
             absolute = app.config['SESSION_ABSOLUTE_SECONDS']
             idle = app.config['SESSION_IDLE_SECONDS']
-            if started and absolute and now - started > absolute:
+            # One branch, two checks: cases 3 and 4 now end identically.
+            if ((started and absolute and now - started > absolute)
+                    or (seen and idle and now - seen > idle)):
                 session.clear()
-                return unauthorized_response()
-            if seen and idle and now - seen > idle:
-                session.clear()
+                notify_signed_out(SIGN_OUT_EXPIRED)
                 return unauthorized_response()
 
             # Written on every request, so the idle window slides. Flask only

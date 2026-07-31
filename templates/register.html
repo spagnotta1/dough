@@ -22,6 +22,7 @@
 <body class="auth-shell">
 {% if closed %}
   <div class="auth-card auth-notice">
+    {% include '_auth_flash.html' %}
     <div class="auth-notice__hero"><span data-dough="concerned" data-dough-size="96"></span></div>
     <h1>Registration is closed here</h1>
     <p>
@@ -49,6 +50,7 @@
     </div>
     <form class="auth-card" method="post">
       {{ csrf_field() }}
+      {% include '_auth_flash.html' %}
       <h1>Create your account</h1>
       <p>This is your login, and it starts a household of your own. You can invite people into it later.</p>
       {% if error %}<p class="auth-error" role="alert">{{ error }}</p>{% endif %}
