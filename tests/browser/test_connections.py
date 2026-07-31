@@ -2,7 +2,7 @@
 
 Everything else on this page is design-system components already held to the
 page sweep's baseline. What is specific to Connections is colour that comes
-from *data*: each institution tile paints its icon and its Connect button
+from *data*: each institution row paints its icon and its Connect button
 with the institution's own brand colour. No theme token can know what that
 will be — ``--accent-on`` is the ink for the *theme's* accent, and painting
 it over Plaid's ``#000000`` produced a black label on a black button that
@@ -20,8 +20,8 @@ hypothetical; it is the bug this file was written for.
 
 from .conftest import visit, wait_for_layout
 
-#: Both brand-coloured controls: the tile's letter square and its button.
-BRAND_CONTROLS = '.conn-inst__icon, .conn-inst__connect'
+#: Both brand-coloured controls: the row's letter square and its button.
+BRAND_CONTROLS = '.conn-offer__icon, .conn-offer__connect'
 
 
 def _unreadable(page):
@@ -48,7 +48,7 @@ def _unreadable(page):
 def test_brand_controls_are_readable_on_their_own_colour(signed_in):
     page = signed_in
     visit(page, '/connections')
-    page.wait_for_selector('.conn-inst__connect')
+    page.wait_for_selector('.conn-offer__connect')
     wait_for_layout(page)
 
     bad = _unreadable(page)
@@ -69,7 +69,7 @@ def test_the_page_works_when_reached_by_soft_navigation(signed_in):
 
     page.click('#profile-btn')
     page.click('.pm-item[href="/connections"]')
-    page.wait_for_selector('.conn-inst__connect', timeout=10_000)
+    page.wait_for_selector('.conn-offer__connect', timeout=10_000)
     wait_for_layout(page)
 
     assert page.evaluate(
@@ -77,7 +77,7 @@ def test_the_page_works_when_reached_by_soft_navigation(signed_in):
         'Alpine never initialised connectionsApp after a soft navigation — '
         'every control on the page is inert')
 
-    button = page.locator('.conn-inst__connect').first
+    button = page.locator('.conn-offer__connect').first
     assert button.inner_text().strip(), (
         'the Connect button rendered with no label: its x-show spans are all '
         'hidden, which is what an unevaluated x-data leaves behind')
@@ -96,14 +96,14 @@ def test_the_connect_button_is_wired_end_to_end(signed_in, page_health):
     page_health.expect_server_error('/api/connections')
 
     visit(page, '/connections')
-    page.wait_for_selector('.conn-inst__connect')
+    page.wait_for_selector('.conn-offer__connect')
 
     page.route('**/api/connections', lambda route: route.fulfill(
         status=400,
         content_type='application/json',
         body='{"error": "refused by the test, on purpose"}'))
 
-    button = page.locator('.conn-inst__connect').first
+    button = page.locator('.conn-offer__connect').first
     assert button.is_enabled()
     button.click()
     page.locator('#toast-container .ds-toast',

@@ -54,28 +54,38 @@
 .conn-mask { color: var(--ink-faint); }
 .conn-capitalize { text-transform: capitalize; }
 
-/* ── Add-an-institution grid ──────────────────────────────────────────── */
+/* ── Add-an-institution list ──────────────────────────────────────────── */
 
-.conn-institutions {
+/* Rows, not a card grid. The catalog is short — one offered adapter today —
+   and an auto-fit grid gives a lone tile the full width of the section, which
+   stretched its Connect button to ~1100px: a call to action the size of a
+   banner. A row keeps the button at its own width whatever the count, and
+   matches the connected-institutions list directly above it. */
+.conn-offers {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.conn-offers > * + * { border-top: 1px solid var(--hairline); }
+
+.conn-offer {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-  gap: var(--sp-4);
-}
-
-.conn-inst__head {
-  display: flex;
+  grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
-  gap: var(--sp-2);
+  gap: var(--sp-3);
+  padding: var(--sp-4) 0;
 }
+.conn-offer:first-child { padding-top: 0; }
+.conn-offer:last-child  { padding-bottom: 0; }
 
-/* The tile's accent square carries the institution's own brand colour, set
-   inline from server data (inst.accent_color) — a per-institution colour is
+/* The accent square carries the institution's own brand colour, set inline
+   from server data (inst.accent_color) — a per-institution colour is
    inherently data-driven, not a literal this stylesheet could tokenise. Its
    ink is inline too (inst.ink_color, derived from that same background by
    dough/contrast.py), so this rule deliberately sets no `color`. */
-.conn-inst__icon {
-  width: 32px;
-  height: 32px;
+.conn-offer__icon {
+  width: 36px;
+  height: 36px;
   border-radius: var(--r-sm);
   display: flex;
   align-items: center;
@@ -84,29 +94,45 @@
   font-weight: var(--w-bold);
   flex-shrink: 0;
 }
-.conn-inst__name {
+.conn-offer__body { min-width: 0; }
+.conn-offer__name {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
   font-size: var(--f-sm);
   font-weight: var(--w-semi);
   color: var(--ink-strong);
   margin: 0;
 }
-.conn-inst__mode {
-  font-size: var(--f-xs);
-  color: var(--ink-faint);
-  margin: 2px 0 0;
-}
-.conn-inst__desc {
+.conn-offer__desc {
   font-size: var(--f-xs);
   color: var(--ink-muted);
-  flex: 1;
-  margin: 0;
+  max-width: 68ch;
+  margin: 3px 0 0;
+}
+.conn-offer__action {
+  display: flex;
+  justify-content: flex-end;
+  flex-shrink: 0;
 }
 
-/* Ink comes from the server with the background (see .conn-inst__icon): both
+/* Ink comes from the server with the background (see .conn-offer__icon): both
    are inline, derived together from the brand colour, so no rule here may set
    `color` — --accent-on is the theme's ink and painted black on Plaid. */
-.conn-inst__connect {
+.conn-offer__connect {
+  min-width: 116px;
   transition: opacity var(--dur-1) var(--ease-out);
 }
-.conn-inst__connect:hover { opacity: .9; }
-.conn-inst__connect:disabled { opacity: .5; }
+.conn-offer__connect:hover { opacity: .9; }
+.conn-offer__connect:disabled { opacity: .5; }
+
+/* Phones: the action drops under the description rather than squeezing the
+   name column to a couple of words, and takes the full width it now owns. */
+@media (max-width: 640px) {
+  .conn-offer {
+    grid-template-columns: auto minmax(0, 1fr);
+    row-gap: var(--sp-3);
+  }
+  .conn-offer__action { grid-column: 1 / -1; }
+  .conn-offer__connect { width: 100%; }
+}

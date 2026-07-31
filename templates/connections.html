@@ -133,48 +133,51 @@
         </p>
       </div>
     </div>
-    <div class="conn-institutions">
+    <ul class="conn-offers">
       {% for inst in institutions %}
-      <div class="ds-card ds-card--compact ds-stack ds-stack-3">
-        <div class="conn-inst__head">
-          <span class="conn-inst__icon"
-                style="background: {{ inst.accent_color }}; color: {{ inst.ink_color }}">
-            {{ inst.display_name[0] }}
-          </span>
-          <div>
-            <p class="conn-inst__name">{{ inst.display_name }}</p>
-            <p class="conn-inst__mode">
+      <li class="conn-offer">
+        <span class="conn-offer__icon"
+              style="background: {{ inst.accent_color }}; color: {{ inst.ink_color }}"
+              aria-hidden="true">
+          {{ inst.display_name[0] }}
+        </span>
+        <div class="conn-offer__body">
+          <p class="conn-offer__name">
+            {{ inst.display_name }}
+            <span class="ds-badge {{ 'ds-badge--ok' if inst.mode == 'live' else 'ds-badge--warn' }}">
               {% if inst.mode == 'live' %}Live API
               {% elif not inst.live_api_available %}Sandbox · no public API
               {% else %}Sandbox{% endif %}
-            </p>
-          </div>
+            </span>
+          </p>
+          <p class="conn-offer__desc">
+            {% if inst.institution == 'plaid' %}Aggregator — link any supported bank, brokerage, or
+            crypto exchange through one connection.
+            {% elif inst.supports_transactions and inst.supports_holdings %}Balances, holdings &amp; transactions
+            {% elif inst.supports_transactions %}Balances &amp; transactions
+            {% elif inst.supports_holdings %}Balances &amp; holdings
+            {% else %}Balances{% endif %}
+          </p>
         </div>
-        <p class="conn-inst__desc">
-          {% if inst.institution == 'plaid' %}Aggregator — link any supported bank, brokerage, or
-          crypto exchange through one connection.
-          {% elif inst.supports_transactions and inst.supports_holdings %}Balances, holdings &amp; transactions
-          {% elif inst.supports_transactions %}Balances &amp; transactions
-          {% elif inst.supports_holdings %}Balances &amp; holdings
-          {% else %}Balances{% endif %}
-        </p>
-        {% if inst.connected and inst.institution != 'plaid' %}
-        <span class="ds-badge ds-badge--ok ds-badge--pill">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke-width="2.5" stroke="currentColor" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="m4.5 12.75 6 6 9-13.5"/></svg>
-          Connected
-        </span>
-        {% else %}
-        <button @click="connect('{{ inst.institution }}', '{{ inst.display_name }}', '{{ inst.mode }}')"
-            :disabled="connecting === '{{ inst.institution }}'"
-            class="ds-btn ds-btn--sm conn-inst__connect"
-            style="background: {{ inst.accent_color }}; color: {{ inst.ink_color }}">
-            <span x-show="connecting !== '{{ inst.institution }}'">{% if inst.institution == 'plaid' and inst.connected %}Link another institution{% else %}Connect{% endif %}</span>
-            <span x-show="connecting === '{{ inst.institution }}'">Connecting…</span>
-        </button>
-        {% endif %}
-      </div>
+        <div class="conn-offer__action">
+          {% if inst.connected and inst.institution != 'plaid' %}
+          <span class="ds-badge ds-badge--ok ds-badge--pill">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke-width="2.5" stroke="currentColor" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="m4.5 12.75 6 6 9-13.5"/></svg>
+            Connected
+          </span>
+          {% else %}
+          <button @click="connect('{{ inst.institution }}', '{{ inst.display_name }}', '{{ inst.mode }}')"
+              :disabled="connecting === '{{ inst.institution }}'"
+              class="ds-btn conn-offer__connect"
+              style="background: {{ inst.accent_color }}; color: {{ inst.ink_color }}">
+              <span x-show="connecting !== '{{ inst.institution }}'">{% if inst.institution == 'plaid' and inst.connected %}Link another{% else %}Connect{% endif %}</span>
+              <span x-show="connecting === '{{ inst.institution }}'">Connecting…</span>
+          </button>
+          {% endif %}
+        </div>
+      </li>
       {% endfor %}
-    </div>
+    </ul>
   </section>
 
 </div>
