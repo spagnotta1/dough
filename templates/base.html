@@ -6,6 +6,67 @@
   <title>{% block title %}Dough{% endblock %}</title>
   {% include '_head_icons.html' %}
 
+  <!-- ── Client state belongs to a user, not to a browser ───────────────────
+       First script on the page, before anything can read localStorage.
+
+       Everything this application keeps on the client is keyed by origin: the
+       theme, the dashboard and investments layouts, the chat's conversation
+       list and its 24-hour message cache, the recurring page's "unnecessary"
+       marks. None of that is keyed by *who is signed in*, and signing out does
+       not clear it — so two accounts used from one browser were sharing all of
+       it.
+
+       The visible symptom was cosmetic (a theme following you between
+       accounts). The one that mattered was not. The server side is sound —
+       Conversation and ChatMessage are TenantScopedMixin, so another
+       household's rows are filtered out before they leave the database — but
+       chat.js paints its caches *first* and reconciles after: `boot()` renders
+       the cached conversation list, then `loadHistory` renders cached message
+       bodies, and only then does the fetch return. So the second account saw
+       the first account's chat titles and message text for the length of a
+       round trip, on every load. If the fetch failed, `loadHistory`'s catch
+       keeps the cached copy on screen — it only clears when there was no
+       cache — so the exposure lasted until the network recovered. And the
+       plaintext sat in localStorage between sessions regardless (24h for
+       messages, 1h for the list).
+
+       So: stamp the browser with whoever is signed in, and when that stamp
+       changes, drop the lot. Wholesale rather than key by key, because the
+       enumeration is the part that rots — the key added next inherits this by
+       being on the origin at all, rather than by somebody remembering to add
+       it to a list. Nothing on this origin is worth keeping across a change of
+       account; the cost is re-picking a theme.
+
+       An absent stamp counts as a mismatch. Browsers that predate this script
+       hold state from an unknown account, and "unknown" is not "mine".
+
+       Signed-out pages leave it alone (`who` is null): the purge belongs at
+       the moment a *different* person appears, and clearing on the way past
+       the login page would reset the theme of everyone who ever signs out.
+       Note the residue is still readable with devtools by whoever holds the
+       machine — this makes accounts separate, it does not make the browser a
+       safe place to leave data. -->
+  <script>
+  (function () {
+    var STAMP = 'check-identity';
+    /* Parenthesised as a whole before `tojson`: a filter binds tighter than the
+       conditional, so the unbracketed form would emit a bare number for the
+       signed-in branch. That compares unequal to the string localStorage hands
+       back, and the purge would then run on every single page load. */
+    var who = {{ ((current_user_id | string) if current_user_id else None) | tojson }};
+    if (!who) return;
+    try {
+      if (localStorage.getItem(STAMP) === who) return;
+    } catch (e) { return; }        /* storage disabled: nothing to leak */
+    try { localStorage.clear(); } catch (e) {}
+    /* sessionStorage too. It is per-tab and shorter-lived, but a sign-out and
+       sign-in in the same tab outlives it, and connections.html parks a Plaid
+       link token there. */
+    try { sessionStorage.clear(); } catch (e) {}
+    try { localStorage.setItem(STAMP, who); } catch (e) {}
+  })();
+  </script>
+
   <meta name="csrf-token" content="{{ csrf_token() }}">
   <!-- ── CSRF for fetch(), installed before anything can call it ────────────
        Inline and first in <head> on purpose. This patches window.fetch, and a

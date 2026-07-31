@@ -228,7 +228,14 @@ def create_app(test_config=None, config_name=None):
     def _inject_current_user():
         uid = session.get('user_id')
         user = AppUser.query.get(uid) if uid else None
-        return {'current_username': user.username if user else None}
+        # The id as well as the name. `base.html` uses it to notice that the
+        # browser's localStorage was written by a *different* account and throw
+        # it away -- see the "client state belongs to a user" script there. The
+        # id rather than the username because a rename must not read as a
+        # different person, and because it is the same value the server scopes
+        # by.
+        return {'current_username': user.username if user else None,
+                'current_user_id': user.id if user else None}
 
     # ---------------------------------------------------------------------------
     # Login — a single owner account with a hashed password, created on first
