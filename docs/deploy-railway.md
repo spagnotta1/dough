@@ -23,6 +23,13 @@ Railway's Nixpacks builder detects Python from `requirements.txt`, reads
 `.python-version` for the interpreter, and runs the `Procfile`. There is no
 Dockerfile and none is needed.
 
+`.python-version` says 3.11 rather than the newest available. That is the
+highest version `.github/workflows/ci.yml` actually runs the suite against
+(3.10 and 3.11), and the pins in `requirements.txt` were verified there.
+Deploying on an interpreter no test has ever run under is a change to make
+deliberately, with a CI matrix entry to back it, rather than by taking the
+platform default.
+
 ## 2. Add the volume
 
 In the dashboard, or `railway volume add`. **Mount it at `/data`.** Anything
