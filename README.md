@@ -376,15 +376,45 @@ failing test, a traceback, a log — treat it as compromised and rotate it:
 1. Revoke the old key at <https://console.anthropic.com/settings/keys>.
 2. Create a new one and put it in `.env`.
 3. Restart the app.
-4. Ask Dough one question and confirm you get an answer.
-5. Confirm the *old* key now fails:
+4. **If this installation is deployed, set the key on the deployment as well:**
+   ```bash
+   railway variable set "ANTHROPIC_API_KEY=<the new key>"
+   ```
+5. Ask Dough one question and confirm you get an answer — on the deployment as
+   well as locally, since they hold the key separately.
+6. Confirm the *old* key now fails:
    ```bash
    curl -s -o /dev/null -w '%{http_code}\n' https://api.anthropic.com/v1/models \
      -H "x-api-key: $OLD_KEY" -H "anthropic-version: 2023-06-01"   # expect 401
    ```
 
-Step 5 is the one people skip. Creating a new key does not disable the old one;
+Step 6 is the one people skip. Creating a new key does not disable the old one;
 without the revoke, both work and only one of them is in your `.env`.
+
+Step 4 is the one that has actually bitten this installation. `ANTHROPIC_API_KEY`
+is a Railway *service variable*, written once by `tools/set_railway_env.ps1`
+reading your local `.env`. Deploying sends code and nothing else, so a rotation
+that stops at step 3 leaves the container presenting the key you revoked in step
+1 — and because step 1 worked, it is presenting a key that is now definitively
+invalid. The symptom is Dough saying *"My API key was rejected"* on the
+deployment while working perfectly on your machine, with a 401
+`authentication_error` from `dough.ai.service` in the Railway logs.
+
+Two traps in that one command:
+
+- **Use the argument form, not `railway variable set --stdin`.** The CLI
+  prepends a byte-order mark to anything fed on stdin, storing a value three
+  bytes wrong with nothing reporting a problem. See the comment in
+  `tools/set_railway_env.ps1` for the measurement.
+- **Do not re-run `tools/set_railway_env.ps1` to fix one variable.** It
+  generates a fresh `SECRET_KEY` on every run, which invalidates every session
+  and CSRF token in flight — a re-login for everyone, to change a value the
+  script was not being run for.
+
+Verify by comparing the deployed value against `.env` with an **Ordinal** string
+comparison or a hash, never `-eq`: PowerShell's default comparison treats a
+byte-order mark as zero-weight, so a BOM-corrupted key compares equal to a clean
+one. `docs/deploy-railway.md` covers this at more length.
 
 ### Health checks
 
