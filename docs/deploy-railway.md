@@ -2,8 +2,7 @@
 
 This application is a single always-on process with a SQLite file on a
 persistent disk. That is not an accident of how it grew — three of its parts
-keep state in the serving process, and the deployment has to preserve that. The
-order below matters; step 4 will fail if step 2 has not been done.
+keep state in the serving process, and the deployment has to preserve that.
 
 An earlier attempt targeted Vercel. It cannot work: serverless functions get a
 read-only filesystem outside `/tmp`, `/tmp` is per-instance and wiped on freeze,
@@ -11,17 +10,27 @@ and `*.db` is gitignored so the database is not even in the deployed tree.
 `pyproject.toml` and `vercel.json` were removed when that path was abandoned;
 `requirements.txt` is the single dependency source again.
 
-## 1. Create the service
+The order below is the one that works. It is not the order you would guess:
+the database has to be uploaded *after* the first deploy, because Railway's
+volume file commands need a running deployment to talk to.
+
+## 1. Create the project and service
 
 ```bash
 npm i -g @railway/cli
 railway login
-railway init          # or `railway link` for an existing project
+railway init                    # creates the project only
+railway add --service dough     # a project has no service until you add one
+railway service link dough
 ```
 
-Railway's Nixpacks builder detects Python from `requirements.txt`, reads
-`.python-version` for the interpreter, and runs the `Procfile`. There is no
-Dockerfile and none is needed.
+`railway init` creates a project and nothing else. Until a service exists there
+is no Networking tab and no way to generate a domain — which is confusing if you
+go looking for one in Project Settings, where it will never be.
+
+The builder detects Python from `requirements.txt`, reads `.python-version` for
+the interpreter, and runs the `Procfile`. There is no Dockerfile and none is
+needed.
 
 `.python-version` says 3.11 rather than the newest available. That is the
 highest version `.github/workflows/ci.yml` actually runs the suite against
@@ -32,29 +41,71 @@ platform default.
 
 ## 2. Add the volume
 
-In the dashboard, or `railway volume add`. **Mount it at `/data`.** Anything
-else means passing `-VolumePath` to the script in step 3 to match.
+```bash
+railway volume add -m /data
+```
+
+Run this from PowerShell, not Git Bash: MSYS rewrites a leading `/data` into a
+Windows path before the CLI ever sees it, and the CLI rejects it with "mount
+path must start with a `/`", which is not a helpful description of what went
+wrong.
 
 This is the whole reason for choosing a host with disks. `checkbook.db` lives
 here, outside the image, so a deploy replaces the code and leaves the data
 alone.
 
-## 3. Set the environment variables
+## 3. Generate the domain
 
-```powershell
-.\tools\set_railway_env.ps1 -PublicBaseUrl https://<your-service>.up.railway.app
+```bash
+railway variable set "PORT=8080" --skip-deploys
+railway domain --port 8080
 ```
 
-Add `-DryRun` first to see what it will set without setting it.
+Both sides pinned to the same number, so routing is a fact rather than a
+detection. Do this before step 4, which needs the URL.
+
+## 4. Set the environment variables
+
+```powershell
+.\tools\set_railway_env.ps1 -DryRun -PublicBaseUrl https://<your-service>.up.railway.app
+```
+
+Check the list, then run it again without `-DryRun`. It verifies itself
+afterwards and refuses to report success if anything is wrong.
 
 The script exists so that `ENCRYPTION_KEY` is copied from
 `.sync_encryption_key` rather than retyped or regenerated. That key decrypts the
 Plaid access tokens in `connected_accounts.auth_blob`. Getting it wrong does not
-fail at boot — the app starts normally and the four stored connections become
+fail at boot — the app starts normally and the stored connections become
 permanently unreadable at the next sync, recoverable only by re-linking every
 institution.
 
-What it sets, and why each one is not a default:
+### Why the values are passed as arguments
+
+`railway variable set --stdin KEY` exists exactly so a secret never appears in a
+command line, and it is the obvious thing to reach for. **On CLI 5.30.1 it
+corrupts every value it sets**, storing `EF BB BF` — a UTF-8 byte-order mark —
+in front of the real one. Measured: a process was fed exactly six bytes with no
+BOM and nine came back, so the CLI adds it and no encoding care on the calling
+side prevents it.
+
+Nothing reports this. The variable exists, the dashboard renders it correctly,
+and the deployment is three bytes wrong. A 45-character Fernet key is not a
+valid Fernet key.
+
+Two things make it worse to find:
+
+- `railway variable list --kv` does not reveal it. Only `--json` does.
+- PowerShell's `-eq` and `-ceq` compare culture-sensitively, and U+FEFF is a
+  zero-weight character in that collation — so a BOM-prefixed key compares
+  **equal** to the clean one. Verification has to use
+  `[string]::Equals(..., [StringComparison]::Ordinal)` or hash both sides.
+
+So the script uses the argument form and verifies with an Ordinal comparison
+afterwards. The values do not reach PowerShell's history — history records the
+line you typed, not the arguments the script builds for its children.
+
+### What gets set
 
 | Variable | Value | Why |
 |---|---|---|
@@ -63,7 +114,7 @@ What it sets, and why each one is not a default:
 | `ENCRYPTION_KEY` | from `.sync_encryption_key` | See above. The one value that must not be regenerated. |
 | `DATABASE_URL` | `sqlite:////data/checkbook.db` | Four slashes. Three is a *relative* path, which lands the database inside the image. |
 | `UPLOAD_FOLDER` | `/data/uploads` | The default is inside the app directory, so uploaded statements would vanish on the next deploy. |
-| `AUTO_UPGRADE_DB` | `1` | Production defaults this off because two workers racing Alembic is a real failure. One worker, no race. |
+| `PORT` | `8080` | Matches the generated domain's target port. |
 | `SYNC_AUTO_ENABLED` | `1` | The background scheduler genuinely works here, which it could not on serverless. |
 | `APP_HTTPS` | `1` | Sets `SESSION_COOKIE_SECURE`. |
 | `TRUSTED_PROXIES` | `1` | Railway terminates TLS at one proxy. At `0`, `dough/auth.py` ignores `X-Forwarded-For`, so every client looks like the proxy — one shared login-throttle bucket, and audit rows recording the proxy as the actor. |
@@ -74,22 +125,86 @@ What it sets, and why each one is not a default:
 `config.py` treats unset as "that feature is off" and empty the same way, with
 more noise.
 
-## 4. Deploy, then move the database across
+`ALLOW_REGISTRATION` is deliberately **not** forwarded, so production takes the
+`False` default even though a development `.env` may well have it on.
+
+## 5. Deploy from GitHub
 
 ```bash
-railway up
+railway service source connect --repo spagnotta1/dough --branch main --service dough
 ```
 
-The first boot creates an empty schema from the Alembic chain. To bring your
-existing 1,378 rows over instead:
+This deploys from the pushed commit and pushes again on every future commit to
+`main`.
+
+Prefer it to `railway up`, which uploads the working directory. `.env`,
+`checkbook.db` and `.sync_encryption_key` are all gitignored and so would be
+excluded — but "would be excluded" is a property of the ignore file rather than
+of the command, and the blast radius of getting it wrong is every secret this
+installation has.
+
+## 6. Move the database across
+
+Only now, because volume file commands report
+`Service dough has no active deployment` until something is running.
+
+Expect the first boot to serve 500s with `no such table: app_users`. That is
+correct behaviour, not a fault — see "Migrations are manual" below. SQLAlchemy
+creates an empty `/data/checkbook.db` on its first connection and nothing
+populates it.
+
+Volume file commands go over SSH, so a key has to be registered first:
 
 ```bash
-railway volume browse /        # TUI; upload checkbook.db into /data
+ssh-keygen -t ed25519 -f ~/.ssh/id_ed25519 -N ""
+railway ssh keys add -k ~/.ssh/id_ed25519.pub -n dough-deploy
 ```
 
-Do this **before** the first request touches the app, or `AUTO_UPGRADE_DB` will
-have stamped a fresh empty database and your upload will collide with it. If
-that happens, delete the file through the same TUI and re-upload.
+Then replace the empty database with the real one:
+
+```bash
+railway volume files --volume dough-volume upload ./checkbook.db /checkbook.db --overwrite
+railway service restart
+```
+
+Two CLI shapes worth knowing: `--volume` goes on `volume files`, *before* the
+subcommand — after it, the CLI calls it an unexpected argument. And `upload`
+refuses an existing path unless given `--overwrite`.
+
+The restart matters. Replacing the file underneath a running process leaves
+gunicorn's pooled connections holding the old inode.
+
+Verify rather than assume:
+
+```bash
+railway ssh "python -c \"import sqlite3;c=sqlite3.connect('/data/checkbook.db');print(c.execute('select count(*) from transactions').fetchone())\""
+```
+
+## Migrations are manual
+
+`ProductionConfig` assigns `AUTO_UPGRADE_DB = False` as a class attribute, so
+under `APP_ENV=production` the environment variable is read and then discarded.
+Setting `AUTO_UPGRADE_DB=1` looks like it enables boot-time migrations and does
+nothing whatsoever.
+
+That is the intended design — two workers racing the same migration is the
+hazard `config.py` documents — but it means a schema change needs the chain run
+deliberately, over SSH:
+
+```bash
+railway ssh "cd /app && FLASK_APP=app:create_app flask db upgrade"
+```
+
+The uploaded database is already stamped at the head revision
+(`20260730_07_identity`), so nothing is needed today.
+
+## 7. Re-register the Plaid redirect URIs
+
+In the Plaid dashboard, add the Railway URL alongside the localhost entries.
+The values carried over from `.env` point at localhost and will not work.
+
+Worth noticing that `PLAID_ENV` carries over as `production`, so this deployment
+talks to live Plaid, not the sandbox.
 
 ## Why one worker
 
@@ -114,13 +229,21 @@ external scheduler, and Postgres. `config.py` already normalises
 `postgres://` → `postgresql+psycopg://`, so the database half is one variable
 and adding `psycopg[binary]` to `requirements.txt`.
 
+## Two instances now sync the same accounts
+
+The deployment runs its own scheduler against the same Plaid connections your
+local installation uses, writing to a different database. Within minutes of the
+first boot it had pulled rows the local copy does not have.
+
+Nothing reconciles them, and nothing will. Pick one as authoritative and stop
+the other from syncing — `SYNC_AUTO_ENABLED=0` in the loser's environment. Two
+databases both convinced they are current is worse than either being stale.
+
 ## Known gaps
 
 - **Mail is `console`.** Password-reset and verification links print to the
   deploy logs instead of being sent. Fine while you are the only account; set
   `MAIL_BACKEND=smtp` and `MAIL_SERVER` before inviting anyone.
 - **Back up the volume.** Nothing here replicates `checkbook.db`.
-  `tools/backup_db.py` exists; run it on a schedule and pull the output off the
-  volume.
-- **Plaid redirect URIs** must be re-registered in the Plaid dashboard against
-  the Railway URL. The values in `.env` point at localhost.
+  `tools/backup_db.py` exists; run it on a schedule and pull the output off with
+  `railway volume files --volume dough-volume download`.

@@ -43,6 +43,19 @@ param(
 $ErrorActionPreference = 'Stop'
 $repo = Split-Path -Parent $PSScriptRoot
 
+# Windows PowerShell 5.1 encodes anything piped to a native process using
+# $OutputEncoding, which defaults to a UTF8Encoding that emits a byte-order
+# mark. Piping a secret to `railway variable set --stdin` therefore stores
+# EF BB BF followed by the value, and nothing anywhere reports a problem: the
+# variable exists, it looks right in the dashboard, and it is three bytes wrong.
+#
+# For ENCRYPTION_KEY that is the exact failure this script exists to prevent --
+# a 45-character Fernet key is not a valid Fernet key, and the deployment finds
+# out at the first sync rather than at boot. Worth knowing that reading the
+# values back with `railway variable list --kv` does not show it either; only
+# --json does.
+$OutputEncoding = New-Object System.Text.UTF8Encoding $false
+
 # Normalised so the DATABASE_URL below is built from a known shape. A relative
 # mount path would produce a three-slash sqlite:// URL, which SQLAlchemy reads
 # as relative to the working directory -- a database inside the image, silently
@@ -53,19 +66,6 @@ if (-not (Get-Command railway -ErrorAction SilentlyContinue)) {
     throw "The Railway CLI is not on PATH. Install it with 'npm i -g @railway/cli', then run 'railway login' and 'railway link'."
 }
 
-# The CLI renamed this command between major versions and both spellings are
-# still in the wild. Detect once rather than guessing and half-configuring the
-# service: a script that sets six of nine variables and then errors leaves a
-# deployment that boots and behaves strangely.
-$script:SetForm = $null
-function Resolve-SetForm {
-    foreach ($form in @('variables', 'variable')) {
-        & railway $form --help *> $null
-        if ($LASTEXITCODE -eq 0) { return $form }
-    }
-    throw "Neither 'railway variables' nor 'railway variable' is available. Check 'railway --version' and that 'railway link' has been run."
-}
-
 function Set-RailwayVar {
     param([string]$Name, [string]$Value, [switch]$Secret)
 
@@ -74,13 +74,28 @@ function Set-RailwayVar {
         Write-Host ("  {0,-22} {1}" -f $Name, $shown)
         return
     }
-    if (-not $script:SetForm) { $script:SetForm = Resolve-SetForm }
 
-    if ($script:SetForm -eq 'variables') {
-        & railway variables --set "$Name=$Value" *> $null
-    } else {
-        & railway variable set "$Name=$Value" *> $null
-    }
+    # Everything goes in as a KEY=value argument, including the secrets, and the
+    # obvious alternative is deliberately not used.
+    #
+    # `railway variable set --stdin KEY` exists precisely so a secret never
+    # appears in a command line, which is what this script would want. On CLI
+    # 5.30.1 it corrupts the value: it stores EF BB BF in front of whatever it
+    # is given. That was measured against a process fed exactly six bytes with
+    # no byte-order mark, and nine came back -- so the CLI adds it, and no
+    # amount of encoding care on this side prevents it. Every variable set that
+    # way was three bytes wrong, silently, including the Fernet key.
+    #
+    # A corrupt ENCRYPTION_KEY is a far worse outcome than a value briefly
+    # visible in the local process table, so the argument form wins until the
+    # CLI is fixed. Note that the values do not reach PowerShell's history:
+    # history records the line the user typed -- the call to this script -- not
+    # the arguments this script constructs for its children.
+    #
+    # --skip-deploys because these are set one at a time: without it each of the
+    # eighteen triggers its own redeploy, and the first seventeen boot against
+    # an incomplete configuration. The caller deploys once, afterwards.
+    & railway variable set "$Name=$Value" --skip-deploys | Out-Null
     if ($LASTEXITCODE -ne 0) { throw "Failed to set $Name (railway exited $LASTEXITCODE)." }
     Write-Host ("  {0,-22} {1}" -f $Name, $shown)
 }
@@ -137,10 +152,20 @@ Set-RailwayVar 'ENCRYPTION_KEY' $encryptionKey -Secret
 Set-RailwayVar 'DATABASE_URL'  "sqlite:///$VolumePath/checkbook.db"
 Set-RailwayVar 'UPLOAD_FOLDER' "$VolumePath/uploads"
 
+# --- Serving -----------------------------------------------------------------
+# Railway injects a PORT of its own choosing if this is unset, and the generated
+# domain then has to guess which port to route to. Pinning both sides to the
+# same number makes the routing a fact rather than a detection: the Procfile
+# binds $PORT, and the domain is created with --port 8080 to match.
+Set-RailwayVar 'PORT' '8080'
+
 # --- Behaviour ---------------------------------------------------------------
-# Safe here only because the Procfile pins gunicorn to one worker; the race
-# config.py warns about needs two processes to happen.
-Set-RailwayVar 'AUTO_UPGRADE_DB'   '1'
+# AUTO_UPGRADE_DB is deliberately not set. `ProductionConfig` assigns it False
+# as a class attribute (config.py), so under APP_ENV=production the environment
+# variable is read and then overwritten -- setting it to 1 looks like it enables
+# boot-time migrations and does nothing at all. That is by design: migrations
+# are a deploy step, not a side effect of a process starting. Run the chain
+# yourself after a schema change; see docs/deploy-railway.md.
 Set-RailwayVar 'SYNC_AUTO_ENABLED' '1'
 Set-RailwayVar 'APP_HTTPS'         '1'
 # Railway terminates TLS at one edge proxy in front of this container. Left at
@@ -152,6 +177,46 @@ Set-RailwayVar 'PUBLIC_BASE_URL'   $PublicBaseUrl
 
 foreach ($k in $fromEnv.Keys | Sort-Object) {
     Set-RailwayVar $k $fromEnv[$k] -Secret
+}
+
+# --- Verification ------------------------------------------------------------
+# Read back and prove it, rather than trusting that eighteen successful exit
+# codes mean eighteen correct values. The first version of this script set every
+# secret with a BOM in front of it and reported complete success.
+#
+# Two traps are deliberately avoided here. `railway variable list --kv` does not
+# reveal the corruption, only --json does. And `-eq`/`-ceq` compare
+# culture-sensitively, which treats U+FEFF as a zero-weight character and
+# happily calls a BOM-prefixed key equal to the real one -- the comparison has
+# to be Ordinal.
+if (-not $DryRun) {
+    Write-Host ''
+    Write-Host 'Verifying:'
+    $stored = railway variable list --json | Out-String | ConvertFrom-Json
+
+    $corrupt = @()
+    foreach ($prop in $stored.PSObject.Properties) {
+        $b = [Text.Encoding]::UTF8.GetBytes([string]$prop.Value)
+        if ($b.Length -ge 3 -and $b[0] -eq 0xef -and $b[1] -eq 0xbb -and $b[2] -eq 0xbf) {
+            $corrupt += $prop.Name
+        }
+    }
+    if ($corrupt.Count) {
+        throw ("These variables were stored with a byte-order mark and are wrong: {0}. " -f ($corrupt -join ', ')) +
+              'Do not deploy until this is resolved.'
+    }
+    Write-Host '  no byte-order marks           ok'
+
+    if (-not [string]::Equals($stored.ENCRYPTION_KEY, $encryptionKey, [StringComparison]::Ordinal)) {
+        throw 'ENCRYPTION_KEY as stored does not byte-for-byte match .sync_encryption_key. ' +
+              'Deploying now would make every stored institution token unreadable.'
+    }
+    Write-Host '  ENCRYPTION_KEY byte-exact     ok'
+
+    foreach ($required in @('APP_ENV', 'SECRET_KEY', 'DATABASE_URL', 'PUBLIC_BASE_URL')) {
+        if (-not $stored.$required) { throw "$required is not set on the service." }
+    }
+    Write-Host '  required variables present    ok'
 }
 
 Write-Host ''
