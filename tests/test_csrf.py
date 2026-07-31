@@ -213,9 +213,21 @@ def test_a_rejected_form_post_is_not_redirected(signed_in):
 # ---------------------------------------------------------------------------
 
 def _unsafe_rules(app):
+    """Every unsafe (path, method) that must carry a token.
+
+    Exempt views are excluded here rather than tolerated in the assertion, so
+    the sweep stays a strict "everything else must 403". The exempt set itself
+    is pinned by `test_the_csrf_exempt_set_is_exactly_the_api_login`, which is
+    where an exemption has to be argued for -- filtering by the marker means a
+    view that quietly gained one would vanish from this sweep *and* fail that
+    test, rather than silently leaving the sweep alone.
+    """
     out = []
     for rule in app.url_map.iter_rules():
         if rule.endpoint == 'static':
+            continue
+        view = app.view_functions.get(rule.endpoint)
+        if view is not None and getattr(view, '_dough_csrf_exempt', False):
             continue
         for method in sorted(rule.methods - {'GET', 'HEAD', 'OPTIONS'}):
             values = {name: 1 for name in rule.arguments}
@@ -231,7 +243,9 @@ def test_no_unsafe_route_accepts_a_missing_token(csrf_app, signed_in):
     is never the one somebody remembered to write a test for.
     """
     rules = _unsafe_rules(csrf_app)
-    assert len(rules) >= 30, f'only {len(rules)} unsafe routes found'
+    # ~34 before Phase 10, ~55 after /api/v1. Raised with the count: a floor
+    # every plausible regression clears has stopped guarding anything.
+    assert len(rules) >= 50, f'only {len(rules)} unsafe routes found'
 
     leaked = []
     for path, method, endpoint in rules:
@@ -242,16 +256,36 @@ def test_no_unsafe_route_accepts_a_missing_token(csrf_app, signed_in):
         f'  {m} {p} -> {code} ({ep})' for m, p, ep, code in leaked)
 
 
-def test_the_csrf_exempt_set_is_empty(csrf_app):
-    """Nothing is exempt yet, and adding the first one should be deliberate.
+def test_the_csrf_exempt_set_is_exactly_the_api_login(csrf_app):
+    """One exemption, and it had to be argued for.  [Phase 10]
 
-    `@csrf_exempt` exists for machine callers that authenticate some other way.
-    Until one exists, this pins the set at zero so an exemption cannot be added
-    as a quick way to make a failing test pass.
+    This was `== set()` from Phase 6 to Phase 9, pinning the set at zero so an
+    exemption could not be added as a quick way to make a failing test pass.
+    Phase 10 spends it, once, on `api_v1_auth.login`.
+
+    **Why that view and no other.** `@csrf_exempt` was written for "machine
+    callers that authenticate some other way", and the API login is the one
+    route that cannot participate in CSRF even in principle: there is no session
+    yet to bind a token to, because obtaining a credential is what the endpoint
+    is for.
+
+    What makes it safe is narrower than "it is an API endpoint". CSRF exists
+    because a browser attaches cookies to cross-site requests automatically —
+    the credential travels without the attacking page knowing it. This endpoint
+    accepts a *password*, which no browser attaches automatically, so a
+    cross-site forgery would have to already know the password, at which point
+    the forgery buys nothing.
+
+    Every other `/api/v1` route is **not** exempt, and that is load-bearing: the
+    web UI calls them with a session cookie, and a blueprint-wide exemption
+    would reopen the hole CSRF closes for exactly those calls. Bearer-carrying
+    requests skip the check in `app.py` on the strength of the *credential*, not
+    the path — see `test_session_authenticated_api_calls_still_need_a_token` in
+    tests/test_api_auth.py, which pins that distinction from the other side.
     """
     exempt = {endpoint for endpoint, view in csrf_app.view_functions.items()
               if getattr(view, '_dough_csrf_exempt', False)}
-    assert exempt == set()
+    assert exempt == {'api_v1_auth.login'}
 
 
 def test_every_post_form_in_the_templates_carries_the_field():

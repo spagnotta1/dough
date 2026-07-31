@@ -1,10 +1,43 @@
-"""The dashboard: the one page every session starts on."""
+"""`/` — the marketing page for strangers, the dashboard for everybody else.
+
+## One route, two pages
+
+`/` is the product's front door in both senses, and Phase 10.5 gave it a second
+audience: somebody who has never signed in and needs to be told what this is.
+
+The obvious alternative was to move the dashboard to `/dashboard` and give the
+landing page `/` outright. It was rejected because of what it costs elsewhere:
+`redirect('/')` appears at the end of sign-in, setup and invitation redemption,
+`url_for('core.dashboard')` resolves to `/` in every template and test, and
+`tests/test_url_map_snapshot.py` freezes the URL surface precisely so a change
+like that has to be deliberate. Every one of those is a place the move could be
+got subtly wrong, and the benefit is a tidier routing table.
+
+So the route branches instead. The *whole* branch is the two lines at the top of
+`dashboard()`, and it happens before any query runs — which matters more than it
+looks: this view is now `@public`, so an anonymous request reaches it with **no
+household bound** (`_household_for_request` returns None for a caller with no
+session), and every `Transaction.query` below would raise `TenantContextMissing`.
+The landing page touches no tenant data at all, and the early return is what
+guarantees it never gets the chance to.
+
+## Why `@public` is safe on a view that renders the dashboard
+
+`@public` means "may run without a session", not "shows data without a session".
+The marker suppresses `_require_login`'s redirect; it does not suppress tenancy.
+An anonymous caller gets the landing page and returns before touching the ORM,
+and a caller *with* a session has already been through `_enforce_session_lifetime`
+— so a session that is expired, or whose credential generation has been
+superseded, is cleared and redirected before this function runs at all.
+"""
 
 from datetime import datetime, timedelta
 
-from flask import Blueprint, render_template, request, session
+from flask import (Blueprint, current_app, redirect, render_template, request,
+                   session, url_for)
 from sqlalchemy import func
 
+from dough.auth import public
 from dough.services.networth import compute_net_worth, portfolio_snapshot
 from dough.services.recurring_service import detect_recurring_full
 
@@ -13,8 +46,60 @@ from models import AppUser, Budget, Transaction, db
 
 bp = Blueprint('core', __name__)
 
+
+def _is_anonymous():
+    """Should this request see the marketing page rather than the dashboard?
+
+    Two conditions, and the second is what keeps ~890 pre-existing tests green.
+
+    With `AUTH_ENABLED` off — TestingConfig, and any installation that has
+    deliberately turned authentication off — there is no such thing as an
+    anonymous visitor: `_household_for_request` hands every request the default
+    household, and the dashboard is what `/` has always meant. Answering
+    "anonymous" there would replace the dashboard with a marketing page for every
+    test in the suite that fetches `/`, and for every user of an auth-off
+    install.
+
+    `session['user_id']` rather than `current_user()` deliberately. This runs on
+    every dashboard load, and `current_user()` performs a bearer lookup and a
+    user query; the question here is only "is there a session", and the requests
+    that have one have already been validated by `_enforce_session_lifetime`
+    before reaching this view.
+    """
+    if not current_app.config.get('AUTH_ENABLED', True):
+        return False
+    return not session.get('user_id')
+
+
 @bp.route('/')
+@public
 def dashboard():
+    if _is_anonymous():
+        # An installation with no accounts at all is not a stranger's visit --
+        # it is an unfinished install, and the only useful thing anybody can do
+        # is create the first owner. `/setup` is that, and it refuses to run
+        # once an account exists, so this cannot become a way in later.
+        #
+        # Without this, a fresh install answers `/` with a marketing page whose
+        # "Sign in" leads to `/login`, which redirects to `/setup` anyway -- the
+        # same destination with a page in front of it, shown to somebody who is
+        # not an audience for marketing because they are the person installing
+        # the software.
+        #
+        # `.first()` rather than `.count()`: the question is existence, and the
+        # query runs on every anonymous view of `/`. `auth.login` asks it the
+        # same way on every sign-in page load.
+        if AppUser.query.first() is None:
+            return redirect(url_for('auth.setup'))
+        return render_template(
+            'landing.html',
+            # Whether the "Create account" button leads anywhere. A closed
+            # instance still renders the page and still shows the button --
+            # `/register` explains itself there. Passing the flag lets the page
+            # lead with "Sign in" instead, which is the action that works.
+            registration_open=current_app.config.get('ALLOW_REGISTRATION', False),
+            testimonials=current_app.config.get('MARKETING_TESTIMONIALS', []))
+
     start_date_str = request.args.get('start_date') or session.get('start_date')
     end_date_str = request.args.get('end_date') or session.get('end_date')
     account_filter = request.args.get('account') or session.get('account', 'both')

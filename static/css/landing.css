@@ -1,0 +1,330 @@
+/* ══════════════════════════════════════════════════════════════════════════
+   Landing — the public marketing page at `/`.  [Phase 10.5]
+   ──────────────────────────────────────────────────────────────────────────
+   This is the one signed-out page that does NOT lock its own palette the way
+   auth.css does, and the difference is deliberate.
+
+   auth.css pins the Light theme's four tokens because login/join/setup do not
+   load base.html and therefore have no theme engine, no saved preference to
+   read, and no CheckScheme to derive contrast-safe accents. That reasoning is
+   about *those* pages having no runtime.
+
+   The landing page has one. It extends base.html, so it inherits the theme
+   engine, the saved preference, --accent-on and --accent-ink — which is what
+   the Phase 10.5 brief means by "supports all themes". A returning visitor who
+   set Midnight three months ago sees Midnight here, not a copper page that
+   turns dark the instant they sign in.
+
+   So every colour below is a design-system token or a color-mix of one. There
+   are no literal colours in this file, which is the rule
+   tests/test_ui_invariants.py enforces for every page on its MIGRATED ledger,
+   and this page is on it.
+
+   Layout note: everything is intrinsic — clamp() for type, auto-fit/minmax for
+   the card grids — so there is exactly one media query in the file, for the
+   hero's two-column split. Breakpoint-per-component is what produced the band
+   of tablet widths that broke the nav row (see base.html's #primary-nav note).
+   ══════════════════════════════════════════════════════════════════════════ */
+
+.lp {
+  /* Local rhythm tokens, so the vertical spacing of the page is one decision
+     rather than forty. */
+  --lp-section-y: clamp(3.5rem, 9vw, 7rem);
+  --lp-gap: clamp(1rem, 2.5vw, 1.75rem);
+  --lp-max: 72rem;
+  --lp-radius: 16px;
+}
+
+.lp section { padding-block: var(--lp-section-y); }
+
+.lp__inner {
+  max-width: var(--lp-max);
+  margin-inline: auto;
+  padding-inline: clamp(1rem, 4vw, 2rem);
+}
+
+/* ── Hero ──────────────────────────────────────────────────────────────── */
+
+.lp-hero {
+  /* The accent wash is a mix rather than a fixed tint so it stays subtle on
+     every theme: 7% of the accent over the page background reads as a warm
+     glow on Light and as a faint lift on Midnight, instead of a copper band
+     that fights fourteen of the sixteen palettes. */
+  background:
+    radial-gradient(120% 90% at 50% 0%,
+      color-mix(in srgb, var(--red) 9%, transparent) 0%,
+      transparent 62%);
+  border-bottom: 1px solid var(--border);
+}
+
+.lp-hero__grid {
+  display: grid;
+  gap: clamp(2rem, 5vw, 3.5rem);
+  align-items: center;
+}
+
+@media (min-width: 60rem) {
+  .lp-hero__grid { grid-template-columns: 1.15fr .85fr; }
+}
+
+.lp-eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: .5rem;
+  font-size: .78rem;
+  font-weight: 600;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  color: var(--accent-ink, var(--red));
+  background: color-mix(in srgb, var(--red) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--red) 28%, transparent);
+  border-radius: 999px;
+  padding: .35rem .8rem;
+  margin-bottom: 1.25rem;
+}
+
+.lp-hero h1 {
+  font-size: clamp(2.1rem, 6vw, 3.6rem);
+  line-height: 1.08;
+  letter-spacing: -.02em;
+  font-weight: 700;
+  margin: 0 0 1rem;
+  color: var(--fg);
+}
+
+.lp-hero h1 .lp-accent { color: var(--accent-ink, var(--red)); }
+
+.lp-hero__lede {
+  font-size: clamp(1rem, 1.9vw, 1.2rem);
+  line-height: 1.6;
+  color: color-mix(in srgb, var(--fg) 72%, transparent);
+  margin: 0 0 1.75rem;
+  max-width: 34rem;
+}
+
+.lp-hero__art {
+  display: flex;
+  justify-content: center;
+}
+
+/* ── Calls to action ───────────────────────────────────────────────────── */
+
+.lp-cta-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .75rem;
+  align-items: center;
+}
+
+.lp-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: .5rem;
+  padding: .8rem 1.5rem;
+  border-radius: 10px;
+  font-size: .95rem;
+  font-weight: 600;
+  text-decoration: none;
+  border: 1px solid transparent;
+  transition: background .15s ease, border-color .15s ease, transform .15s ease;
+}
+
+.lp-btn:focus-visible {
+  outline: 2px solid var(--red);
+  outline-offset: 2px;
+}
+
+.lp-btn--primary {
+  background: var(--red);
+  /* --accent-on is what base.html's CheckScheme computed for this theme: the
+     colour that actually clears 4.5:1 on the accent, rather than a guess at
+     white or black. Fourteen of the sixteen themes disagree about which. */
+  color: var(--accent-on, var(--panel));
+}
+.lp-btn--primary:hover { background: color-mix(in srgb, var(--red) 86%, var(--fg)); }
+
+.lp-btn--ghost {
+  background: var(--panel);
+  color: var(--fg);
+  border-color: var(--border);
+}
+.lp-btn--ghost:hover { border-color: var(--red); }
+
+.lp-btn--quiet {
+  background: transparent;
+  color: color-mix(in srgb, var(--fg) 70%, transparent);
+  padding-inline: .5rem;
+}
+.lp-btn--quiet:hover { color: var(--red); }
+
+/* ── Trust strip ───────────────────────────────────────────────────────── */
+
+.lp-trust {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1.25rem;
+  margin-top: 2rem;
+  font-size: .82rem;
+  color: color-mix(in srgb, var(--fg) 60%, transparent);
+}
+
+.lp-trust li {
+  display: flex;
+  align-items: center;
+  gap: .4rem;
+  list-style: none;
+}
+
+.lp-trust svg { color: var(--accent-ink, var(--red)); flex-shrink: 0; }
+
+/* ── Section headings ──────────────────────────────────────────────────── */
+
+.lp-head { max-width: 40rem; margin: 0 auto clamp(2rem, 4vw, 3rem); text-align: center; }
+
+.lp-head h2 {
+  font-size: clamp(1.5rem, 3.4vw, 2.25rem);
+  line-height: 1.2;
+  letter-spacing: -.015em;
+  font-weight: 700;
+  margin: 0 0 .75rem;
+  color: var(--fg);
+}
+
+.lp-head p {
+  font-size: 1rem;
+  line-height: 1.6;
+  color: color-mix(in srgb, var(--fg) 68%, transparent);
+  margin: 0;
+}
+
+/* ── Feature cards ─────────────────────────────────────────────────────── */
+
+.lp-grid {
+  display: grid;
+  gap: var(--lp-gap);
+  /* auto-fit rather than a column count: the grid reflows at whatever width the
+     content actually needs, so there is no breakpoint to get wrong and no
+     orphaned single card on a tablet. */
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 17rem), 1fr));
+}
+
+.lp-card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--lp-radius);
+  padding: 1.6rem;
+  display: flex;
+  flex-direction: column;
+  gap: .7rem;
+}
+
+.lp-card__icon {
+  width: 2.5rem;
+  height: 2.5rem;
+  display: grid;
+  place-items: center;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--red) 14%, transparent);
+  color: var(--accent-ink, var(--red));
+  margin-bottom: .3rem;
+}
+
+.lp-card h3 {
+  font-size: 1.02rem;
+  font-weight: 650;
+  margin: 0;
+  color: var(--fg);
+}
+
+.lp-card p {
+  font-size: .9rem;
+  line-height: 1.6;
+  margin: 0;
+  color: color-mix(in srgb, var(--fg) 70%, transparent);
+}
+
+/* ── Alternating detail rows ───────────────────────────────────────────── */
+
+.lp-alt { background: color-mix(in srgb, var(--fg) 3%, transparent); }
+
+.lp-split {
+  display: grid;
+  gap: clamp(1.5rem, 4vw, 3rem);
+  align-items: center;
+}
+
+@media (min-width: 60rem) {
+  .lp-split { grid-template-columns: 1fr 1fr; }
+  /* The second row reverses, so the mascot alternates sides down the page
+     rather than forming a column of identical layouts. */
+  .lp-split--flip .lp-split__art { order: -1; }
+}
+
+.lp-split h3 {
+  font-size: clamp(1.3rem, 2.6vw, 1.75rem);
+  line-height: 1.25;
+  font-weight: 680;
+  margin: 0 0 .75rem;
+  color: var(--fg);
+}
+
+.lp-split p {
+  font-size: .98rem;
+  line-height: 1.65;
+  color: color-mix(in srgb, var(--fg) 72%, transparent);
+  margin: 0 0 1rem;
+}
+
+.lp-split ul { margin: 0; padding: 0; list-style: none; display: grid; gap: .6rem; }
+
+.lp-split li {
+  display: flex;
+  gap: .6rem;
+  font-size: .92rem;
+  line-height: 1.5;
+  color: color-mix(in srgb, var(--fg) 78%, transparent);
+}
+
+.lp-split li svg { color: var(--accent-ink, var(--red)); flex-shrink: 0; margin-top: .15rem; }
+
+.lp-split__art { display: flex; justify-content: center; }
+
+/* ── Closing CTA ───────────────────────────────────────────────────────── */
+
+.lp-close { text-align: center; }
+
+.lp-close .lp-cta-row { justify-content: center; }
+
+.lp-close__panel {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--lp-radius);
+  padding: clamp(2rem, 5vw, 3.5rem) clamp(1.25rem, 4vw, 3rem);
+}
+
+/* ── Footer ────────────────────────────────────────────────────────────── */
+
+.lp-foot {
+  border-top: 1px solid var(--border);
+  padding-block: 2rem;
+  font-size: .84rem;
+  color: color-mix(in srgb, var(--fg) 55%, transparent);
+}
+
+.lp-foot__inner {
+  max-width: var(--lp-max);
+  margin-inline: auto;
+  padding-inline: clamp(1rem, 4vw, 2rem);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  justify-content: space-between;
+  align-items: center;
+}
+
+/* ── Motion ────────────────────────────────────────────────────────────── */
+
+@media (prefers-reduced-motion: no-preference) {
+  .lp-btn:hover { transform: translateY(-1px); }
+}

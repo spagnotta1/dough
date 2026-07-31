@@ -36,6 +36,10 @@ from dough.auth import (CSRFError, SAFE_METHODS, csrf_field, csrf_token,
                         validate_csrf, wants_json)
 from dough.ai import catalog
 from dough.ai.service import AIService
+# Phase 10. The versioned API is wired here rather than in a blueprint because
+# three of its four attachment points are request hooks that have to interleave
+# with the ones below in a specific order -- see the calls for the reasoning.
+import dough.api as api
 from dough.blueprints import register as register_blueprints
 from dough.logging import configure_logging, current_trace_id
 # Imported here rather than left to whichever blueprint happens to need it
@@ -45,6 +49,8 @@ from dough.logging import configure_logging, current_trace_id
 # fact about the application rather than a comment about an unused import.
 from dough.services import audit
 from dough.services.cache import household_scope
+from dough.services.email import EmailService
+from dough.services.ratelimit import Limiter
 from dough.services.finance_context import build_finance_context
 from dough.services.networth import wealth_snapshot
 from dough.tenancy import TenantContextMissing, tenant_scope, unscoped
@@ -136,7 +142,11 @@ def create_app(test_config=None, config_name=None):
     # cookies -- and fail in ways that have nothing to do with the code.
     if config_name is None and test_config and test_config.get('TESTING'):
         config_name = 'testing'
-    app.config.from_object(get_config(config_name))
+    # Held rather than discarded: `warnings()` is read off it below, and calling
+    # get_config twice would re-run validation and re-resolve the secrets for a
+    # second answer identical to this one.
+    config = get_config(config_name)
+    app.config.from_object(config)
     if test_config:
         app.config.update(test_config)
     os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
@@ -153,6 +163,11 @@ def create_app(test_config=None, config_name=None):
     # households to exist.
     AIService.init_app(app, adapter=app.config.get('AI_ADAPTER'),
                        scope_provider=household_scope)
+    # Two more per-application services, for the reason above: the suite builds
+    # many applications in one process, and a module global would let one test's
+    # mail or spent rate-limit budget be visible to the next.  [Phase 10.5]
+    EmailService.init_app(app, backend=app.config.get('MAIL_BACKEND_INSTANCE'))
+    Limiter.init_app(app)
 
     # Logging first, and before any other hook, so that anything the rest of
     # this function or the request chain logs already carries a trace id. It
@@ -163,6 +178,26 @@ def create_app(test_config=None, config_name=None):
     # The append-only guard was installed by importing the module above; this
     # records that the application depends on it having happened.  [Phase 8]
     app.extensions['dough_audit'] = audit
+
+    # Configuration that is legal but probably not intended.  [Phase 10.5]
+    # Raised as warnings rather than errors because each has a real use -- see
+    # `ProductionConfig.warnings`. After `configure_logging`, so the lines carry
+    # a trace id like everything else.
+    for note in getattr(config, 'warnings', lambda: [])():
+        app.logger.warning('Configuration: %s', note)
+
+    # Bearer authentication, second only to logging, and the position is the
+    # whole design.  [Phase 10]
+    #
+    # It has to run *before* `_require_login` and `_verify_csrf` below, because
+    # both of those ask questions whose answer changes when a request carries an
+    # API token: there is no session for the first to find and none for the
+    # second to bind a token to. Registered here, in registration order, both
+    # read `api.bearer_actor()` and defer.
+    #
+    # After `configure_logging`, so a rejected credential still gets a trace id
+    # in its response -- the same argument that puts the logging hook first.
+    api.install_guard(app)
 
     @app.context_processor
     def _inject_ai_catalog():
@@ -210,7 +245,7 @@ def create_app(test_config=None, config_name=None):
         def _enforce_session_lifetime():
             """Validate a session that carries a user id. None means proceed.
 
-            Three ways a session with a `user_id` in it is still not usable:
+            Four ways a session with a `user_id` in it is still not usable:
 
             1. **The user is gone.** Before this phase nothing deleted an
                AppUser, so this was unreachable. "Remove member" makes it
@@ -221,9 +256,16 @@ def create_app(test_config=None, config_name=None):
                TenantContextMissing. What actually happened to that person is
                that they were removed, so they get a clean sign-out.
 
-            2. **Idle too long.** SESSION_IDLE_SECONDS since the last request.
+            2. **The credentials behind it were invalidated.** A password
+               change raises `AppUser.session_version` past the value this
+               session was minted under.  [Phase 10.5] It arrives here as case 1
+               does — `current_user()` answers None for both — because the
+               handling is the same and there is nothing to tell apart: neither
+               session can be repaired, only replaced.
 
-            3. **Open too long.** SESSION_ABSOLUTE_SECONDS since sign-in,
+            3. **Idle too long.** SESSION_IDLE_SECONDS since the last request.
+
+            4. **Open too long.** SESSION_ABSOLUTE_SECONDS since sign-in,
                regardless of activity. The idle timer alone can be held open
                forever by a tab that polls, which several pages here do.
 
@@ -269,6 +311,34 @@ def create_app(test_config=None, config_name=None):
             """
             view = app.view_functions.get(request.endpoint)
             if view is not None and (is_public(view) or request.endpoint == 'static'):
+                # A public view may still be reached by a browser that *has* a
+                # session, and since Phase 10.5 one of them changes what it
+                # renders based on it: `/` is the marketing page for a stranger
+                # and the dashboard for a signed-in user.
+                #
+                # So the session is validated here too. Without this, `@public`
+                # would be a way to skip `_enforce_session_lifetime` entirely,
+                # and an expired or credential-invalidated session would still
+                # be shown the dashboard at `/` -- the one place where the
+                # marker's meaning ("may run without a session") and its effect
+                # ("no session check runs") come apart.
+                #
+                # The response is discarded rather than returned. A public route
+                # must not redirect somebody to the login page for failing a
+                # check it does not require; `_enforce_session_lifetime` has
+                # already cleared the cookie, so the request simply proceeds as
+                # what it now is -- anonymous.
+                if request.endpoint != 'static' and session.get('user_id'):
+                    _enforce_session_lifetime()
+                return None
+            # A valid API token is a credential in its own right.  [Phase 10]
+            # It has already been verified by the hook registered above, which
+            # refuses a *bad* token itself -- so reaching here with an actor set
+            # means the credential is good, and the session-lifetime rules below
+            # do not apply: a token carries its own expiry and its own
+            # revocation, and an idle timer on a background sync would be a
+            # session concept applied to something that is not a session.
+            if api.bearer_actor() is not None:
                 return None
             if session.get('user_id'):
                 return _enforce_session_lifetime()
@@ -306,6 +376,22 @@ def create_app(test_config=None, config_name=None):
             return None
         view = app.view_functions.get(request.endpoint)
         if view is not None and is_csrf_exempt(view):
+            return None
+        # Bearer-authenticated requests do not participate in CSRF.  [Phase 10]
+        #
+        # CSRF exists because a browser attaches cookies to cross-site requests
+        # *automatically* -- the credential travels without the attacking page
+        # having to know it. An `Authorization` header is never attached
+        # automatically, and a cross-origin page cannot set one without a CORS
+        # preflight this application never grants. So a request carrying a valid
+        # token is by construction one whose sender knew the credential, and
+        # there is nothing left for a CSRF token to prove.
+        #
+        # The condition is *authenticated by token*, never *path starts with
+        # /api*. Exempting a path would exempt the same routes when a browser
+        # reached them with a session cookie, which is precisely the hole CSRF
+        # closes -- and the web UI does call /api/v1 with a cookie.
+        if api.bearer_actor() is not None:
             return None
         if not app.config.get('CSRF_ENABLED', True):
             return None
@@ -348,6 +434,15 @@ def create_app(test_config=None, config_name=None):
                            request.method, request.path,
                            request.headers.get('Origin'),
                            request.headers.get('Sec-Fetch-Site'))
+        # `csrf_failed` rather than a bare `forbidden`.  [Phase 10] Three
+        # different conditions answer 403 here and the client's response to each
+        # differs: reload and resubmit, reissue the token with more scope, ask
+        # an owner. The status cannot distinguish them; the code can.
+        if api.is_api_request():
+            return api.errors.api_error_response(
+                403, api.errors.ErrorCode.CSRF_FAILED,
+                'This request could not be verified. Reload and try again, or '
+                'authenticate with an API token instead.')
         if wants_json():
             return jsonify({'error': 'csrf verification failed'}), 403
         return render_template('login.html', error=CSRFError.description), 403
@@ -375,6 +470,14 @@ def create_app(test_config=None, config_name=None):
         It is not a wildcard: nothing downstream treats it as "all households",
         and any scoped query reached without a household raises.
         """
+        # An API token names its household directly.  [Phase 10] Read before
+        # the session, because a request may legitimately carry both -- a
+        # browser devtools console calling /api/v1 with an explicit
+        # Authorization header while a session cookie rides along -- and the
+        # explicit credential is the one the caller meant.
+        actor = api.bearer_actor()
+        if actor is not None:
+            return actor.household_id
         uid = session.get('user_id')
         if uid:
             user = AppUser.query.get(uid)
@@ -439,8 +542,27 @@ def create_app(test_config=None, config_name=None):
     # registration, and both of those say something this one cannot.
     # ---------------------------------------------------------------------------
 
-    def _error_response(status, title, message, expression='concerned'):
+    def _error_response(status, title, message, expression='concerned',
+                        api_message=None):
+        """One failure, rendered for whichever client asked.
+
+        `api_message` is separate from `message` because the two audiences are
+        different.  [Phase 10] The HTML wording talks about pages and links,
+        which is right for somebody who clicked one and meaningless to a client
+        that requested a resource. Handlers pass it only where the specific
+        wording is worth keeping -- `@owner_required`'s refusal is actionable in
+        both places -- and otherwise let the API use its own default for the
+        status.
+        """
         trace = current_trace_id()
+        # The versioned API answers in its own envelope. Checked here rather
+        # than by registering a second set of handlers on the API blueprints: a
+        # 404 for an unrouted path belongs to no blueprint, and
+        # `/api/v1/transctions` -- the typo a client will actually make -- has
+        # to answer in the envelope or the client cannot parse the thing telling
+        # it about its typo.
+        if api.is_api_request():
+            return api.errors.api_error_response(status, message=api_message)
         if wants_json():
             body = {'error': message, 'status': status}
             if trace:
@@ -464,7 +586,9 @@ def create_app(test_config=None, config_name=None):
         # that away.
         message = getattr(error, 'description', None) or \
             'You do not have permission to do that.'
-        return _error_response(403, 'Not allowed', message)
+        # Passed to the API too: "Only a household owner can do that." tells a
+        # client's user what to do next, and no generic 403 wording can.
+        return _error_response(403, 'Not allowed', message, api_message=message)
 
     @app.errorhandler(413)
     def _too_large(error):
@@ -511,6 +635,18 @@ def create_app(test_config=None, config_name=None):
     # this call is here rather than beside `sync_bp` below.
     # ---------------------------------------------------------------------------
     register_blueprints(app)
+
+    # The versioned API.  [Phase 10] Registered after the HTML blueprints and
+    # unconditionally -- unlike `auth` and `household`, which only exist when
+    # AUTH_ENABLED. The URL surface should not depend on the authentication
+    # mode: a client probing `/api/v1/settings` must get a 401 rather than a
+    # 404, since "this endpoint does not exist" and "you are not signed in" are
+    # different facts and only one of them is true.
+    #
+    # The error handlers go on last of all, so the CSRF and tenancy handlers
+    # registered above keep their more specific responses.
+    api.register(app)
+    api.install_error_handlers(app)
 
     # ---------------------------------------------------------------------------
     # Schema management — Alembic is the single source of truth (ADR-0007).

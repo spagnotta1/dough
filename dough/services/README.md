@@ -58,6 +58,14 @@ callable from the sync scheduler thread, where there is no request at all.
 | `networth.py` | `compute_net_worth`, `portfolio_snapshot`, `monthly_outgo`, `snapshot_history`, `wealth_snapshot` | app only | `wealth_snapshot` is the single derivation the Investments page, both copilot endpoints and the tests all read |
 | `finance_context.py` | `build_finance_context`, `copilot_context`, `wealth_context`, `months_ago` | app; `g` transitively | Owns the `CHAT_RECENT_TXN_LIMIT` / `CHAT_TOP_MERCHANT_LIMIT` / `CHAT_ANOMALY_LIMIT` / `CHAT_TREND_MONTHS` sizing constants |
 | `categorization.py` | `get_category_rules`, `reset_category_rules` | none | Process-wide cache. `finance_sync/repository.py` deliberately does **not** use it |
+| `identity.py` | `register_account`, `set_password`, `set_email`, `revoke_all_credentials`, `issue_token`, `redeem`, the validators | app only | **[Phase 10.5]** The account lifecycle, once, for the three surfaces that create or change one. Deliberately does *not* bump `session_version` — `dough/auth.py`'s `before_flush` listener owns that, so a caller who has never heard of this module still invalidates credentials |
+| `email.py` | `build_backend`, `current_email`, the three backends | `current_app` in `current_email` only | **[Phase 10.5]** `console` / `memory` / `smtp` behind one `send()`. `ConsoleBackend` writes to **stdout, never `logging`** — the payload is a live credential and `_SECRETISH` cannot recognise it (SEC-0024) |
+| `ratelimit.py` | `policy_for`, `build_backend`, `current_limiter` | `current_app` in `current_limiter` only | **[Phase 10.5]** SEC-0018's seam. `POLICIES` is the whole limit table in one place; four of the eight have call sites, the rest await a shared backend |
+
+The last three are per-application services rather than plain function modules:
+each has an `init_app` and lives on `app.extensions`, exactly as `AIService`
+does, so the suite's many `create_app()` calls cannot share one instance's mail,
+counters or budget.
 
 The import graph is a line, not a web:
 `finance_context` → {`networth`, `recurring_service`} → `models`. Nothing imports

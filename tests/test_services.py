@@ -22,6 +22,7 @@ import pytest
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SERVICES_DIR = os.path.join(REPO_ROOT, 'dough', 'services')
 BLUEPRINTS_DIR = os.path.join(REPO_ROOT, 'dough', 'blueprints')
+API_V1_DIR = os.path.join(REPO_ROOT, 'dough', 'api', 'v1')   # [Phase 10]
 
 # Modules in dough/services/ and the functions each is expected to own.
 SERVICE_FUNCTIONS = {
@@ -48,6 +49,53 @@ SERVICE_FUNCTIONS = {
     # exported because the values it has to strip are the ones no call site
     # produces today -- so it is tested directly rather than through record().
     'audit': ('record', 'recent', 'redact'),
+    # ---------------------------------------------------------------------
+    # Phase 10. The write-side logic the web blueprints used to hold inline,
+    # extracted so `/api/v1` performs the same operations rather than a second
+    # implementation of them. Each of these has two callers, which is the point:
+    # a single caller would not have justified the move.
+    # ---------------------------------------------------------------------
+    # The ledger's write side. `dough/services/transactions.py` above is the
+    # read side; the two are kept apart because the read side is what the sync
+    # scheduler and the anomaly scorer use, and it has no business importing
+    # pandas-driven CSV handling.
+    'ledger': ('serialize', 'infer_signed_amount', 'import_csv', 'undo_import',
+               'create_transaction', 'update_transaction', 'delete_transaction',
+               'bulk_update_category', 'bulk_delete', 'export_rows'),
+    'budgets': ('serialize', 'list_budgets', 'upsert_budget', 'delete_budget',
+                'month_window', 'spend_by_category', 'status'),
+    'holdings': ('list_holdings', 'create_holding', 'update_holding',
+                 'delete_holding'),
+    'accounts': ('synced_accounts', 'connections', 'last_sync_at',
+                 'manual_balances', 'set_manual_balance',
+                 'ledger_account_names', 'overview'),
+    # The credential lifecycle for `/api/v1`. The only module that reads
+    # `api_tokens`, which is the isolation guarantee for a table the ORM tenant
+    # backstop deliberately does not cover.
+    'api_tokens': ('hash_token', 'normalize_scopes', 'household_tokens',
+                   'authenticate', 'issue', 'revoke', 'touch'),
+    # ---------------------------------------------------------------------
+    # Phase 10.5. The identity lifecycle and the two abstractions it needs.
+    # ---------------------------------------------------------------------
+    # Creating an account, proving an address, replacing a password, and
+    # invalidating every credential the account holds. Three surfaces call these
+    # -- `/register`, `/settings` and the reset flow -- which is the duplication
+    # this module exists to prevent: three copies of the password rules is how
+    # the third one ends up accepting six characters.
+    'identity': ('normalize_email', 'validate_email', 'validate_username',
+                 'validate_password', 'find_by_email', 'find_by_username',
+                 'register_account', 'set_password', 'set_email',
+                 'revoke_all_credentials', 'hash_token', 'issue_token',
+                 'redeem', 'mark_email_verified'),
+    # Where a verification or reset link goes. `build_backend` is the switch
+    # `MAIL_BACKEND` actually operates; `current_email` is the per-application
+    # lookup, mirroring `current_ai`.
+    'email': ('build_backend', 'current_email'),
+    # SEC-0018's seam. `policy_for` and `build_backend` are module-level for the
+    # same reason everything else here is: a test asserts on the declared
+    # policies without building an application, which is what makes a loosened
+    # limit fail a test rather than surface in a bill.
+    'ratelimit': ('policy_for', 'build_backend', 'current_limiter'),
 }
 
 # The closure names Phase 3 removed from app.py. Any of these reappearing as a
@@ -204,7 +252,86 @@ def test_every_blueprint_module_is_registered():
                       'SQLALCHEMY_DATABASE_URI': 'sqlite://'})
     # `finance_sync` is registered by app.py but lives in its own package -- it
     # predates this one and owns the adapter pipeline as well as its routes.
-    assert sorted(app.blueprints) == sorted(_blueprint_modules() + ['finance_sync'])
+    #
+    # Phase 10 adds `dough/api/v1/`, held to the same rule and for a stronger
+    # reason: a v1 module nobody registers is not merely dead code, it is a
+    # documented public endpoint that answers 404. The naming convention
+    # (`api_v1_<module>`) is asserted here too -- it is what keeps these from
+    # colliding with the HTML blueprints, several of which also have an `index`.
+    expected = (_blueprint_modules()
+                + ['finance_sync']
+                + [f'api_v1_{name}' for name in _api_v1_modules()])
+    assert sorted(app.blueprints) == sorted(expected)
+
+
+def _api_v1_modules():
+    return sorted(name[:-3] for name in os.listdir(API_V1_DIR)
+                  if name.endswith('.py') and name != '__init__.py')
+
+
+@pytest.mark.parametrize('module', _api_v1_modules())
+def test_api_resource_does_not_import_app_or_another_blueprint(module):
+    """The same cycle rule the HTML blueprints follow, for the same reason.
+
+    Extended here to cover `dough.blueprints` as well as `app`: an API resource
+    importing a web blueprint would couple the two surfaces at exactly the seam
+    this phase exists to keep clean -- and it is the tempting shortcut, since
+    the logic a resource wants is often visible in the blueprint that used to
+    hold it. It belongs in `dough/services/`, which is where both may reach.
+    """
+    path = os.path.join(API_V1_DIR, module + '.py')
+    offenders = []
+    for node in ast.walk(_parse(path)):
+        if isinstance(node, ast.Import):
+            offenders += [a.name for a in node.names
+                          if a.name.split('.')[0] == 'app'
+                          or a.name.startswith('dough.blueprints')]
+        elif isinstance(node, ast.ImportFrom):
+            imported = node.module or ''
+            if (imported.split('.')[0] == 'app'
+                    or imported.startswith('dough.blueprints')):
+                offenders.append(imported)
+    assert offenders == [], f'{module}.py imports {offenders}'
+
+
+@pytest.mark.parametrize('module', _api_v1_modules())
+def test_api_resource_holds_no_business_logic(module):
+    """The architectural claim of Phase 10, checked mechanically.
+
+    A resource module reads the request, calls a service, and shapes a response.
+    The specific thing forbidden here is a *write* issued from the route: any
+    `db.session.add/delete/commit` means the module is doing domain work that
+    its counterpart on the web side does not share, and the two surfaces have
+    started to diverge.
+
+    Reads are not forbidden. Several resources legitimately run a query to
+    serialize a list, and a rule against that would push trivial passthroughs
+    into `dough/services/` without making anything safer.
+
+    `chat.py` is the one exception and it is named rather than pattern-matched:
+    persisting a message mid-stream has to happen inside the generator, after
+    `teardown_request` has released the request's tenant scope, so it cannot be
+    delegated to a service that would be called in the wrong frame. See its
+    module docstring.
+    """
+    if module == 'chat':
+        pytest.skip('documented exception -- see dough/api/v1/chat.py')
+
+    tree = _parse(os.path.join(API_V1_DIR, module + '.py'))
+    writes = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        if not isinstance(func, ast.Attribute) or func.attr not in (
+                'add', 'delete', 'commit'):
+            continue
+        value = func.value
+        if isinstance(value, ast.Attribute) and value.attr == 'session':
+            writes.append(f'db.session.{func.attr}')
+    assert writes == [], (
+        f'{module}.py writes to the database directly: {writes}. '
+        f'Move it into dough/services/ so the web UI shares it.')
 
 
 def test_no_route_is_defined_in_app_py():

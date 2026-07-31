@@ -1,0 +1,1942 @@
+openapi: 3.1.0
+
+# The formal contract for /api/v1.  [Phase 10]
+#
+# Hand-written, not generated, and that is a decision worth recording. A
+# generator reflecting the URL map would always agree with the code and would
+# therefore never disagree with it -- which sounds like the goal and is not. The
+# value of a specification is that it states what was *intended*, so that a
+# route which drifts from it produces a conflict somebody has to resolve. A spec
+# derived from the implementation cannot ever be wrong about the implementation,
+# and so can never catch it changing.
+#
+# Drift is caught instead by tests/test_openapi.py, which asserts every
+# (path, method) the application serves under /api/v1 appears here and vice
+# versa. That is the half a generator would have given us, without the half it
+# would have taken away.
+
+info:
+  title: Dough API
+  version: "1.0.0"
+  summary: A household's finances — accounts, ledger, budgets, investments and AI.
+  description: |
+    One versioned contract for every client: the web UI, and any native or
+    third-party client that comes later.
+
+    ## Response envelope
+
+    Every response — success or failure — is one of two shapes.
+
+    ```json
+    { "success": true,  "data": ..., "meta": { ... } }
+    { "success": false, "error": { "code", "message", "details" }, "meta": {...} }
+    ```
+
+    `meta.request_id` is the same value returned in the `X-Request-ID` header
+    and written on every server log line for the request. Quote it in a bug
+    report and the exact log lines can be found.
+
+    Two documented exceptions:
+
+    - `204 No Content` responses have no body at all. A body saying
+      `{"success": true}` would be a 200 wearing the wrong status code.
+    - The streaming endpoints answer `text/event-stream`. Failures decided
+      *before* the stream opens are ordinary envelope errors; a failure
+      mid-stream arrives as an SSE `error` event, which is the only channel left
+      once the response has begun.
+
+    ## Authentication
+
+    Two credentials are accepted and they are for different callers.
+
+    **API token** (`Authorization: Bearer dgh_...`) — for native and
+    third-party clients. Obtain one from `POST /auth/login`. It is shown once
+    and stored only as a hash, so it cannot be recovered; revoke and reissue if
+    it is lost. Bearer requests do not participate in CSRF.
+
+    **Session cookie** — the web UI. Unsafe methods additionally require
+    `X-CSRF-Token`. This applies to `/api/v1` exactly as it does to the rest of
+    the application: the CSRF requirement is waived for the *credential*, never
+    for the path.
+
+    ## Scopes
+
+    `read` permits safe methods. `write` permits everything and implies `read`.
+    A token lacking `write` receives `403 insufficient_scope` on any unsafe
+    method, with the required scope named in `error.details`.
+
+    ## Pagination
+
+    Collections accept `page`, `page_size`, `sort` and `order`, and report
+    `meta.pagination`. `page` is 1-based. `page_size` is clamped to the server
+    maximum rather than refused; an unparseable value *is* refused, because that
+    is a client bug and silently serving page 1 hides it.
+
+    `/accounts` and `/budgets` are unpaged. A household has a handful of each,
+    and paging them would make every client reassemble something that always
+    fits in one response.
+
+    ## Filtering
+
+    Filter parameters are per-resource, but spelled consistently:
+    `?<field>=` for equality, `?date_from=`/`?date_to=` for inclusive ranges
+    (`YYYY-MM-DD`), `?q=` for free text.
+
+    ## Errors
+
+    `error.code` is a closed vocabulary and is what a client should switch on.
+    `error.message` is written for a person to read and may be reworded at any
+    time — never match on it.
+  contact:
+    name: docs/api/README.md
+  license:
+    name: Proprietary
+
+servers:
+  - url: /api/v1
+    description: This installation.
+
+security:
+  - bearerAuth: []
+  - sessionCookie: []
+
+tags:
+  - name: auth
+    description: Obtaining, inspecting and revoking credentials.
+  - name: accounts
+    description: Where the household keeps money, and what it is worth.
+  - name: transactions
+    description: The ledger.
+  - name: budgets
+    description: Monthly targets and progress against them.
+  - name: investments
+    description: Portfolio analysis and manually entered holdings.
+  - name: household
+    description: Members, invitations and the audit trail.
+  - name: chat
+    description: Conversations with the assistant.
+  - name: copilot
+    description: Generated briefings and one-shot questions.
+  - name: settings
+    description: What this installation can do.
+
+paths:
+
+  # ---------------------------------------------------------------- auth ----
+  /auth/login:
+    post:
+      tags: [auth]
+      summary: Exchange a username and password for an API token.
+      description: |
+        The only endpoint that accepts a password, and the only one reachable
+        without a credential. The returned token is shown once and never stored
+        in recoverable form.
+
+        Throttled by source address and by account, sharing counters with the
+        web login — see `docs/security.md` SEC-0004.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [username, password]
+              properties:
+                username: { type: string, maxLength: 80 }
+                password: { type: string, maxLength: 200 }
+                device_name:
+                  type: string
+                  maxLength: 80
+                  description: How this token appears in the revocation list.
+                  default: API client
+                ttl_days:
+                  type: integer
+                  minimum: 1
+                  maximum: 3650
+                  default: 90
+                scopes:
+                  type: array
+                  items: { $ref: '#/components/schemas/Scope' }
+                  default: [read, write]
+      responses:
+        '201':
+          description: A new token.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Success'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/IssuedToken' }
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+
+  /auth/me:
+    get:
+      tags: [auth]
+      summary: Who this credential acts as, and what it may do.
+      description: |
+        The first call a client should make after storing a token. Reports the
+        scopes so a client can hide what its token cannot do, rather than
+        discovering the limit as a 403 mid-edit.
+      responses:
+        '200':
+          description: The current identity.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Success'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/Identity' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+
+  /auth/tokens:
+    get:
+      tags: [auth]
+      summary: Every token this household has issued, including revoked ones.
+      description: |
+        Household-wide rather than per-user: a household shares its finances, so
+        a member seeing that a credential exists is not a disclosure. Revoking
+        somebody else's requires ownership.
+      responses:
+        '200':
+          description: The household's tokens.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Success'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items: { $ref: '#/components/schemas/ApiToken' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+    post:
+      tags: [auth]
+      summary: Issue an additional token.
+      description: |
+        A token may mint another, which is what lets a device rotate its own
+        credential without a password round trip. It cannot escalate: the new
+        token's powers resolve through the same user.
+
+        `ttl_days` sent as `null` means the token does not expire — a choice
+        that has to be stated rather than acquired by omission.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string, maxLength: 80 }
+                scopes:
+                  type: array
+                  items: { $ref: '#/components/schemas/Scope' }
+                ttl_days:
+                  type: [integer, 'null']
+                  minimum: 1
+                  maximum: 3650
+      responses:
+        '201':
+          description: The new token.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Success'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/IssuedToken' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /auth/tokens/{token_id}:
+    delete:
+      tags: [auth]
+      summary: Revoke a token.
+      description: |
+        Permitted to a household owner, or to the token revoking itself — a
+        device must be able to sign itself out with no owner present.
+      parameters:
+        - $ref: '#/components/parameters/TokenId'
+      responses:
+        '204': { description: Revoked. }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  # ------------------------------------------------------------ accounts ----
+  /accounts:
+    get:
+      tags: [accounts]
+      summary: Every account, however it got here.
+      description: |
+        Merges three sources that were previously three endpoints: accounts
+        synced from an institution, balances typed in by hand, and account names
+        that exist only on imported transactions. Each entry declares its
+        `kind`, because a synced balance and a hand-typed one differ in
+        trustworthiness and a client showing them identically would mislead.
+
+        A `ledger`-kind entry has `balance: null` — not `0`, which a client
+        would add into a total.
+
+        Unpaged: a household has a handful of accounts.
+      parameters:
+        - name: kind
+          in: query
+          schema: { $ref: '#/components/schemas/AccountKind' }
+      responses:
+        '200':
+          description: The accounts.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Success'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items: { $ref: '#/components/schemas/Account' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /accounts/{account_id}:
+    get:
+      tags: [accounts]
+      summary: One synced account.
+      description: |
+        Only synced accounts have an id; the other two kinds are reached through
+        their own collections.
+      parameters:
+        - $ref: '#/components/parameters/AccountId'
+      responses:
+        '200':
+          description: The account.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Success'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/Account' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /accounts/net-worth:
+    get:
+      tags: [accounts]
+      summary: The net-worth breakdown and portfolio summary.
+      description: |
+        The same derivation the dashboard renders and the AI context is built
+        from. There is deliberately no second calculation.
+      responses:
+        '200':
+          description: Net worth.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Success'
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          net_worth: { type: object }
+                          portfolio: { type: object }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+
+  /accounts/balances:
+    get:
+      tags: [accounts]
+      summary: Hand-entered starting balances.
+      responses:
+        '200':
+          description: The balances.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Success'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items: { $ref: '#/components/schemas/ManualBalance' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+
+  /accounts/balances/{account_type}:
+    put:
+      tags: [accounts]
+      summary: Set a hand-entered starting balance.
+      description: |
+        Idempotent, and creates the row if it does not exist — which is what
+        makes the URL addressable before the resource exists.
+
+        Audited with both the previous and the new value: this is one of the few
+        places a figure feeding net worth changes without a transaction.
+      parameters:
+        - $ref: '#/components/parameters/AccountType'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [starting_balance]
+              properties:
+                starting_balance: { type: number }
+      responses:
+        '200':
+          description: The stored balance.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Success'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/ManualBalance' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /accounts/connections:
+    get:
+      tags: [accounts]
+      summary: Linked institutions and their sync health.
+      description: |
+        Read-only. Creating and removing a connection is an OAuth flow with a
+        browser redirect in the middle, which a JSON API cannot usefully wrap —
+        clients should send the user to the web connections page.
+      responses:
+        '200':
+          description: Connections.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Success'
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          connections: { type: array, items: { type: object } }
+                          last_sync_at: { type: [string, 'null'], format: date-time }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+
+  # -------------------------------------------------------- transactions ----
+  /transactions:
+    get:
+      tags: [transactions]
+      summary: A filtered, sorted, paged slice of the ledger.
+      description: |
+        Unlike the web list, this endpoint holds no sticky filter state: sending
+        no `category` means all categories, always.
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+        - name: sort
+          in: query
+          schema:
+            type: string
+            enum: [date, amount, description, category, account, id]
+            default: date
+        - $ref: '#/components/parameters/Order'
+        - name: account
+          in: query
+          schema: { type: string }
+        - name: category
+          in: query
+          schema: { type: string }
+        - name: direction
+          in: query
+          schema: { type: string, enum: [inbound, outgo] }
+        - name: date_from
+          in: query
+          description: Inclusive.
+          schema: { type: string, format: date }
+        - name: date_to
+          in: query
+          description: Inclusive.
+          schema: { type: string, format: date }
+        - name: q
+          in: query
+          description: Matches the description, or an exact id.
+          schema: { type: string, maxLength: 120 }
+      responses:
+        '200':
+          description: A page of transactions.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/PagedSuccess'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items: { $ref: '#/components/schemas/Transaction' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+    post:
+      tags: [transactions]
+      summary: Add one transaction by hand.
+      description: |
+        `amount` is signed: negative is money out. The API does not infer a
+        direction from the description — the CSV importer has to, because bank
+        exports omit the sign, and reproducing that guesswork here would invent
+        an ambiguity that does not exist.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/TransactionCreate' }
+      responses:
+        '201':
+          description: The created transaction.
+          headers:
+            Location:
+              schema: { type: string }
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Success'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/Transaction' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /transactions/{transaction_id}:
+    get:
+      tags: [transactions]
+      summary: One transaction.
+      parameters: [{ $ref: '#/components/parameters/TransactionId' }]
+      responses:
+        '200':
+          description: The transaction.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Success'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/Transaction' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      tags: [transactions]
+      summary: Change some fields of one transaction.
+      description: |
+        PATCH, not PUT. A field the request does not mention is left alone; a
+        field sent as `null` is cleared where the column permits it. A PUT would
+        mean "replace the resource", so a client sending only `{"category": ...}`
+        would blank the description.
+
+        A request mentioning no editable field is refused rather than silently
+        succeeding.
+      parameters: [{ $ref: '#/components/parameters/TransactionId' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/TransactionPatch' }
+      responses:
+        '200':
+          description: The updated transaction.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Success'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/Transaction' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+    delete:
+      tags: [transactions]
+      summary: Delete one transaction.
+      parameters: [{ $ref: '#/components/parameters/TransactionId' }]
+      responses:
+        '204': { description: Deleted. }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /transactions/bulk:
+    post:
+      tags: [transactions]
+      summary: Recategorize or delete many transactions at once.
+      description: |
+        `affected` is what the database actually changed, not the length of
+        `ids`. An id belonging to another household changes nothing and is not
+        counted — a client passing ids it guessed is not told the guess worked.
+
+        At most 1000 ids per request.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [action, ids]
+              properties:
+                action: { type: string, enum: [recategorize, delete] }
+                ids:
+                  type: array
+                  minItems: 1
+                  maxItems: 1000
+                  items: { type: integer }
+                category:
+                  type: string
+                  maxLength: 50
+                  description: Required when action is `recategorize`.
+      responses:
+        '200':
+          description: What changed.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Success'
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          action: { type: string }
+                          affected: { type: integer }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /transactions/categories:
+    get:
+      tags: [transactions]
+      summary: Every category currently in use.
+      description: |
+        A separate endpoint rather than a field on the list response: it changes
+        rarely and should be cached, and repeating it on every page of the
+        busiest endpoint would be wasteful.
+      responses:
+        '200':
+          description: Category names.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Success'
+                  - type: object
+                    properties:
+                      data: { type: array, items: { type: string } }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+
+  /transactions/imports/{batch_id}:
+    delete:
+      tags: [transactions]
+      summary: Undo one CSV import.
+      description: |
+        An unknown or already-undone batch answers 409 rather than a cheerful
+        zero, so a batch id cannot be used to probe which imports exist.
+      parameters:
+        - name: batch_id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: How many rows were removed.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Success'
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          batch_id: { type: string }
+                          deleted: { type: integer }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  # ------------------------------------------------------------- budgets ----
+  /budgets:
+    get:
+      tags: [budgets]
+      summary: Every budget with its spend, band and change on last month.
+      description: |
+        Returns progress rather than bare limits, because a budget without its
+        spend cannot answer the only question anybody asks of one. Refunds net
+        off the spend figure.
+
+        Unpaged.
+      responses:
+        '200':
+          description: Budget status.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Success'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/BudgetStatus' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+    post:
+      tags: [budgets]
+      summary: Set a budget for a category.
+      description: |
+        An upsert. Setting a budget for an already-budgeted category changes the
+        number rather than conflicting, so this answers 201 or 200 — and
+        `data.created` says which, so a client can word its confirmation without
+        having kept the status code.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [category, monthly_limit]
+              properties:
+                category: { type: string, maxLength: 50 }
+                account_name: { type: string, maxLength: 50, default: both }
+                monthly_limit: { type: number, minimum: 0 }
+      responses:
+        '200':
+          description: An existing budget was updated.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Success'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/Budget' }
+        '201':
+          description: A new budget was created.
+          headers:
+            Location: { schema: { type: string } }
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Success'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/Budget' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /budgets/{budget_id}:
+    delete:
+      tags: [budgets]
+      summary: Remove a budget.
+      parameters:
+        - name: budget_id
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        '204': { description: Deleted. }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  # --------------------------------------------------------- investments ----
+  /investments:
+    get:
+      tags: [investments]
+      summary: The whole wealth snapshot.
+      description: |
+        Allocation, concentration, risk, diversification, performance, dividend
+        forecast, benchmark comparison and projection, in one response.
+
+        Deliberately one large response rather than eight small ones: every part
+        derives from the same position build, so splitting it would mean a
+        client makes eight calls that redo the same work and any two of them
+        could straddle a sync and disagree.
+      parameters:
+        - name: benchmark
+          in: query
+          schema: { type: string, default: sp500 }
+        - name: horizon
+          in: query
+          description: Projection years, clamped to 1–40.
+          schema: { type: integer, default: 10 }
+        - name: contribution
+          in: query
+          description: Monthly contribution for the projection.
+          schema: { type: number, default: 0 }
+      responses:
+        '200':
+          description: The snapshot.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Success'
+                  - type: object
+                    properties:
+                      data: { type: object }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /investments/holdings:
+    get:
+      tags: [investments]
+      summary: Every position.
+      description: |
+        `cost_basis`, `gain_loss` and `gain_pct` are `null` where no basis is
+        known — the honest answer for a hand-entered holding, and better than a
+        zero a client would average.
+      responses:
+        '200':
+          description: The holdings.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Success'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items: { $ref: '#/components/schemas/Holding' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+    post:
+      tags: [investments]
+      summary: Add a position by hand.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [ticker, name, shares, current_value]
+              properties:
+                ticker: { type: string, maxLength: 20 }
+                name: { type: string, maxLength: 100 }
+                shares: { type: number, minimum: 0 }
+                current_value: { type: number }
+                asset_class: { $ref: '#/components/schemas/AssetClass' }
+                account_name: { type: string, maxLength: 50, default: Brokerage }
+      responses:
+        '201':
+          description: The created holding.
+          headers:
+            Location: { schema: { type: string } }
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Success'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/Holding' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /investments/holdings/{holding_id}:
+    get:
+      tags: [investments]
+      summary: One holding.
+      parameters: [{ $ref: '#/components/parameters/HoldingId' }]
+      responses:
+        '200':
+          description: The holding.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Success'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/Holding' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      tags: [investments]
+      summary: Change a manually-entered holding.
+      description: |
+        A holding with `source: sync` answers 409. Accepting the edit would be
+        worse than refusing: it would appear to work and be reverted at the next
+        sync, which reads as the application losing data at random.
+      parameters: [{ $ref: '#/components/parameters/HoldingId' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                ticker: { type: string, maxLength: 20 }
+                name: { type: string, maxLength: 100 }
+                shares: { type: number, minimum: 0 }
+                current_value: { type: number }
+                asset_class: { $ref: '#/components/schemas/AssetClass' }
+                account_name: { type: string, maxLength: 50 }
+      responses:
+        '200':
+          description: The updated holding.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Success'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/Holding' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+    delete:
+      tags: [investments]
+      summary: Remove a manually-entered holding.
+      parameters: [{ $ref: '#/components/parameters/HoldingId' }]
+      responses:
+        '204': { description: Deleted. }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  # ----------------------------------------------------------- household ----
+  /household:
+    get:
+      tags: [household]
+      summary: The household, its members and its invitations.
+      responses:
+        '200':
+          description: The household.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Success'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/Household' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+
+  /household/members:
+    get:
+      tags: [household]
+      summary: Everyone in this household.
+      responses:
+        '200':
+          description: The members.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Success'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items: { $ref: '#/components/schemas/Member' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+
+  /household/members/{user_id}:
+    patch:
+      tags: [household]
+      summary: Promote or demote a member. Owner only.
+      description: |
+        Refused with 409 when it would leave the household without an owner —
+        the request is well-formed and the state does not permit it, which is
+        what 409 means. The same request succeeds once somebody else is
+        promoted.
+      parameters: [{ $ref: '#/components/parameters/UserId' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [role]
+              properties:
+                role: { $ref: '#/components/schemas/Role' }
+      responses:
+        '200':
+          description: The updated member.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Success'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/Member' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+    delete:
+      tags: [household]
+      summary: Remove somebody from the household. Owner only.
+      description: |
+        Their financial data stays: transactions, budgets and connections belong
+        to the household, not to the person. Removing yourself is refused.
+      parameters: [{ $ref: '#/components/parameters/UserId' }]
+      responses:
+        '204': { description: Removed. }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /household/invites:
+    get:
+      tags: [household]
+      summary: Every invitation this household has issued.
+      description: The token itself is never returned — only its hash is stored.
+      responses:
+        '200':
+          description: The invitations.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Success'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items: { $ref: '#/components/schemas/Invite' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+    post:
+      tags: [household]
+      summary: Issue an invitation link. Owner only.
+      description: |
+        The token is returned exactly once and never stored in recoverable
+        form. It is a bearer credential: whoever holds the link joins the
+        household. See `docs/security.md` SEC-0011.
+
+        `join_url` is absolute when `PUBLIC_BASE_URL` is configured and a path
+        otherwise — a URL built from the request's own host would be an address
+        the invited person may not be able to reach.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                role: { $ref: '#/components/schemas/Role' }
+                label:
+                  type: string
+                  maxLength: 120
+                  description: A note about who it is for. Never matched against anything.
+      responses:
+        '201':
+          description: The invitation, with its single-use token.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Success'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/IssuedInvite' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /household/invites/{invite_id}:
+    delete:
+      tags: [household]
+      summary: Revoke an invitation. Owner only. Idempotent.
+      parameters:
+        - name: invite_id
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        '204': { description: Revoked. }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /household/activity:
+    get:
+      tags: [household]
+      summary: This household's audit trail, most recent first.
+      parameters:
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 500, default: 100 }
+      responses:
+        '200':
+          description: Audit events.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Success'
+                  - type: object
+                    properties:
+                      data: { type: array, items: { type: object } }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  # ---------------------------------------------------------------- chat ----
+  /chat/conversations:
+    get:
+      tags: [chat]
+      summary: Conversations, most recently updated first.
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+        - name: sort
+          in: query
+          schema:
+            type: string
+            enum: [updated_at, created_at, title]
+            default: updated_at
+        - $ref: '#/components/parameters/Order'
+      responses:
+        '200':
+          description: A page of conversations.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/PagedSuccess'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items: { $ref: '#/components/schemas/Conversation' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+    post:
+      tags: [chat]
+      summary: Start a conversation.
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                title: { type: string, maxLength: 80 }
+      responses:
+        '201':
+          description: The new conversation.
+          headers:
+            Location: { schema: { type: string } }
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Success'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/Conversation' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /chat/conversations/{conversation_id}:
+    get:
+      tags: [chat]
+      summary: One conversation.
+      parameters: [{ $ref: '#/components/parameters/ConversationId' }]
+      responses:
+        '200':
+          description: The conversation.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Success'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/Conversation' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      tags: [chat]
+      summary: Rename a conversation.
+      parameters: [{ $ref: '#/components/parameters/ConversationId' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [title]
+              properties:
+                title: { type: string, maxLength: 80 }
+      responses:
+        '200':
+          description: The renamed conversation.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Success'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/Conversation' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+    delete:
+      tags: [chat]
+      summary: Delete a conversation and its messages.
+      parameters: [{ $ref: '#/components/parameters/ConversationId' }]
+      responses:
+        '204': { description: Deleted. }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /chat/conversations/{conversation_id}/messages:
+    get:
+      tags: [chat]
+      summary: Messages in a conversation, oldest first.
+      description: |
+        Ordered by insertion, not by timestamp: both messages of a turn are
+        often written in one commit and share a timestamp to the microsecond.
+      parameters:
+        - $ref: '#/components/parameters/ConversationId'
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 1000, default: 200 }
+      responses:
+        '200':
+          description: The messages.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Success'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items: { $ref: '#/components/schemas/Message' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    post:
+      tags: [chat]
+      summary: Ask a question. Streams the reply.
+      description: |
+        Answers `text/event-stream`, not the envelope. Every refusal decidable
+        before the stream opens — missing message, unknown conversation, no
+        model configured — is an ordinary envelope error, so a client's normal
+        error path covers everything except a failure mid-stream.
+
+        Wire format:
+
+        ```
+        data: {"delta": "..."}     zero or more, in order
+        data: {"error": "..."}     at most one, terminal
+        data: [DONE]               on successful completion only
+        ```
+
+        `resend: true` regenerates the last answer without sending a new
+        question, and requires the stored history to end with a user turn.
+      parameters: [{ $ref: '#/components/parameters/ConversationId' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                message: { type: string, maxLength: 8000 }
+                resend: { type: boolean, default: false }
+                model: { type: string, maxLength: 80 }
+      responses:
+        '200':
+          description: A server-sent event stream.
+          content:
+            text/event-stream:
+              schema: { type: string }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+    delete:
+      tags: [chat]
+      summary: Clear a conversation's messages, or truncate it.
+      description: |
+        `?keep=N` retains the first N messages instead of clearing everything,
+        which is what the regenerate and edit-earlier-prompt actions need.
+      parameters:
+        - $ref: '#/components/parameters/ConversationId'
+        - name: keep
+          in: query
+          schema: { type: integer, minimum: 0, default: 0 }
+      responses:
+        '200':
+          description: How many messages survive.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Success'
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          conversation_id: { type: string }
+                          remaining: { type: integer }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  # ------------------------------------------------------------- copilot ----
+  /copilot/brief:
+    get:
+      tags: [copilot]
+      summary: A written read on the month, plus opportunities.
+      description: |
+        Answers `200` with `{"available": false}` when no model is configured,
+        rather than 503. A briefing is optional furniture on a dashboard: a
+        client should render the rest of the page and omit the card, and a 503
+        would make a healthy page look degraded.
+      parameters:
+        - name: start
+          in: query
+          schema: { type: string, format: date }
+        - name: end
+          in: query
+          schema: { type: string, format: date }
+      responses:
+        '200':
+          description: 'The briefing, or `available: false`.'
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Success'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/Brief' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /copilot/investments/brief:
+    get:
+      tags: [copilot]
+      summary: A written read on the portfolio, plus moves worth considering.
+      responses:
+        '200':
+          description: 'The briefing, or `available: false`.'
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Success'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/Brief' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+
+  /copilot/ask:
+    post:
+      tags: [copilot]
+      summary: Answer one dashboard question. Streams.
+      description: |
+        Stateless — nothing is stored. Anything that wants to become a
+        conversation belongs in `/chat`.
+
+        Unlike the briefings this answers 503 when no model is configured:
+        somebody typed a question and pressed send, and there is no version of
+        that response which is useful furniture.
+
+        Same SSE wire format as the chat stream.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [question]
+              properties:
+                question: { type: string, maxLength: 500 }
+                start: { type: string, format: date }
+                end: { type: string, format: date }
+      responses:
+        '200':
+          description: A server-sent event stream.
+          content:
+            text/event-stream:
+              schema: { type: string }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /copilot/investments/ask:
+    post:
+      tags: [copilot]
+      summary: Answer one portfolio question, with recent context. Streams.
+      description: |
+        Accepts a short prior history, because "should I rebalance?" is rarely
+        the last thing anybody wants to ask. History stays with the client and
+        is capped at the last few turns.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [question]
+              properties:
+                question: { type: string, maxLength: 500 }
+                history:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      role: { type: string, enum: [user, assistant] }
+                      content: { type: string, maxLength: 2000 }
+      responses:
+        '200':
+          description: A server-sent event stream.
+          content:
+            text/event-stream:
+              schema: { type: string }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  # ------------------------------------------------------------ settings ----
+  /settings:
+    get:
+      tags: [settings]
+      summary: Capabilities, limits and vocabularies.
+      description: |
+        A client's startup call. Carries capabilities and limits, never values:
+        whether an AI key is configured, never the key.
+
+        `api.supported_versions` lets a client check that the version it speaks
+        is still served *before* it is turned off, which is what makes
+        deprecating a version announceable in band.
+      responses:
+        '200':
+          description: The installation's capabilities.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Success'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/Settings' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+
+components:
+
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: |
+        `Authorization: Bearer dgh_...`. Obtain from `POST /auth/login`. Never
+        send a token in a query string — the API does not read one, because
+        query strings are written to access logs, browser history and `Referer`.
+    sessionCookie:
+      type: apiKey
+      in: cookie
+      name: session
+      description: |
+        The web UI's credential. Unsafe methods additionally require
+        `X-CSRF-Token`.
+
+  parameters:
+    Page:
+      name: page
+      in: query
+      description: 1-based.
+      schema: { type: integer, minimum: 1, default: 1 }
+    PageSize:
+      name: page_size
+      in: query
+      description: Clamped to the server maximum rather than refused.
+      schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+    Order:
+      name: order
+      in: query
+      schema: { type: string, enum: [asc, desc], default: desc }
+    TransactionId:
+      name: transaction_id
+      in: path
+      required: true
+      schema: { type: integer }
+    AccountId:
+      name: account_id
+      in: path
+      required: true
+      schema: { type: integer }
+    AccountType:
+      name: account_type
+      in: path
+      required: true
+      schema: { type: string, maxLength: 50 }
+    HoldingId:
+      name: holding_id
+      in: path
+      required: true
+      schema: { type: integer }
+    TokenId:
+      name: token_id
+      in: path
+      required: true
+      schema: { type: integer }
+    UserId:
+      name: user_id
+      in: path
+      required: true
+      schema: { type: integer }
+    ConversationId:
+      name: conversation_id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+
+  responses:
+    Unauthenticated:
+      description: No credential, or one that is not usable.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Forbidden:
+      description: |
+        Authenticated but not permitted. Read `error.code` to tell the three
+        cases apart: `forbidden` (your role), `insufficient_scope` (your
+        token's scopes), `csrf_failed` (a session request missing its token).
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    NotFound:
+      description: |
+        No such resource — or one belonging to another household. The two are
+        deliberately the same answer, so an id cannot be used as an oracle.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Conflict:
+      description: Well-formed, but the resource's current state does not permit it.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    ValidationError:
+      description: |
+        Well-formed and wrong. `error.details` names the offending fields.
+        Distinct from 400, which means the request could not be parsed at all.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    RateLimited:
+      description: Too many attempts.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    ServiceUnavailable:
+      description: A dependency this endpoint needs is not configured or not answering.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+
+  schemas:
+
+    Meta:
+      type: object
+      required: [api_version, timestamp]
+      properties:
+        api_version: { type: string, const: v1 }
+        timestamp: { type: string, format: date-time }
+        request_id:
+          type: string
+          description: Also returned as `X-Request-ID`, and on every server log line.
+        pagination: { $ref: '#/components/schemas/Pagination' }
+
+    Pagination:
+      type: object
+      required: [page, page_size, total, total_pages, has_next, has_prev]
+      properties:
+        page: { type: integer }
+        page_size: { type: integer }
+        total: { type: integer }
+        total_pages: { type: integer }
+        has_next: { type: boolean }
+        has_prev: { type: boolean }
+
+    Success:
+      type: object
+      required: [success, data, meta]
+      properties:
+        success: { type: boolean, const: true }
+        data: {}
+        meta: { $ref: '#/components/schemas/Meta' }
+
+    PagedSuccess:
+      allOf:
+        - $ref: '#/components/schemas/Success'
+        - type: object
+          properties:
+            meta:
+              allOf:
+                - $ref: '#/components/schemas/Meta'
+                - type: object
+                  required: [pagination]
+
+    Error:
+      type: object
+      required: [success, error, meta]
+      properties:
+        success: { type: boolean, const: false }
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code: { $ref: '#/components/schemas/ErrorCode' }
+            message:
+              type: string
+              description: For a person to read. May be reworded — never match on it.
+            details:
+              type: object
+              description: Field-level breakdown. Present for `validation_error`.
+        meta: { $ref: '#/components/schemas/Meta' }
+
+    ErrorCode:
+      type: string
+      description: |
+        The closed vocabulary a client should switch on.
+      enum:
+        - bad_request
+        - validation_error
+        - unauthenticated
+        - forbidden
+        - insufficient_scope
+        - csrf_failed
+        - not_found
+        - conflict
+        - rate_limited
+        - service_unavailable
+        - internal_error
+        - method_not_allowed
+        - payload_too_large
+
+    Scope:
+      type: string
+      enum: [read, write]
+      description: '`write` implies `read`.'
+
+    Role:
+      type: string
+      enum: [owner, member]
+
+    AccountKind:
+      type: string
+      enum: [synced, manual, ledger]
+      description: |
+        `synced` from an institution, `manual` typed in, `ledger` known only
+        from imported transactions and therefore carrying no balance.
+
+    AssetClass:
+      type: string
+      enum: [Stock, ETF, Mutual Fund, Bond, Crypto, Cash, Other]
+
+    ApiToken:
+      type: object
+      description: A token's metadata. Never contains the token.
+      properties:
+        id: { type: integer }
+        name: { type: string }
+        prefix:
+          type: string
+          description: The token's opening characters, to tell rows apart.
+        scopes: { type: array, items: { $ref: '#/components/schemas/Scope' } }
+        # `stale` means the account's credentials were invalidated after this
+        # token was issued -- a password change raises a generation counter that
+        # every credential is stamped with. Nothing sweeps this table when that
+        # happens, so `revoked_at` stays null and the state is what says so.
+        state: { type: string, enum: [active, expired, revoked, stale] }
+        created_at: { type: string, format: date-time }
+        expires_at: { type: [string, 'null'], format: date-time }
+        last_used_at: { type: [string, 'null'], format: date-time }
+        revoked_at: { type: [string, 'null'], format: date-time }
+
+    IssuedToken:
+      type: object
+      properties:
+        token:
+          type: string
+          description: Shown once. Not recoverable — revoke and reissue if lost.
+        token_type: { type: string, const: Bearer }
+        shown_once: { type: boolean, const: true }
+        scopes: { type: array, items: { $ref: '#/components/schemas/Scope' } }
+        expires_at: { type: [string, 'null'], format: date-time }
+        api_token: { $ref: '#/components/schemas/ApiToken' }
+        user: { $ref: '#/components/schemas/Member' }
+
+    Identity:
+      type: object
+      properties:
+        user: { $ref: '#/components/schemas/Member' }
+        household:
+          type: object
+          properties:
+            id: { type: integer }
+            name: { type: [string, 'null'] }
+        authenticated_via: { type: string, enum: [api_token, session] }
+        scopes: { type: array, items: { $ref: '#/components/schemas/Scope' } }
+        token: { $ref: '#/components/schemas/ApiToken' }
+
+    Member:
+      type: object
+      properties:
+        id: { type: integer }
+        username: { type: string }
+        role: { $ref: '#/components/schemas/Role' }
+        is_owner: { type: boolean }
+        is_you: { type: boolean }
+        created_at: { type: string, format: date-time }
+
+    Household:
+      type: object
+      properties:
+        id: { type: integer }
+        name: { type: [string, 'null'] }
+        created_at: { type: [string, 'null'], format: date-time }
+        members: { type: array, items: { $ref: '#/components/schemas/Member' } }
+        invites: { type: array, items: { $ref: '#/components/schemas/Invite' } }
+        roles: { type: array, items: { $ref: '#/components/schemas/Role' } }
+
+    Invite:
+      type: object
+      properties:
+        id: { type: integer }
+        role: { $ref: '#/components/schemas/Role' }
+        label: { type: [string, 'null'] }
+        state: { type: string, enum: [pending, accepted, revoked, expired] }
+        created_at: { type: string, format: date-time }
+        expires_at: { type: string, format: date-time }
+        accepted_at: { type: [string, 'null'], format: date-time }
+        revoked_at: { type: [string, 'null'], format: date-time }
+
+    IssuedInvite:
+      allOf:
+        - $ref: '#/components/schemas/Invite'
+        - type: object
+          properties:
+            token:
+              type: string
+              description: Shown once. A bearer credential — whoever holds it joins.
+            shown_once: { type: boolean, const: true }
+            join_url: { type: string }
+            expires_in_hours: { type: integer }
+
+    Transaction:
+      type: object
+      properties:
+        id: { type: integer }
+        date: { type: string, format: date }
+        description: { type: string }
+        amount:
+          type: number
+          description: Signed. Negative is money out.
+        category: { type: string }
+        account_name: { type: string }
+        notes: { type: string }
+        source: { type: string, enum: [csv, sync, manual] }
+        import_batch_id: { type: [string, 'null'] }
+        is_anomaly: { type: boolean }
+        anomaly_reviewed: { type: boolean }
+
+    TransactionCreate:
+      type: object
+      required: [account_name, date, description, amount]
+      properties:
+        account_name: { type: string, maxLength: 50 }
+        date: { type: string, format: date }
+        description: { type: string, maxLength: 255 }
+        amount: { type: number }
+        category: { type: string, maxLength: 50 }
+        notes: { type: string }
+
+    TransactionPatch:
+      type: object
+      description: Omitted fields are left unchanged.
+      properties:
+        account_name: { type: string, maxLength: 50 }
+        date: { type: string, format: date }
+        description: { type: string, maxLength: 255 }
+        amount: { type: number }
+        category: { type: string, maxLength: 50 }
+        notes:
+          type: [string, 'null']
+          description: Null or empty string clears the note.
+
+    Budget:
+      type: object
+      properties:
+        id: { type: integer }
+        category: { type: string }
+        account_name: { type: string }
+        monthly_limit: { type: number }
+        created: { type: boolean, description: Present on POST responses only. }
+
+    BudgetProgress:
+      allOf:
+        - $ref: '#/components/schemas/Budget'
+        - type: object
+          properties:
+            spent: { type: number, description: Refunds net off. }
+            prior: { type: number }
+            remaining: { type: number }
+            pct: { type: number }
+            state: { type: string, enum: [ok, warn, danger] }
+            change_pct:
+              type: [number, 'null']
+              description: Null when there was no prior spend to compare against.
+
+    BudgetStatus:
+      type: object
+      properties:
+        budgets:
+          type: array
+          items: { $ref: '#/components/schemas/BudgetProgress' }
+        month_label: { type: string }
+        month_progress:
+          type: integer
+          description: How far through the month, as a percentage. 60% of a
+            budget means different things on the 5th and the 25th.
+        total_budgeted: { type: number }
+        total_spent: { type: number }
+
+    Account:
+      type: object
+      properties:
+        kind: { $ref: '#/components/schemas/AccountKind' }
+        id: { type: [integer, 'null'], description: Synced accounts only. }
+        name: { type: string }
+        account_type: { type: string }
+        balance:
+          type: [number, 'null']
+          description: Null for a `ledger` account — unknown, not zero.
+        available_balance: { type: [number, 'null'] }
+        currency: { type: string }
+        mask: { type: [string, 'null'] }
+        institution: { type: [string, 'null'] }
+        connection_id: { type: [integer, 'null'] }
+        last_synced_at: { type: [string, 'null'], format: date-time }
+
+    ManualBalance:
+      type: object
+      properties:
+        account_type: { type: string }
+        starting_balance: { type: number }
+        last_updated: { type: string }
+
+    Holding:
+      type: object
+      properties:
+        id: { type: integer }
+        ticker: { type: string }
+        name: { type: string }
+        shares: { type: number }
+        current_value: { type: number }
+        asset_class: { $ref: '#/components/schemas/AssetClass' }
+        account_name: { type: string }
+        source:
+          type: string
+          enum: [manual, sync]
+          description: '`sync` holdings cannot be edited or deleted — 409.'
+        account_id: { type: [integer, 'null'] }
+        avg_cost: { type: [number, 'null'] }
+        current_price: { type: [number, 'null'] }
+        cost_basis: { type: [number, 'null'], description: Null when no basis is known. }
+        gain_loss: { type: [number, 'null'] }
+        gain_pct: { type: [number, 'null'] }
+        updated_at: { type: [string, 'null'] }
+        last_synced_at: { type: [string, 'null'] }
+
+    Conversation:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        title: { type: string }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    Message:
+      type: object
+      properties:
+        id: { type: integer }
+        role: { type: string, enum: [user, assistant] }
+        content: { type: string }
+        created_at: { type: string, format: date-time }
+
+    Brief:
+      type: object
+      properties:
+        available:
+          type: boolean
+          description: False when no model is configured. Render nothing.
+        opportunities: { type: array, items: { type: object } }
+        questions: { type: array, items: { type: string } }
+
+    Settings:
+      type: object
+      properties:
+        api:
+          type: object
+          properties:
+            version: { type: string }
+            supported_versions: { type: array, items: { type: string } }
+            default_page_size: { type: integer }
+            max_page_size: { type: integer }
+            token_scopes: { type: array, items: { $ref: '#/components/schemas/Scope' } }
+        ai:
+          type: object
+          properties:
+            available: { type: boolean, description: Whether a key is configured. Never the key. }
+            models: { type: array, items: { type: object } }
+            default_model: { type: string }
+        features:
+          type: object
+          properties:
+            registration_open: { type: boolean }
+            auth_enabled: { type: boolean }
+            sync_enabled: { type: boolean }
+            invite_ttl_hours: { type: integer }
+        categories:
+          type: object
+          properties:
+            known: { type: array, items: { type: string } }

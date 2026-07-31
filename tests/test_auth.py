@@ -65,11 +65,34 @@ def test_setup_refused_once_account_exists(auth_client):
 
 
 def test_pages_and_api_require_login(auth_client):
+    """Phase 10.5 changed which page this is asked of, not the guarantee.
+
+    `/` used to be the assertion here. It is now `@public` -- it serves the
+    marketing page to a stranger and the dashboard to a signed-in user -- so it
+    is the wrong route to ask "does this redirect to login", and asking it there
+    would have quietly stopped testing anything the day the landing page landed.
+
+    `/transactions` is asked instead: an ordinary protected page, chosen because
+    nothing about it is special. The two extra assertions below pin what `/`
+    actually does now, so the change in behaviour is stated rather than merely
+    no longer checked.
+    """
     _create_account(auth_client)
     auth_client.post('/logout')
-    resp = auth_client.get('/', follow_redirects=False)
+
+    resp = auth_client.get('/transactions', follow_redirects=False)
     assert resp.status_code == 302 and '/login' in resp.headers['Location']
     assert auth_client.get('/api/sync/status').status_code == 401
+
+    # `/` is reachable, and shows the marketing page rather than any data.
+    resp = auth_client.get('/', follow_redirects=False)
+    assert resp.status_code == 200
+    assert b'Your money' in resp.data          # the landing hero
+    assert b'nav-brand' in resp.data           # the public header is there
+    # See the note in tests/test_session_version.py: these are markup-only
+    # markers, because base.html's stylesheet ships with every page.
+    assert b'id="profile-btn"' not in resp.data
+    assert b'id="tab-bar"' not in resp.data
 
 
 def test_login_wrong_then_right(auth_client):

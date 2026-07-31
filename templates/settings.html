@@ -1,0 +1,303 @@
+{% extends "base.html" %}
+
+{% block title %}Account &amp; security · Dough{% endblock %}
+
+{#
+  Account & security — everything that decides what can reach this account.
+
+  Laid out in the order somebody actually needs it, which is not the order the
+  routes are written in: who you are, then how you sign in, then what else is
+  signed in right now. The last of those is the one people come here for after
+  losing a phone, so it is above the token list rather than below it.
+
+  The destructive controls say what they do rather than what they are — "Sign
+  out everywhere" rather than "Revoke" — for the reason household.html gives:
+  on a page where several buttons are irreversible, a label naming the mechanism
+  is a label the reader has to translate before they can be careful.
+
+  Nothing here is owner-gated. Every route behind this page acts on the
+  signed-in account and nobody else's; the household roster below is read-only,
+  and the controls that act on other people live on /household behind
+  @owner_required. See the module docstring in dough/blueprints/settings.py.
+#}
+
+{% block content %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/dashboard.css') }}">
+
+<div class="ds-stack ds-stack-4">
+
+  <header class="ds-section__head ds-rise">
+    <div>
+      <h1 class="ds-section__title">Account &amp; security</h1>
+      <p class="ds-section__sub">
+        Your sign-in, your address, and everything currently able to reach
+        {{ household.name }}.
+      </p>
+    </div>
+  </header>
+
+  {# ── The new token, shown once ───────────────────────────────────────────
+     Same one-shot session handover as household.html's invitation link, and
+     for the same reason: only a hash is stored, so "shown once" is a fact about
+     the system rather than a policy about this page. #}
+  {% if new_token %}
+  <section class="ds-card ds-card--warn ds-rise" style="--ds-delay:40ms">
+    <p class="ds-eyebrow">Copy this now</p>
+    <p class="ds-meta">
+      This token is shown once and cannot be recovered — Dough stores only a
+      fingerprint of it. Anyone who has it can read {{ household.name }}'s
+      finances through the API, so treat it like a password. Lost it? Revoke it
+      below and make another.
+    </p>
+    <div class="ds-row ds-row--wrap" style="gap: var(--sp-2); margin-top: var(--sp-3)">
+      <input id="new-token" class="dash-input ds-input" readonly value="{{ new_token }}"
+             style="flex:1 1 280px; font-family: ui-monospace, monospace; font-size: .8rem"
+             onfocus="this.select()">
+      <button type="button" class="ds-btn ds-btn--secondary"
+              onclick="navigator.clipboard.writeText(document.getElementById('new-token').value).then(function(){
+                         var b=event.target; var t=b.textContent; b.textContent='Copied';
+                         setTimeout(function(){ b.textContent=t; }, 1600); })">Copy token</button>
+    </div>
+  </section>
+  {% endif %}
+
+  {# ── Who you are ─────────────────────────────────────────────────────── #}
+  <section class="ds-card ds-rise" style="--ds-delay:80ms">
+    <h2 class="ds-section__title" style="font-size:1.05rem">Account</h2>
+
+    <dl class="ds-row ds-row--wrap" style="gap: var(--sp-4); margin: var(--sp-3) 0 0">
+      <div>
+        <dt class="ds-label">Username</dt>
+        <dd class="ds-num" style="margin:0">{{ me.username }}</dd>
+      </div>
+      <div>
+        <dt class="ds-label">Role</dt>
+        <dd style="margin:0">
+          <span class="ds-badge {{ 'ds-badge--ok' if me.is_owner else 'ds-badge--info' }}">
+            {{ 'Owner' if me.is_owner else 'Member' }}
+          </span>
+        </dd>
+      </div>
+      <div>
+        <dt class="ds-label">Household</dt>
+        <dd style="margin:0">{{ household.name }}</dd>
+      </div>
+      <div>
+        <dt class="ds-label">Member since</dt>
+        <dd style="margin:0">{{ me.created_at.strftime('%d %b %Y') }}</dd>
+      </div>
+    </dl>
+
+    <div class="ds-divider" style="margin: var(--sp-4) 0"></div>
+
+    <form method="post" action="{{ url_for('settings.change_email') }}">
+      {{ csrf_field() }}
+      <label class="ds-label" for="settingsEmail">Email address</label>
+      <p class="ds-hint" style="margin:.25rem 0 .5rem">
+        {% if not me.email %}
+          No address on file. Without one, there is no way to reset this
+          password if you forget it.
+        {% elif me.email_verified_at %}
+          Confirmed on {{ me.email_verified_at.strftime('%d %b %Y') }}. This is
+          where a password reset would be sent.
+        {% else %}
+          Not confirmed yet — check your inbox for the link, or send another.
+        {% endif %}
+      </p>
+      <div class="ds-row ds-row--wrap" style="gap: var(--sp-2)">
+        <input class="dash-input ds-input" type="email" name="email" id="settingsEmail"
+               value="{{ me.email or '' }}" placeholder="you@example.com"
+               autocomplete="email" autocapitalize="none" spellcheck="false"
+               style="flex:1 1 260px">
+        <button type="submit" class="ds-btn ds-btn--secondary">Save address</button>
+      </div>
+    </form>
+
+    {% if me.email and not me.email_verified_at %}
+    <form method="post" action="{{ url_for('settings.resend_verification') }}"
+          style="margin-top: var(--sp-2)">
+      {{ csrf_field() }}
+      <button type="submit" class="ds-btn ds-btn--ghost ds-btn--sm">
+        Resend confirmation email
+      </button>
+    </form>
+    {% endif %}
+  </section>
+
+  {# ── Password ────────────────────────────────────────────────────────── #}
+  <section class="ds-card ds-rise" style="--ds-delay:120ms">
+    <h2 class="ds-section__title" style="font-size:1.05rem">Change password</h2>
+    <p class="ds-meta" style="margin-top:.35rem">
+      Changing it signs out every other browser and stops every API token this
+      account has issued. This browser stays signed in.
+    </p>
+
+    <form method="post" action="{{ url_for('settings.change_password') }}"
+          style="margin-top: var(--sp-3); max-width: 26rem">
+      {{ csrf_field() }}
+
+      {# Asked for even though the caller already holds a valid session. An
+         unlocked screen is a session; a password change is the operation that
+         locks the real owner out. See the module docstring. #}
+      <div class="ds-field">
+        <label class="ds-label" for="currentPassword">Current password</label>
+        <input class="dash-input ds-input" type="password" name="current_password"
+               id="currentPassword" autocomplete="current-password">
+      </div>
+
+      <div class="ds-field">
+        <label class="ds-label" for="newPassword">New password</label>
+        <input class="dash-input ds-input" type="password" name="password"
+               id="newPassword" autocomplete="new-password"
+               aria-describedby="newPasswordHint">
+        <p class="ds-hint" id="newPasswordHint">
+          At least 8 characters. A passphrase of a few random words works well.
+        </p>
+      </div>
+
+      <div class="ds-field">
+        <label class="ds-label" for="confirmPassword">Confirm new password</label>
+        <input class="dash-input ds-input" type="password" name="confirm"
+               id="confirmPassword" autocomplete="new-password">
+      </div>
+
+      <button type="submit" class="ds-btn ds-btn--primary">Change password</button>
+    </form>
+  </section>
+
+  {# ── Sessions ────────────────────────────────────────────────────────── #}
+  <section class="ds-card ds-card--danger ds-rise" style="--ds-delay:160ms">
+    <h2 class="ds-section__title" style="font-size:1.05rem">Sign out everywhere</h2>
+    <p class="ds-meta" style="margin-top:.35rem">
+      Ends every signed-in browser and stops every API token below — including
+      this one, so you will need to sign in again. Use it if you have lost a
+      device, or if anything about this account looks wrong.
+    </p>
+    <form method="post" action="{{ url_for('settings.revoke_sessions') }}"
+          style="margin-top: var(--sp-3)">
+      {{ csrf_field() }}
+      <button type="submit" class="ds-btn ds-btn--danger">Sign out everywhere</button>
+    </form>
+  </section>
+
+  {# ── API tokens ──────────────────────────────────────────────────────── #}
+  <section class="ds-card ds-rise" style="--ds-delay:200ms">
+    <h2 class="ds-section__title" style="font-size:1.05rem">API tokens</h2>
+    <p class="ds-meta" style="margin-top:.35rem">
+      For scripts, shortcuts and anything that is not a browser. Each one is
+      per-device and revocable on its own, so stopping the token on a lost phone
+      does not sign out the desktop.
+    </p>
+
+    {% if tokens %}
+    <div class="ds-table-wrap" style="margin-top: var(--sp-3)">
+      <table class="ds-table ds-table--hover">
+        <thead>
+          <tr>
+            <th scope="col">Name</th>
+            <th scope="col">Prefix</th>
+            <th scope="col">Scopes</th>
+            <th scope="col">State</th>
+            <th scope="col">Created</th>
+            <th scope="col">Last used</th>
+            <th scope="col"><span class="ds-sr-only">Actions</span></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for token in tokens %}
+          {% set state = token.state() %}
+          <tr>
+            <td>{{ token.name }}</td>
+            <td style="font-family: ui-monospace, monospace; font-size:.8rem">{{ token.prefix }}…</td>
+            <td>{{ token.scope_list()|join(', ') }}</td>
+            <td>
+              {# `stale` is the state a password change or a "sign out
+                 everywhere" leaves a token in. It is spelled out rather than
+                 shown as "revoked" because the cause is different and so is the
+                 fix: nobody revoked this token, the account's credentials moved
+                 past it, and the answer is to issue a new one. #}
+              <span class="ds-badge
+                {%- if state == 'active' %} ds-badge--ok
+                {%- elif state == 'stale' %} ds-badge--warn
+                {%- else %} ds-badge--danger{% endif %}">{{ state }}</span>
+            </td>
+            <td>{{ token.created_at.strftime('%d %b %Y') }}</td>
+            <td>{{ token.last_used_at.strftime('%d %b %Y') if token.last_used_at else 'never' }}</td>
+            <td style="text-align:right">
+              {% if not token.revoked_at %}
+              <form method="post"
+                    action="{{ url_for('settings.token_revoke', token_id=token.id) }}"
+                    style="display:inline">
+                {{ csrf_field() }}
+                <button type="submit" class="ds-btn ds-btn--danger ds-btn--sm">Revoke</button>
+              </form>
+              {% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <p class="ds-empty ds-empty--tight" style="margin-top: var(--sp-3)">
+      No tokens yet. Create one below if you want to reach Dough from a script
+      or a shortcut.
+    </p>
+    {% endif %}
+
+    <div class="ds-divider" style="margin: var(--sp-4) 0"></div>
+
+    <form method="post" action="{{ url_for('settings.token_create') }}">
+      {{ csrf_field() }}
+      <div class="ds-row ds-row--wrap" style="gap: var(--sp-2); align-items:flex-end">
+        <div class="ds-field" style="flex:1 1 200px; margin:0">
+          <label class="ds-label" for="tokenName">Name</label>
+          <input class="dash-input ds-input" type="text" name="name" id="tokenName"
+                 placeholder="iPhone Shortcuts" maxlength="80">
+        </div>
+        <div class="ds-field" style="margin:0">
+          <label class="ds-label" for="tokenScopes">Scopes</label>
+          {# `read` is preselected and `write` is not. A token that can only read
+             is the one most integrations need, and defaulting to the weaker
+             credential means the stronger one is a deliberate click. #}
+          <select class="ds-select" name="scopes" id="tokenScopes" multiple size="2">
+            {% for scope in scopes %}
+            <option value="{{ scope }}" {% if scope == 'read' %}selected{% endif %}>{{ scope }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="ds-field" style="margin:0">
+          <label class="ds-label" for="tokenTtl">Expires in (days)</label>
+          <input class="dash-input ds-input ds-input--num" type="number" name="ttl_days"
+                 id="tokenTtl" min="1" max="3650" placeholder="never" style="width:8rem">
+        </div>
+        <button type="submit" class="ds-btn ds-btn--primary">Create token</button>
+      </div>
+    </form>
+  </section>
+
+  {# ── Household roster, owners only ───────────────────────────────────── #}
+  {% if me.is_owner %}
+  <section class="ds-card ds-rise" style="--ds-delay:240ms">
+    <h2 class="ds-section__title" style="font-size:1.05rem">Household members</h2>
+    <p class="ds-meta" style="margin-top:.35rem">
+      Read-only here. Inviting, removing and changing roles all live on the
+      Household page, where the confirmations and the last-owner rule are.
+    </p>
+    <ul style="list-style:none;padding:0;margin: var(--sp-3) 0 0;display:grid;gap:.5rem">
+      {% for member in members %}
+      <li class="ds-row ds-row--between">
+        <span>{{ member.username }}{% if member.id == me.id %} <span class="ds-hint">(you)</span>{% endif %}</span>
+        <span class="ds-badge {{ 'ds-badge--ok' if member.is_owner else 'ds-badge--info' }}">
+          {{ 'Owner' if member.is_owner else 'Member' }}
+        </span>
+      </li>
+      {% endfor %}
+    </ul>
+    <a class="ds-btn ds-btn--secondary ds-btn--sm" href="{{ url_for('household.index') }}"
+       style="margin-top: var(--sp-3)">Manage household</a>
+  </section>
+  {% endif %}
+
+</div>
+{% endblock %}

@@ -97,8 +97,10 @@ EXPECTED_NULLABLE_HOUSEHOLD = {
 #: Tables a migration creates. Excluded from the before/after row-count
 #: comparison because they have no "before". `households` came from
 #: 20260726_02, `household_invites` from 20260726_03, `audit_events` from
-#: 20260727_04.
-NEW_TABLES = ('households', 'household_invites', 'audit_events')
+#: 20260727_04, `api_tokens` from 20260730_05, `email_verifications` from
+#: 20260730_07.
+NEW_TABLES = ('households', 'household_invites', 'audit_events', 'api_tokens',
+              'email_verifications')
 
 #: The only tables a synchronization run may add rows to. Shorthand for
 #: `--may-grow sync`. Deliberately a short list: a sync that inserted a budget
@@ -127,14 +129,42 @@ EXPECTED_UNIQUE = {
 #: Checked as explicitly as the ones that must change: an over-eager migration
 #: that scoped `app_users.username` would let two households register the same
 #: login, which is a defect nothing else here would notice.
+#: A table may appear once with several constraints, which is why the value is a
+#: *list* of (columns, reason) rather than a single pair — `app_users` holds two
+#: global uniqueness guarantees for two different reasons, and collapsing them
+#: would mean one of the reasons goes unwritten.
 EXPECTED_STILL_GLOBAL = {
-    'app_users': (('username',),
-                  'one login namespace across the installation'),
-    'market_prices': (('symbol',),
-                      'public market data, shared cache, not tenant data'),
-    'household_invites': (('token_hash',),
-                          'the redemption lookup runs before any household is '
-                          'known, so this cannot be scoped'),
+    'app_users': [
+        (('username',), 'one login namespace across the installation'),
+        # Phase 10.5.
+        (('email',),
+         'one address identifies one account installation-wide; scoping it '
+         'would make the password-reset lookup ambiguous at the exact moment '
+         'nobody is signed in to disambiguate it'),
+    ],
+    'market_prices': [
+        (('symbol',), 'public market data, shared cache, not tenant data'),
+    ],
+    'household_invites': [
+        (('token_hash',),
+         'the redemption lookup runs before any household is known, so this '
+         'cannot be scoped'),
+    ],
+    'api_tokens': [
+        (('token_hash',),
+         'the authentication lookup runs before any household is bound -- the '
+         'token is what says which household -- so this cannot be scoped, '
+         'exactly as app_users.username cannot'),
+    ],
+    # Phase 10.5. The strongest form of the same exemption: whoever follows a
+    # password-reset link cannot sign in by definition, so there is no session,
+    # no household, and no possibility of one. A scoped lookup here would find
+    # nothing and recovery would be unimplementable.
+    'email_verifications': [
+        (('token_hash',),
+         'a reset link is followed by somebody who cannot sign in, so no '
+         'household can be bound and the token is the only identifier there is'),
+    ],
 }
 
 
@@ -394,10 +424,14 @@ def check_uniqueness(conn, report):
         report.record(f'{table} has no leftover household-blind UNIQUE',
                       not stale, f'still enforcing {sorted(stale)}')
 
-    for table, (expected, why) in EXPECTED_STILL_GLOBAL.items():
+    for table, constraints in EXPECTED_STILL_GLOBAL.items():
+        # One query per table rather than per constraint: `app_users` carries
+        # two, and re-reading its index list for each would be the same answer
+        # twice.
         signatures = _unique_signatures(conn, table)
-        report.record(f'{table} keeps UNIQUE{list(expected)} global',
-                      expected in signatures, why)
+        for expected, why in constraints:
+            report.record(f'{table} keeps UNIQUE{list(expected)} global',
+                          expected in signatures, why)
 
 
 def check_row_counts(conn, report, baseline, may_grow=()):

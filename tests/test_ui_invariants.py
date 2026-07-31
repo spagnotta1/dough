@@ -49,14 +49,29 @@ MIGRATED = [
     'investments.html',
     'household.html',
     'budgets.html',
+    # Phase 10.5. Both extend base.html and read the runtime theme engine, so
+    # every rule above applies to them from the day they landed rather than
+    # from a later audit — which is the whole reason this ledger exists.
+    #
+    # landing.html is the interesting one: it is reached by people who are *not*
+    # signed in, which is the property that put login/join/setup on the exempt
+    # list below. It is on the ledger anyway, and deliberately, because the
+    # exemption is not about who visits a page — it is about whether the page
+    # has a theme engine to read colours from. This one does. A returning
+    # visitor who chose Midnight must not be shown a copper marketing page that
+    # switches the instant they sign in. See the header of static/css/landing.css.
+    'landing.html',
+    'settings.html',
 ]
 
 #: login.html, join.html, setup.html and error.html (Waves 3 and 4) are
-#: deliberately not on this ledger. Every rule above assumes a page that
+#: deliberately not on this ledger — joined in Phase 10.5 by register.html,
+#: forgot_password.html, reset_password.html and verified.html, which share the
+#: same shell for the same reason. Every rule above assumes a page that
 #: extends base.html and reads its colours from the runtime theme engine —
-#: these four are reached by people who may not be signed in or may have just
+#: these are reached by people who may not be signed in or may have just
 #: hit a failure, do not extend base.html, and intentionally do not load that
-#: engine (see the header comment in static/css/auth.css, which all four
+#: engine (see the header comment in static/css/auth.css, which they all
 #: share). They lock their palette to fixed values instead, which "no literal
 #: colours" cannot distinguish from a page that simply forgot to use a token.
 #: They were audited by hand for their waves instead: one shared auth.css

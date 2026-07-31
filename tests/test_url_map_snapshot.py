@@ -65,6 +65,70 @@ EXPECTED_RULES = {
     ("/api/log/entries/<int:entry_id>", ("PUT",)),
     ("/api/net-worth", ("GET",)),
     ("/api/plaid/link-token", ("POST",)),
+    # ---------------------------------------------------------------------
+    # The versioned API.  [Phase 10]
+    #
+    # 49 rules added in one commit, deliberately and recorded here rather than
+    # silently. Every one of them is a public contract from the moment it
+    # exists, which is the reason this file's rule -- update EXPECTED_RULES in
+    # the same commit and say so in the message -- matters more for these than
+    # for anything above.
+    #
+    # Registered unconditionally, unlike /login and /household: the URL surface
+    # must not depend on the authentication mode, because "this endpoint does
+    # not exist" and "you are not signed in" are different facts and a client
+    # probing for the second should not be told the first. They therefore do
+    # NOT appear in AUTH_ONLY_RULES.
+    # ---------------------------------------------------------------------
+    ("/api/v1/accounts", ("GET",)),
+    ("/api/v1/accounts/<int:account_id>", ("GET",)),
+    ("/api/v1/accounts/balances", ("GET",)),
+    ("/api/v1/accounts/balances/<account_type>", ("PUT",)),
+    ("/api/v1/accounts/connections", ("GET",)),
+    ("/api/v1/accounts/net-worth", ("GET",)),
+    ("/api/v1/auth/login", ("POST",)),
+    ("/api/v1/auth/me", ("GET",)),
+    ("/api/v1/auth/tokens", ("GET",)),
+    ("/api/v1/auth/tokens", ("POST",)),
+    ("/api/v1/auth/tokens/<int:token_id>", ("DELETE",)),
+    ("/api/v1/budgets", ("GET",)),
+    ("/api/v1/budgets", ("POST",)),
+    ("/api/v1/budgets/<int:budget_id>", ("DELETE",)),
+    ("/api/v1/chat/conversations", ("GET",)),
+    ("/api/v1/chat/conversations", ("POST",)),
+    ("/api/v1/chat/conversations/<conversation_id>", ("DELETE",)),
+    ("/api/v1/chat/conversations/<conversation_id>", ("GET",)),
+    ("/api/v1/chat/conversations/<conversation_id>", ("PATCH",)),
+    ("/api/v1/chat/conversations/<conversation_id>/messages", ("DELETE",)),
+    ("/api/v1/chat/conversations/<conversation_id>/messages", ("GET",)),
+    ("/api/v1/chat/conversations/<conversation_id>/messages", ("POST",)),
+    ("/api/v1/copilot/ask", ("POST",)),
+    ("/api/v1/copilot/brief", ("GET",)),
+    ("/api/v1/copilot/investments/ask", ("POST",)),
+    ("/api/v1/copilot/investments/brief", ("GET",)),
+    ("/api/v1/household", ("GET",)),
+    ("/api/v1/household/activity", ("GET",)),
+    ("/api/v1/household/invites", ("GET",)),
+    ("/api/v1/household/invites", ("POST",)),
+    ("/api/v1/household/invites/<int:invite_id>", ("DELETE",)),
+    ("/api/v1/household/members", ("GET",)),
+    ("/api/v1/household/members/<int:user_id>", ("DELETE",)),
+    ("/api/v1/household/members/<int:user_id>", ("PATCH",)),
+    ("/api/v1/investments", ("GET",)),
+    ("/api/v1/investments/holdings", ("GET",)),
+    ("/api/v1/investments/holdings", ("POST",)),
+    ("/api/v1/investments/holdings/<int:holding_id>", ("DELETE",)),
+    ("/api/v1/investments/holdings/<int:holding_id>", ("GET",)),
+    ("/api/v1/investments/holdings/<int:holding_id>", ("PATCH",)),
+    ("/api/v1/settings", ("GET",)),
+    ("/api/v1/transactions", ("GET",)),
+    ("/api/v1/transactions", ("POST",)),
+    ("/api/v1/transactions/<int:transaction_id>", ("DELETE",)),
+    ("/api/v1/transactions/<int:transaction_id>", ("GET",)),
+    ("/api/v1/transactions/<int:transaction_id>", ("PATCH",)),
+    ("/api/v1/transactions/bulk", ("POST",)),
+    ("/api/v1/transactions/categories", ("GET",)),
+    ("/api/v1/transactions/imports/<batch_id>", ("DELETE",)),
     ("/api/sync/all", ("POST",)),
     ("/api/sync/history", ("GET",)),
     ("/api/sync/status", ("GET",)),
@@ -97,6 +161,25 @@ EXPECTED_RULES = {
     ("/rules/ai-suggest", ("POST",)),
     ("/rules/reorder", ("POST",)),
     ("/rules/test", ("POST",)),
+    # ---------------------------------------------------------------------
+    # The identity lifecycle.  [Phase 10.5]
+    #
+    # Nine rules, added deliberately and recorded here. Note what is *not* in
+    # this list: `/` is unchanged. The landing page shares the dashboard's rule
+    # and branches inside the view (dough/blueprints/core.py), so the marketing
+    # page cost the URL surface nothing -- which is why it was done that way.
+    # ---------------------------------------------------------------------
+    ("/forgot-password", ("GET", "POST")),
+    ("/register", ("GET", "POST")),
+    ("/reset-password/<token>", ("GET", "POST")),
+    ("/settings", ("GET",)),
+    ("/settings/email", ("POST",)),
+    ("/settings/password", ("POST",)),
+    ("/settings/sessions/revoke", ("POST",)),
+    ("/settings/tokens", ("POST",)),
+    ("/settings/tokens/<int:token_id>/revoke", ("POST",)),
+    ("/settings/verify-email/resend", ("POST",)),
+    ("/verify-email/<token>", ("GET",)),
     ("/setup", ("GET", "POST")),
     ("/static/<path:filename>", ("GET",)),
     ("/sync-history", ("GET",)),
@@ -124,6 +207,29 @@ AUTH_ONLY_RULES = {
     ("/login", ("GET", "POST")),
     ("/logout", ("POST",)),
     ("/setup", ("GET", "POST")),
+    # Phase 10.5. Same condition, same reason: registering, recovering and
+    # managing an account all need accounts to exist. `/settings` is in the
+    # `settings` blueprint, which `dough/blueprints/__init__.py` registers
+    # inside the same `if app.config['AUTH_ENABLED']` block as `auth` and
+    # `household`.
+    #
+    # Note that `/` is deliberately NOT here. It exists in every configuration
+    # and always has -- the landing page changed what it renders, not whether
+    # the route exists. A URL that appeared and disappeared with the
+    # authentication mode would tell a prober the difference between "this
+    # endpoint does not exist" and "you are not signed in", which is the same
+    # reasoning that keeps `/api/v1` out of this set.
+    ("/forgot-password", ("GET", "POST")),
+    ("/register", ("GET", "POST")),
+    ("/reset-password/<token>", ("GET", "POST")),
+    ("/settings", ("GET",)),
+    ("/settings/email", ("POST",)),
+    ("/settings/password", ("POST",)),
+    ("/settings/sessions/revoke", ("POST",)),
+    ("/settings/tokens", ("POST",)),
+    ("/settings/tokens/<int:token_id>/revoke", ("POST",)),
+    ("/settings/verify-email/resend", ("POST",)),
+    ("/verify-email/<token>", ("GET",)),
 }
 
 

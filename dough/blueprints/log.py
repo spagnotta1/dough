@@ -7,7 +7,7 @@ from datetime import datetime
 
 from flask import Blueprint, jsonify, request
 
-from dough.services import audit
+from dough.services import accounts, audit
 from dough.tenancy import get_owned
 
 from models import (AccountBalance, EVENT_ACCOUNT_BALANCE_SET, LogEntry, db)
@@ -108,23 +108,21 @@ def clear():
 
 @bp.route('/api/log/balances', methods=['GET'])
 def get_balances():
-    return jsonify([b.to_dict() for b in AccountBalance.query.all()])
+    return jsonify([b.to_dict() for b in accounts.manual_balances()])
 
 @bp.route('/api/log/balances/<account_type>', methods=['PUT'])
 def update_balance(account_type):
-    balance = AccountBalance.query.filter_by(account_type=account_type).first()
-    if not balance:
-        balance = AccountBalance(account_type=account_type)
-        db.session.add(balance)
-    was = balance.starting_balance
-    balance.starting_balance = float(request.json['starting_balance'])
     try:
-        db.session.commit()
-        audit.record(EVENT_ACCOUNT_BALANCE_SET, entity_type='account_balance',
-                     entity_id=balance.id,
-                     metadata={'account_type': account_type, 'from': was,
-                               'to': balance.starting_balance})
-        return jsonify(balance.to_dict())
+        balance, was = accounts.set_manual_balance(
+            account_type, float(request.json['starting_balance']))
     except Exception as e:
         db.session.rollback()
         return jsonify({'error': str(e)}), 400
+    # Recorded after the commit, as it was before: an audit row for a change
+    # that then failed to persist would be a record of something that did not
+    # happen, which is worse than no record.
+    audit.record(EVENT_ACCOUNT_BALANCE_SET, entity_type='account_balance',
+                 entity_id=balance.id,
+                 metadata={'account_type': account_type, 'from': was,
+                           'to': balance.starting_balance})
+    return jsonify(balance.to_dict())

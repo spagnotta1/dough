@@ -1,15 +1,17 @@
-"""Monthly budget targets and their progress."""
+"""Monthly budget targets and their progress.
 
-from calendar import monthrange
-from datetime import datetime, timedelta
+Phase 10 moved the arithmetic — the upsert, the two-month spend rollup, the
+banding and the month-pace marker — into `dough/services/budgets.py`, so
+`/api/v1/budgets` answers from the same computation rather than a second one.
+What is left is form handling and a template call.
+"""
 
 from flask import (Blueprint, flash, redirect, render_template, request,
                    url_for)
-from sqlalchemy import func
 
-from dough.tenancy import get_owned
+from dough.services import budgets as budget_service
 
-from models import Budget, Transaction, db
+from models import Transaction, db
 
 bp = Blueprint('budgets', __name__)
 
@@ -28,75 +30,29 @@ def index():
             except ValueError:
                 flash("That budget amount didn't look like a number — mind checking it?", 'error')
                 return redirect(url_for('budgets.index'))
-            existing = Budget.query.filter_by(category=category, account_name=account_name).first()
-            if existing:
-                existing.monthly_limit = monthly_limit
-                flash(f"Updated — I'll watch {category} against the new limit.", 'success')
-            else:
-                db.session.add(Budget(category=category, account_name=account_name, monthly_limit=monthly_limit))
-                flash(f"Budget set — I'll keep an eye on {category} for you.", 'success')
-            db.session.commit()
+            _budget, created = budget_service.upsert_budget(
+                category, account_name, monthly_limit)
+            flash(f"Budget set — I'll keep an eye on {category} for you." if created
+                  else f"Updated — I'll watch {category} against the new limit.",
+                  'success')
         elif action == 'delete':
             budget_id = request.form.get('budget_id')
-            b = get_owned(Budget, budget_id) if budget_id else None
-            if b:
-                db.session.delete(b)
-                db.session.commit()
+            if budget_id:
+                budget_service.delete_budget(budget_id)
                 flash("Budget removed — I'll stop tracking that one.", 'success')
         return redirect(url_for('budgets.index'))
 
-    all_budgets = Budget.query.order_by(Budget.category).all()
+    # One call, and the same one `/api/v1/budgets` makes. Actual spend for the
+    # current month and the one before it, so each budget can show where it
+    # stands rather than only what it is — a page of limits with no spend
+    # against them cannot answer the only question anyone opens it with.
+    status = budget_service.status()
 
-    # Actual spend for the current month and the one before it, so each
-    # budget can show where it stands rather than only what it is. A page
-    # of limits with no spend against them cannot answer the only question
-    # anyone opens it with: am I over?
-    today = datetime.now()
-    month_start = today.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-    prev_end = month_start - timedelta(days=1)
-    prev_start = prev_end.replace(day=1)
-
-    def _spend_by_category(start, end):
-        rows = (db.session.query(Transaction.category,
-                                 Transaction.account_name,
-                                 func.sum(Transaction.amount).label('net'))
-                .filter(Transaction.date.between(start, end))
-                .group_by(Transaction.category, Transaction.account_name).all())
-        totals = {}
-        for category, account, net in rows:
-            spent = max(0.0, -float(net or 0.0))
-            totals[(category, account)] = totals.get((category, account), 0.0) + spent
-            totals[(category, 'both')] = totals.get((category, 'both'), 0.0) + spent
-        return totals
-
-    this_month = _spend_by_category(month_start, today)
-    last_month = _spend_by_category(prev_start, prev_end)
-
-    budget_status = []
-    for b in all_budgets:
-        limit = float(b.monthly_limit)
-        spent = this_month.get((b.category, b.account_name), 0.0)
-        prior = last_month.get((b.category, b.account_name), 0.0)
-        pct = (spent / limit * 100) if limit > 0 else 0.0
-        budget_status.append({
-            'budget': b,
-            'spent': round(spent, 2),
-            'prior': round(prior, 2),
-            'remaining': round(limit - spent, 2),
-            'pct': round(pct, 1),
-            'state': 'danger' if pct > 100 else 'warn' if pct > 80 else 'ok',
-            'change_pct': round((spent - prior) / prior * 100) if prior > 0 else None,
-        })
-
-    # How far through the month we are — the pace marker on each bar. Being
-    # at 60% of a budget means nothing without knowing it is the 5th.
-    days_in_month = monthrange(today.year, today.month)[1]
-    month_progress = round(today.day / days_in_month * 100)
-
-    return render_template('budgets.html', budgets=all_budgets,
-                           budget_status=budget_status,
-                           month_label=today.strftime('%B %Y'),
-                           month_progress=month_progress,
-                           total_budgeted=round(sum(float(b.monthly_limit) for b in all_budgets), 2),
-                           total_spent=round(sum(s['spent'] for s in budget_status), 2),
+    return render_template('budgets.html',
+                           budgets=budget_service.list_budgets(),
+                           budget_status=status['budgets'],
+                           month_label=status['month_label'],
+                           month_progress=status['month_progress'],
+                           total_budgeted=status['total_budgeted'],
+                           total_spent=status['total_spent'],
                            categories=categories, accounts=accounts)

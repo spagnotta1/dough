@@ -34,6 +34,14 @@ SKIP = {
     # dashboard. tests/test_auth_journey.py covers both signed out.
     '/login':          'covered signed-out by test_auth_journey.py',
     '/setup':          'unreachable once an owner account exists',
+    # Phase 10.5. The same shape as /login and /setup: these render for somebody
+    # who is *not* signed in, which is the opposite of what this sweep visits.
+    # /register redirects a signed-in visitor to the dashboard, and both pages
+    # use the auth shell rather than base.html, so they have no <main> for this
+    # file's assertions to find. tests/browser/test_identity_journey.py sweeps
+    # them signed out, at the same three viewports.
+    '/register':        'renders for somebody with no session; swept by test_identity_journey.py',
+    '/forgot-password': 'renders for somebody with no session; swept by test_identity_journey.py',
 }
 
 

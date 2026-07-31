@@ -31,6 +31,17 @@
                autocomplete="current-password" {% if error %}aria-invalid="true"{% endif %}>
       </div>
       <button type="submit" class="auth-btn">Sign in</button>
+      {# Phase 10.5. Recovery is offered unconditionally; registration only when
+         the instance accepts it, because a "Create account" link that leads to
+         "registration is closed" is worse than no link -- it advertises a door
+         that is not there. `/register` still renders its explanation for anyone
+         who reaches it another way (the landing page, a bookmark). #}
+      <p class="auth-hint" style="text-align:center;margin-top:14px;">
+        <a href="{{ url_for('auth.forgot_password') }}">Forgotten your password?</a>
+        {% if config.ALLOW_REGISTRATION %}
+          <br>No account? <a href="{{ url_for('auth.register') }}">Create one</a>
+        {% endif %}
+      </p>
     </form>
   </div>
   <script defer src="{{ url_for('static', filename='js/dough.js') }}"></script>

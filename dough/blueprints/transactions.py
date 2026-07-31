@@ -1,5 +1,17 @@
 """Everything that reads or edits the ledger itself: the list, CSV upload,
-inline edits, bulk operations, import undo, and export."""
+inline edits, bulk operations, import undo, and export.
+
+Phase 10 moved the *logic* of every write in this file into
+`dough/services/ledger.py`, so `/api/v1/transactions` performs the identical
+operations rather than a second implementation of them. What is left here is
+what a view should be: read the form or the JSON body, call the service, and
+turn the result into a redirect with a flash or into the JSON the existing
+templates already expect.
+
+The response shapes are unchanged on purpose. `static/js/` calls these routes
+and reads `{'success': ...}`; the envelope is `/api/v1`'s contract, and
+retrofitting it here would break the pages this phase is not supposed to touch.
+"""
 
 from datetime import datetime
 import io
@@ -9,13 +21,12 @@ import uuid
 from flask import (Blueprint, Response, current_app, flash, jsonify, redirect,
                    render_template, request, session, url_for)
 import pandas as pd
-from sqlalchemy.exc import IntegrityError
+from werkzeug.exceptions import HTTPException
 from werkzeug.utils import secure_filename
 
+from dough.services import ledger
 from dough.services.categorization import get_category_rules
-from dough.services.transactions import (build_transaction_query,
-                                         compute_anomaly_scores, sticky_filter)
-from dough.tenancy import get_owned
+from dough.services.transactions import build_transaction_query, sticky_filter
 
 from models import Transaction, db
 
@@ -35,85 +46,33 @@ def upload():
             flash('Let me know which account these belong to first.', 'error')
             return redirect(request.url)
 
-        total_new = 0
-        total_skipped = 0
         batch_id = str(uuid.uuid4())
-        # Resolved once for the whole import rather than per row. It was a
-        # closure variable before Phase 3; this keeps the lookup identical
-        # in cost as well as in result.
+        # Resolved once for the whole import rather than per row, and passed in
+        # rather than reached for by the service — see this directory's rule 2.
         rules_engine = get_category_rules()
 
+        saved = []
         for file in files:
             if not file.filename:
                 continue
-            print(f"Processing file: {file.filename}")
             filename = secure_filename(file.filename)
             filepath = os.path.join(current_app.config['UPLOAD_FOLDER'], filename)
             file.save(filepath)
+            saved.append(filepath)
 
-            df = pd.read_csv(filepath)
-            df = df.sort_values(by='Transaction Date')
-            prev_balance = None
+        # Removing the upload is the route's job, not the service's: the service
+        # takes paths and has no idea which of them it is allowed to delete.
+        # `on_file` rather than a loop afterwards so a file is removed as soon as
+        # it has been read, which is what the original did.
+        result = ledger.import_csv(saved, account_name, batch_id=batch_id,
+                                   rules_engine=rules_engine,
+                                   on_file=os.remove)
 
-            for idx, row in df.iterrows():
-                desc = str(row['Transaction Description'])
-                date = pd.to_datetime(row['Transaction Date']).date()
-                amount = float(row['Transaction Amount'])
-                balance = float(row['Balance']) if not pd.isnull(row['Balance']) else None
-
-                signed_amount = amount
-                desc_lower = desc.lower()
-
-                if 'deposit from 360 checking' in desc_lower or 'deposit from 360 performance savings' in desc_lower:
-                    signed_amount = abs(amount)
-                elif 'withdrawal to 360 checking' in desc_lower or 'withdrawal to 360 performance savings' in desc_lower:
-                    signed_amount = -abs(amount)
-                elif 'monthly interest paid' in desc_lower:
-                    signed_amount = abs(amount)
-                elif 'credit card' in desc_lower or 'credit crd' in desc_lower:
-                    signed_amount = -abs(amount)
-                elif 'purchase' in desc_lower:
-                    signed_amount = -abs(amount)
-                elif 'deposit' in desc_lower or 'credit' in desc_lower:
-                    signed_amount = abs(amount)
-                elif 'withdraw' in desc_lower or 'payment' in desc_lower:
-                    signed_amount = -abs(amount)
-                elif prev_balance is not None and balance is not None:
-                    if balance < prev_balance:
-                        signed_amount = -abs(amount)
-                    elif balance > prev_balance:
-                        signed_amount = abs(amount)
-
-                category = rules_engine.get_category(desc)
-                transaction = Transaction(
-                    account_name=account_name,
-                    date=date,
-                    description=desc,
-                    amount=signed_amount,
-                    category=category,
-                    import_batch_id=batch_id
-                )
-                try:
-                    db.session.add(transaction)
-                    db.session.flush()
-                    total_new += 1
-                except IntegrityError:
-                    db.session.rollback()
-                    total_skipped += 1
-                else:
-                    db.session.commit()
-
-                prev_balance = balance
-
-            os.remove(filepath)
-            print(f"Finished processing: {file.filename}")
-
-        compute_anomaly_scores()
-        if total_new > 0:
+        if result.added > 0:
             session['last_batch_id'] = batch_id
-            session['last_batch_count'] = total_new
-        flash(f'All done — I added {total_new} new transactions and skipped '
-              f'{total_skipped} I already had.', 'success')
+            session['last_batch_count'] = result.added
+        flash(f'All done — I added {result.added} new transactions and skipped '
+              f'{result.skipped} I already had.', 'success')
         return redirect(url_for('transactions.upload'))
 
     return render_template('upload.html',
@@ -190,15 +149,33 @@ def clear_filters():
     next_url = request.args.get('next')
     return redirect(next_url if next_url else url_for('transactions.index'))
 
+# ---------------------------------------------------------------------------
+# `except HTTPException: raise` appears in the three routes below and it is
+# load-bearing, not noise.  [Phase 10]
+#
+# These routes resolve a caller-supplied id, which the service does with
+# `get_owned` -- and `get_owned` refuses a foreign or missing row by *raising*
+# werkzeug's NotFound. Before the service extraction that call sat outside the
+# try block, so the 404 propagated. Moving it inside a bare `except Exception`
+# swallowed it: a PUT naming another household's transaction answered 200 with
+# `{'success': False}`, and the authorization failure became a message in a
+# field nothing checks.
+#
+# Caught by `tests/test_tenancy_boundary.py::
+# test_routes_deny_foreign_ids_without_the_orm_backstop`, which runs each route
+# against another household's row with the ORM backstop switched off. That is
+# the test's whole purpose and it earned its place here.
+# ---------------------------------------------------------------------------
+
 @bp.route('/update_category', methods=['POST'])
 def update_category():
     transaction_id = request.form.get('transaction_id')
     new_category = request.form.get('category')
-    transaction = get_owned(Transaction, transaction_id)
-    transaction.category = new_category
     try:
-        db.session.commit()
+        ledger.update_transaction(transaction_id, {'category': new_category})
         return jsonify({'success': True})
+    except HTTPException:
+        raise
     except Exception as e:
         db.session.rollback()
         return jsonify({'success': False, 'error': str(e)})
@@ -211,53 +188,47 @@ def update_categories_bulk():
     if not ids or not new_category:
         return jsonify({'success': False, 'error': 'Missing ids or category'})
     try:
-        Transaction.query.filter(Transaction.id.in_(ids)).update(
-            {Transaction.category: new_category}, synchronize_session='fetch'
-        )
-        db.session.commit()
-        return jsonify({'success': True, 'updated': len(ids)})
+        updated = ledger.bulk_update_category(ids, new_category)
+        return jsonify({'success': True, 'updated': updated})
     except Exception as e:
         db.session.rollback()
         return jsonify({'success': False, 'error': str(e)})
 
 @bp.route('/transactions/<int:transaction_id>', methods=['PUT'])
 def edit(transaction_id):
-    t = get_owned(Transaction, transaction_id)
     data = request.json
+    changes = {}
     if 'date' in data:
-        t.date = datetime.strptime(data['date'], '%Y-%m-%d').date()
+        changes['date'] = datetime.strptime(data['date'], '%Y-%m-%d').date()
     if 'description' in data:
-        t.description = data['description']
+        changes['description'] = data['description']
     if 'amount' in data:
-        t.amount = float(data['amount'])
+        changes['amount'] = float(data['amount'])
     if 'category' in data:
-        t.category = data['category']
+        changes['category'] = data['category']
     if 'account_name' in data:
-        t.account_name = data['account_name']
+        changes['account_name'] = data['account_name']
     if 'notes' in data:
-        t.notes = data['notes'] or None
+        changes['notes'] = data['notes'] or None
     try:
-        db.session.commit()
-        return jsonify({'success': True, 'transaction': {
-            'id': t.id,
-            'date': t.date.strftime('%Y-%m-%d'),
-            'description': t.description,
-            'amount': float(t.amount),
-            'category': t.category,
-            'account_name': t.account_name,
-            'notes': t.notes or '',
-        }})
+        t = ledger.update_transaction(transaction_id, changes)
+        # The template's JS reads these six keys. `ledger.serialize` is a
+        # superset, so the extra fields are harmless and the shape stays the
+        # one definition of what a transaction looks like.
+        return jsonify({'success': True, 'transaction': ledger.serialize(t)})
+    except HTTPException:
+        raise
     except Exception as e:
         db.session.rollback()
         return jsonify({'success': False, 'error': str(e)})
 
 @bp.route('/transactions/<int:transaction_id>', methods=['DELETE'])
 def delete(transaction_id):
-    transaction = get_owned(Transaction, transaction_id)
     try:
-        db.session.delete(transaction)
-        db.session.commit()
+        ledger.delete_transaction(transaction_id)
         return jsonify({'success': True})
+    except HTTPException:
+        raise
     except Exception as e:
         db.session.rollback()
         return jsonify({'success': False, 'error': str(e)})
@@ -265,8 +236,7 @@ def delete(transaction_id):
 @bp.route('/import/<batch_id>/undo', methods=['POST'])
 def undo_import(batch_id):
     try:
-        deleted = Transaction.query.filter_by(import_batch_id=batch_id).delete(synchronize_session='fetch')
-        db.session.commit()
+        deleted = ledger.undo_import(batch_id)
         session.pop('last_batch_id', None)
         session.pop('last_batch_count', None)
         flash(f'Undone — I took those {deleted} transaction(s) back out.', 'success')
@@ -282,8 +252,7 @@ def bulk_delete():
     if not ids:
         return jsonify({'success': False, 'error': 'No IDs provided'})
     try:
-        deleted = Transaction.query.filter(Transaction.id.in_(ids)).delete(synchronize_session='fetch')
-        db.session.commit()
+        deleted = ledger.bulk_delete(ids)
         return jsonify({'success': True, 'deleted': deleted})
     except Exception as e:
         db.session.rollback()
@@ -300,18 +269,8 @@ def export():
 
     query = build_transaction_query(account_filter, category_filter, start_date_str,
                                     end_date_str, direction_filter, search_query)
-    txns = query.order_by(Transaction.date.desc()).all()
 
-    rows = [{
-        'ID': t.id,
-        'Date': t.date.strftime('%Y-%m-%d'),
-        'Description': t.description,
-        'Account': t.account_name,
-        'Category': t.category,
-        'Amount': float(t.amount),
-    } for t in txns]
-
-    df = pd.DataFrame(rows)
+    df = pd.DataFrame(ledger.export_rows(query))
     output = io.StringIO()
     df.to_csv(output, index=False)
     output.seek(0)

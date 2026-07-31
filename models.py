@@ -120,11 +120,58 @@ class AppUser(db.Model):
     password_hash = db.Column(db.String(255), nullable=False)
     created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
 
+    #: The address password recovery and verification are sent to.  [Phase 10.5]
+    #:
+    #: Nullable, and it has to be. Every account that existed before this column
+    #: did was created through `/setup` or `/join`, neither of which asked for an
+    #: address, and there is nothing truthful to backfill — an invented value
+    #: would be a delivery address for a password reset, which is the one field
+    #: where a wrong guess hands the account to whoever owns the address that was
+    #: guessed. `/register` requires one; the older paths still do not.
+    #:
+    #: Unique, because it is a lookup key for `/forgot-password` and two accounts
+    #: sharing one would make "which account did you mean" unanswerable. SQL
+    #: treats NULLs as distinct from each other, so the constraint costs the
+    #: address-less accounts nothing.
+    #:
+    #: Stored lowercased — see `dough.services.identity.normalize_email`. Storing
+    #: what was typed would make the uniqueness constraint case-sensitive, so
+    #: `Sam@x.com` and `sam@x.com` would be two accounts and the reset lookup
+    #: would find whichever one was typed the same way twice.
+    email = db.Column(db.String(255), nullable=True, unique=True)
+
+    #: When the address above was proved reachable, or NULL if it never was.
+    #:
+    #: A timestamp rather than a boolean because "verified" is an event with a
+    #: date an operator may need — a support question about an account
+    #: compromised in March is a different question depending on whether the
+    #: address was confirmed before or after. Nothing is gated on it today;
+    #: `REQUIRE_EMAIL_VERIFICATION` is the switch that will be, and it is off.
+    email_verified_at = db.Column(db.DateTime, nullable=True)
+
     # Not TenantScopedMixin: see the block comment above.
     household_id = db.Column(db.Integer, db.ForeignKey('households.id'),
                              nullable=False, index=True)
     role = db.Column(db.String(20), nullable=False, default=ROLE_OWNER,
                      server_default=ROLE_OWNER)
+
+    #: The generation counter every credential for this account is stamped with.
+    #: Raising it invalidates all of them at once — the browser session, which
+    #: carries the value it was signed in under, and every API token, which
+    #: stores the value it was issued under. One number, both surfaces, no sweep
+    #: over any table and nothing to keep in step.
+    #:
+    #: Nobody has to remember to raise it. A `before_flush` listener in
+    #: `dough/auth.py` does it whenever `password_hash` changes, because the
+    #: alternative — an explicit call at each site that changes a password — is
+    #: a convention, and a forgotten convention here means old credentials keep
+    #: working after the password they were obtained with has been replaced.
+    #:
+    #: The one exemption is the sign-in rehash, which changes the stored hash
+    #: without changing the password; it is marked at the single place that
+    #: performs it. See `dough.auth.upgrade_password_hash`.
+    session_version = db.Column(db.Integer, nullable=False, default=1,
+                                server_default='1')
 
     @property
     def is_owner(self):
@@ -194,6 +241,286 @@ class HouseholdInvite(TenantScopedMixin, db.Model):
             return 'accepted'
         if self.revoked_at:
             return 'revoked'
+        if self.expires_at <= now:
+            return 'expired'
+        return 'pending'
+
+    @property
+    def is_redeemable(self):
+        return self.state() == 'pending'
+
+
+class ApiToken(db.Model):
+    """A bearer credential a non-browser client authenticates with.  [Phase 10]
+
+    ## Why this exists rather than reusing the session cookie
+
+    The session is a signed cookie plus a CSRF token bound to it, and both of
+    those are browser mechanisms. A native client would have to hold a cookie
+    jar, scrape a token out of an HTML page, and replay both — which is a
+    browser emulator, not an API client. More importantly the session has no
+    revocation story short of rotating `SECRET_KEY` and signing everybody out,
+    and "the phone was stolen" must not be an event that logs the family's
+    desktop out too.
+
+    ## Not `TenantScopedMixin`, for the same reason as `AppUser`
+
+    The lookup runs *before* any household is bound — the token is what says
+    which household the request belongs to. Filtering this table through the ORM
+    backstop would make authenticating impossible, exactly as it would for
+    login. So `household_id` is a plain indexed foreign key and the isolation
+    guarantee comes from `dough/services/api_tokens.py`, which is the only
+    module that reads this table and always states the predicate itself.
+
+    `tools/verify_tenancy.py` lists the table with that reason attached, so the
+    exception is reviewed rather than assumed.
+
+    ## Why the hash and not the token
+
+    Identical reasoning to `HouseholdInvite`, and it is the same shape of
+    credential: holding the string *is* the authorization. Storing plaintext
+    would mean a database file, a backup, or a stray `SELECT *` in a log yields
+    working access to a household's finances.
+
+    SHA-256, unsalted, no work factor — deliberately, and for the reason that
+    makes it wrong for passwords: the input is 256 bits from
+    `secrets.token_urlsafe`, so there is no dictionary to precompute and nothing
+    a slow KDF would protect against. A work factor here would only tax every
+    authenticated request, which is the one place in this application where a
+    per-request cost is actually paid on every request.
+
+    ## `prefix`
+
+    The first characters of the token, stored in clear. It is not a credential —
+    it identifies which row a token belongs to for the revocation UI, so
+    somebody looking at three tokens can tell which one is on the old phone.
+    Short enough to be useless for guessing the remaining entropy.
+    """
+    __tablename__ = 'api_tokens'
+
+    id = db.Column(db.Integer, primary_key=True)
+
+    # Not TenantScopedMixin: see the class docstring.
+    household_id = db.Column(db.Integer, db.ForeignKey('households.id'),
+                             nullable=False, index=True)
+    # Which person the token acts as. Role checks (`@owner_required`) resolve
+    # through this user, so a token can never do more than the human who issued
+    # it — and a demoted owner's tokens are demoted with them, because the role
+    # is read from `app_users` at request time rather than copied here.
+    user_id = db.Column(db.Integer, db.ForeignKey('app_users.id'),
+                        nullable=False, index=True)
+
+    #: The owner's own label: "iPhone", "shortcuts". Never matched against
+    #: anything.
+    name = db.Column(db.String(80), nullable=False)
+    token_hash = db.Column(db.String(64), nullable=False, unique=True, index=True)
+    prefix = db.Column(db.String(20), nullable=False)
+
+    #: Comma-separated, from `api_tokens.VALID_SCOPES`. A closed vocabulary for
+    #: the same reason the audit event types are one: `'read'`, `'Read'` and
+    #: `'read '` must not be three different permissions.
+    #:
+    #: `server_default` as well as `default`, matching every other column in
+    #: this file that has one. `tests/test_migrations.py` compares the schema
+    #: `create_all()` builds against the one the migration chain builds, and a
+    #: Python-side default alone would leave the two disagreeing -- which is the
+    #: drift that test exists to catch.
+    scopes = db.Column(db.String(120), nullable=False, default='read',
+                       server_default='read')
+
+    #: `AppUser.session_version` as it stood when this token was issued. A
+    #: mismatch means the account's credentials have been invalidated since —
+    #: today, that a password was changed — and `authenticate()` refuses the
+    #: token without anything having had to sweep this table.
+    #:
+    #: Copied rather than joined-and-compared at issue time so the check costs
+    #: nothing: `authenticate()` already loads the user row on every request, for
+    #: the separate reason that a demoted owner's tokens must demote with them.
+    #: Lazy invalidation rather than eager revocation is also what makes the
+    #: guarantee hold under a partial failure — there is no second write that
+    #: could be lost, so a token cannot survive by having been missed.
+    session_version = db.Column(db.Integer, nullable=False, default=1,
+                                server_default='1')
+
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    #: Nullable means "does not expire". A token with no expiry is a deliberate
+    #: choice an operator can make, not the only thing the schema can express.
+    expires_at = db.Column(db.DateTime, nullable=True)
+    revoked_at = db.Column(db.DateTime, nullable=True)
+    #: Written coarsely — see `api_tokens.touch`. This is the field that answers
+    #: "which of these can I safely delete?", which is the question that decides
+    #: whether anybody ever prunes them.
+    last_used_at = db.Column(db.DateTime, nullable=True)
+
+    user = db.relationship('AppUser', foreign_keys=[user_id])
+
+    #: Every value `state()` can return, in the order it decides them. A closed
+    #: vocabulary for the same reason `VALID_SCOPES` is one, and pinned against
+    #: the OpenAPI enum by `tests/test_openapi.py` — a fifth state added here
+    #: without the spec catching up is a client that meets a value its own
+    #: types say cannot exist.
+    STATES = ('revoked', 'stale', 'expired', 'active')
+
+    def scope_list(self):
+        return [s for s in (self.scopes or '').split(',') if s]
+
+    def has_scope(self, scope):
+        return scope in self.scope_list()
+
+    def state(self, now=None):
+        """`'revoked'`, `'stale'`, `'expired'` or `'active'`.
+
+        Deliberate acts are reported before incidental ones, which is why
+        revoked and stale both come before expired: a token somebody withdrew,
+        or one that a password change invalidated, should say so rather than
+        report the fact that it would have lapsed anyway. Between the two,
+        revocation names *this token* and staleness names the account.
+
+        `'stale'` also covers a token whose user has been deleted — a removed
+        member's rows are not cleaned up, and `authenticate` refuses those
+        (as `'orphaned'`), so listing one as active would be a lie about a
+        credential that no longer works.
+        """
+        now = now or datetime.utcnow()
+        if self.revoked_at:
+            return 'revoked'
+        # A lazy load per token. The list is per household and single-digit in
+        # practice, and the alternative -- threading the user's version in from
+        # every caller -- is a parameter that a serializer could omit, which
+        # would make this read 'active' at exactly the moment it must not.
+        if self.user is None or self.user.session_version != self.session_version:
+            return 'stale'
+        if self.expires_at and self.expires_at <= now:
+            return 'expired'
+        return 'active'
+
+    @property
+    def is_usable(self):
+        return self.state() == 'active'
+
+    def to_dict(self):
+        """Everything about the token except the token.
+
+        There is no branch here that could ever include the plaintext, which is
+        the point: `issue()` returns it separately and exactly once, so no
+        serializer can leak it into a list response by accident.
+        """
+        return {
+            'id': self.id,
+            'name': self.name,
+            'prefix': self.prefix,
+            'scopes': self.scope_list(),
+            'state': self.state(),
+            'created_at': self.created_at.isoformat() + 'Z',
+            'expires_at': self.expires_at.isoformat() + 'Z' if self.expires_at else None,
+            'last_used_at': self.last_used_at.isoformat() + 'Z' if self.last_used_at else None,
+            'revoked_at': self.revoked_at.isoformat() + 'Z' if self.revoked_at else None,
+        }
+
+
+#: What an `EmailVerification` row entitles its holder to do. A closed
+#: vocabulary for the same reason `AUDIT_EVENT_TYPES` and `VALID_SCOPES` are
+#: closed, and here the reason is not tidiness: `purpose` is what stops a link
+#: that proves an address is reachable from also being a link that sets a
+#: password. A typo in a string comparison would silently merge the two.
+PURPOSE_VERIFY_EMAIL = 'verify_email'
+PURPOSE_PASSWORD_RESET = 'password_reset'
+VERIFICATION_PURPOSES = (PURPOSE_VERIFY_EMAIL, PURPOSE_PASSWORD_RESET)
+
+
+class EmailVerification(db.Model):
+    """A single-use, expiring token mailed to an address.  [Phase 10.5]
+
+    Two things use this table and they are told apart by `purpose`: proving an
+    address is reachable, and authorizing a password reset.
+
+    ## Why one table and not two
+
+    The listed fields for both are identical — a hash, an expiry, a single-use
+    stamp — and so is every rule about them. Two tables would mean two
+    implementations of "is this token still redeemable?", and the failure mode of
+    the duplicate is specific rather than aesthetic: the second copy is the one
+    that gets the expiry check right and the single-use check subtly wrong,
+    because it was written by someone reading the first copy rather than the
+    requirement. `redeem()` in `dough/services/identity.py` is that logic, once,
+    and `purpose` is an argument to it — so asking for a reset token and being
+    handed a verification token is a lookup that returns nothing rather than a
+    comparison somebody forgot to write.
+
+    ## Not `TenantScopedMixin`, for the third time in this file
+
+    `AppUser` and `ApiToken` give the same reason and it applies most strongly
+    here: whoever follows a reset link is, by definition, someone who cannot sign
+    in. There is no session, no household bound, and no possibility of one — the
+    token is the only thing identifying anybody. A scoped query would find
+    nothing and password reset would be impossible to implement.
+
+    The isolation guarantee is therefore the same as `api_tokens`': one module
+    reads this table (`dough/services/identity.py`), and it always states its own
+    predicate. `tools/verify_tenancy.py` lists the table with that reason
+    attached, so the exception is reviewed rather than assumed.
+
+    ## Why the hash and not the token
+
+    Third time for this reasoning too, and it has not changed: holding the string
+    *is* the authorization. A password-reset token in a database file, a backup,
+    or a stray `SELECT *` in a log is a working takeover of the account it names
+    — strictly worse than a leaked session, because using it also locks the real
+    owner out.
+
+    SHA-256, unsalted, no work factor, for the reason that makes that wrong for
+    passwords: the input is 256 bits from `secrets.token_urlsafe`, so there is no
+    dictionary to precompute and nothing a slow KDF would protect against.
+    """
+    __tablename__ = 'email_verifications'
+
+    id = db.Column(db.Integer, primary_key=True)
+
+    # Not TenantScopedMixin: see the class docstring. `ondelete` is deliberately
+    # absent for the same reason it is on `audit_events` -- but the opposite
+    # conclusion applies, so it is stated: a token whose user is gone must not
+    # resolve, and `redeem()` refuses one whose user no longer loads rather than
+    # relying on the database to have swept it.
+    user_id = db.Column(db.Integer, db.ForeignKey('app_users.id'),
+                        nullable=False, index=True)
+
+    # Unique across the installation, exactly like `household_invites.token_hash`
+    # and for the same reason: the lookup happens before any household is known,
+    # so a per-household constraint could not be enforced at the point it matters.
+    token_hash = db.Column(db.String(64), nullable=False, unique=True, index=True)
+
+    #: One of `VERIFICATION_PURPOSES`.
+    purpose = db.Column(db.String(20), nullable=False,
+                        default=PURPOSE_VERIFY_EMAIL,
+                        server_default=PURPOSE_VERIFY_EMAIL)
+
+    #: The address the token was actually sent to, as it stood at issue.
+    #:
+    #: Recorded rather than read back off the user because the two can disagree:
+    #: someone requests a reset, changes their address, then follows the old
+    #: link. Redeeming it would then act on an address its holder never proved
+    #: they control. `redeem()` compares the two and refuses a mismatch.
+    sent_to = db.Column(db.String(255), nullable=False)
+
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    expires_at = db.Column(db.DateTime, nullable=False)
+    #: Set the moment the token is spent. NOT NULL means used; this is what
+    #: makes it single-use, and `redeem()` writes it in the same transaction as
+    #: the effect, so a token cannot be spent twice by a request that raced.
+    used_at = db.Column(db.DateTime, nullable=True)
+
+    user = db.relationship('AppUser', foreign_keys=[user_id])
+
+    def state(self, now=None):
+        """`'used'`, `'expired'` or `'pending'`.
+
+        Used is decided before expired, matching `HouseholdInvite.state` and for
+        the same reason: a spent token that has since lapsed was *spent*, and
+        reporting it as expired would hide the fact that somebody used it.
+        """
+        now = now or datetime.utcnow()
+        if self.used_at:
+            return 'used'
         if self.expires_at <= now:
             return 'expired'
         return 'pending'
@@ -668,6 +995,46 @@ EVENT_LOGOUT               = 'auth.logout'
 EVENT_PASSWORD_REHASHED    = 'auth.password.rehashed'
 EVENT_SETUP_COMPLETED      = 'auth.setup.completed'
 
+#: Phase 10.5. The identity lifecycle: an account coming into existence, an
+#: address being proved, a password being replaced, and every credential the
+#: account holds being invalidated.
+#:
+#: `auth.password.changed` and `auth.password.reset.completed` are two events and
+#: not one with a flag, because the questions asked of them differ. "Was this
+#: password change made by somebody who was already signed in?" is the first
+#: thing anybody asks about a suspected takeover, and a flag inside
+#: `metadata_json` is not something you can filter a table on.
+#:
+#: `auth.password.reset.requested` is recorded for an address that matches no
+#: account as well as one that does — with `user_exists` in the metadata,
+#: exactly as `auth.login.failed` already records it. That fact must not reach
+#: the *response* (see `dough/blueprints/auth.py`), but it is precisely what an
+#: operator needs to see somebody walking a list of addresses.
+EVENT_REGISTERED           = 'auth.register.completed'
+EVENT_PASSWORD_CHANGED     = 'auth.password.changed'
+EVENT_PASSWORD_RESET_REQUESTED = 'auth.password.reset.requested'
+EVENT_PASSWORD_RESET_COMPLETED = 'auth.password.reset.completed'
+EVENT_EMAIL_VERIFICATION_SENT  = 'auth.email.verification.sent'
+EVENT_EMAIL_VERIFIED       = 'auth.email.verified'
+#: Every credential invalidated at once, by an explicit act rather than as the
+#: side effect of a password change. This is the one the "sign out everywhere"
+#: button records.
+EVENT_SESSIONS_REVOKED     = 'auth.sessions.revoked'
+#: A request refused by `dough/services/ratelimit.py`. Distinct from
+#: `auth.login.throttled`, which names the *login* buckets specifically; this one
+#: carries the policy name, so an AI-budget refusal and a password-reset flood
+#: are the same event type with different metadata rather than two more
+#: constants that would need adding for every policy.
+EVENT_RATE_LIMITED         = 'security.rate_limited'
+
+#: Phase 10. An API token is a credential that outlives the session that
+#: created it, so its whole lifecycle is auditable — issuing one is the moment a
+#: second way into the household's data comes into existence, and `used` is the
+#: only signal that a credential nobody remembers is still live.
+EVENT_API_TOKEN_ISSUED     = 'api.token.issued'
+EVENT_API_TOKEN_REVOKED    = 'api.token.revoked'
+EVENT_API_TOKEN_REJECTED   = 'api.token.rejected'
+
 EVENT_INVITE_CREATED       = 'membership.invite.created'
 EVENT_INVITE_REVOKED       = 'membership.invite.revoked'
 EVENT_INVITE_ACCEPTED      = 'membership.invite.accepted'
@@ -694,6 +1061,11 @@ AUDIT_EVENT_TYPES = frozenset({
     EVENT_SYNC_COMPLETED, EVENT_SYNC_FAILED,
     EVENT_AI_REQUESTED,
     EVENT_ACCOUNT_BALANCE_SET,
+    EVENT_API_TOKEN_ISSUED, EVENT_API_TOKEN_REVOKED, EVENT_API_TOKEN_REJECTED,
+    EVENT_REGISTERED, EVENT_PASSWORD_CHANGED,
+    EVENT_PASSWORD_RESET_REQUESTED, EVENT_PASSWORD_RESET_COMPLETED,
+    EVENT_EMAIL_VERIFICATION_SENT, EVENT_EMAIL_VERIFIED,
+    EVENT_SESSIONS_REVOKED, EVENT_RATE_LIMITED,
 })
 
 

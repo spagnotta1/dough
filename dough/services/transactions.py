@@ -55,10 +55,28 @@ def build_transaction_query(account_filter, category_filter, start_date_str,
         filters.append(Transaction.account_name == account_filter)
     if category_filter:
         filters.append(Transaction.category == category_filter)
+    # `.date()`, and it is a fix rather than tidying.  [Phase 10]
+    #
+    # `Transaction.date` is a `Date` column. Comparing it against a `datetime`
+    # made SQLAlchemy bind '2026-07-02 00:00:00.000000', which SQLite compares
+    # as a *string* against the stored '2026-07-02'. The stored value is
+    # shorter and therefore sorts first, so `date >= start` was False for
+    # transactions falling on the start date itself: every filtered window
+    # silently dropped its first day.
+    #
+    # The end boundary worked, but only by accident of the same rule -- the
+    # stored value sorting before the padded one makes `<=` true. Both are
+    # converted so neither depends on which side of the comparison the padding
+    # lands on.
+    #
+    # Found by `test_filters_are_spelled_the_same_way_across_the_api` when the
+    # API asked for a two-day window and got one day back. The web transactions
+    # list and the CSV export have had this since the filter was written; they
+    # inherit the fix because they call this same function.
     if start_date_str:
-        filters.append(Transaction.date >= datetime.strptime(start_date_str, '%Y-%m-%d'))
+        filters.append(Transaction.date >= datetime.strptime(start_date_str, '%Y-%m-%d').date())
     if end_date_str:
-        filters.append(Transaction.date <= datetime.strptime(end_date_str, '%Y-%m-%d'))
+        filters.append(Transaction.date <= datetime.strptime(end_date_str, '%Y-%m-%d').date())
     if search_query:
         terms = []
         try:

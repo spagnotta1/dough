@@ -5,16 +5,17 @@ import json
 from flask import (Blueprint, Response, current_app, jsonify, render_template,
                    request, stream_with_context)
 from sqlalchemy import func
+from werkzeug.exceptions import HTTPException
 
 from dough.ai import persona
 from dough.ai.errors import AIConfigurationError, AIError
 from dough.ai.service import current_ai
+from dough.services import holdings as holdings_service
 from dough.services.finance_context import wealth_context
 from dough.services.networth import wealth_snapshot
-from dough.tenancy import get_owned
 
 import investments_intel
-from models import FinancialAccount, Holding, InstitutionConnection, db
+from models import FinancialAccount, InstitutionConnection, db
 
 bp = Blueprint('investments', __name__)
 
@@ -34,7 +35,7 @@ def index():
 
     snap = wealth_snapshot(benchmark, horizon, contribution)
     nw = snap['nw']
-    holdings = Holding.query.order_by(Holding.asset_class, Holding.ticker).all()
+    holdings = holdings_service.list_holdings()
 
     # The original donut mixed cash accounts in with the holdings; keep
     # that view intact, it answers a different question from the pure
@@ -176,17 +177,15 @@ def wealth_ask():
 @bp.route('/api/holdings', methods=['POST'])
 def add_holding():
     d = request.get_json(force=True)
-    h = Holding(
-        ticker=d.get('ticker', '').upper(),
-        name=d.get('name', ''),
-        shares=d.get('shares', 0),
-        current_value=d.get('current_value', 0),
-        asset_class=d.get('asset_class', 'Stock'),
-        account_name=d.get('account_name', 'Brokerage'),
-    )
-    db.session.add(h)
     try:
-        db.session.commit()
+        h = holdings_service.create_holding(
+            ticker=d.get('ticker', ''),
+            name=d.get('name', ''),
+            shares=d.get('shares', 0),
+            current_value=d.get('current_value', 0),
+            asset_class=d.get('asset_class', 'Stock'),
+            account_name=d.get('account_name', 'Brokerage'),
+        )
         return jsonify(h.to_dict()), 201
     except Exception as e:
         db.session.rollback()
@@ -194,28 +193,24 @@ def add_holding():
 
 @bp.route('/api/holdings/<int:hid>', methods=['PUT', 'DELETE'])
 def holding(hid):
-    h = get_owned(Holding, hid)
-    if h.source == 'sync':
-        return jsonify({'error': 'This holding is synchronized automatically from '
-                                 f'{h.account_name} and cannot be edited manually. '
-                                 'Manage it from the Connections page.'}), 409
-    if request.method == 'DELETE':
-        db.session.delete(h)
-        try:
-            db.session.commit()
-            return jsonify({'ok': True})
-        except Exception as e:
-            db.session.rollback()
-            return jsonify({'error': str(e)}), 400
-    d = request.get_json(force=True)
-    if 'ticker' in d:
-        h.ticker = d['ticker'].upper()
-    for field in ['name', 'shares', 'current_value', 'asset_class', 'account_name']:
-        if field in d:
-            setattr(h, field, d[field])
+    # The synced-holding refusal is the service's now, so `/api/v1/holdings`
+    # gives the identical answer rather than a second wording of the same rule.
+    #
+    # `except HTTPException: raise` for the reason spelled out in
+    # dough/blueprints/transactions.py: the service resolves the id with
+    # `get_owned`, which refuses a foreign row by raising NotFound, and a bare
+    # `except Exception` below would turn that 404 into a 400 with the
+    # authorization failure reduced to a message string.
     try:
-        db.session.commit()
+        if request.method == 'DELETE':
+            holdings_service.delete_holding(hid)
+            return jsonify({'ok': True})
+        h = holdings_service.update_holding(hid, request.get_json(force=True))
         return jsonify(h.to_dict())
+    except holdings_service.SyncedHoldingError as e:
+        return jsonify({'error': str(e)}), 409
+    except HTTPException:
+        raise
     except Exception as e:
         db.session.rollback()
         return jsonify({'error': str(e)}), 400

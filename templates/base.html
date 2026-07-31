@@ -337,6 +337,24 @@
     padding: 6px 0;
     display: none;
     animation: tp-enter .16s ease-out both;
+    /* Bounded and scrollable.  [Phase 10.5] This menu carries five links, a
+       16-swatch theme grid and Sign out, and it had no height limit — so on a
+       short viewport the last item sat below the fold with no way to reach it.
+       Adding "Account & security" is what pushed it over, and
+       tests/browser/test_auth_journey.py::test_signing_out_ends_the_session
+       caught it as "element is outside of the viewport": the sign-out button
+       was unreachable, which means there was no way to sign out at all.
+
+       The cap is the space between the nav and the bottom of the window. The
+       menu opens at `100% + 10px` below a 4rem nav, so 84px is that offset;
+       anything taller scrolls inside itself rather than off the screen.
+
+       `overscroll-behavior: contain` stops a scroll that reaches the end of the
+       menu from continuing into the page behind it, which on a touch device
+       reads as the menu dragging the whole page around. */
+    max-height: calc(100vh - 84px);
+    overflow-y: auto;
+    overscroll-behavior: contain;
   }
   #profile-menu.open { display: block; }
   @keyframes tp-enter {
@@ -520,6 +538,12 @@
       width: auto;
       max-width: 380px;
       margin-left: auto;   /* left+right+max-width is over-constrained; pin it right */
+      /* Restated because `top` differs here: fixed at 64px rather than offset
+         from the nav, so the cap has to be measured from that instead. `dvh`
+         because this is the viewport where the browser's own chrome shows and
+         hides — `vh` on a phone is the *largest* viewport, so a menu sized with
+         it is exactly one URL-bar taller than the screen it is on. */
+      max-height: calc(100dvh - 76px);
     }
     #toast-container {
       left: 1rem;
@@ -616,6 +640,23 @@
 <div id="spa-bar"></div>
 <a href="#main" class="ds-skip">Skip to main content</a>
 
+  {# ── Application chrome ────────────────────────────────────────────────
+     The nav, the More sheet and the bottom tab bar, made overridable so a page
+     reached by somebody who is not signed in can replace them.  [Phase 10.5]
+
+     Only landing.html overrides them, and it has to: every destination in here
+     requires a session, so a stranger would get a row of seven links that all
+     bounce to /login and a profile menu offering to sign them out of a session
+     they do not have.
+
+     Two blocks rather than one, and not by choice — `<main>` sits between the
+     nav and the tab bar, so a single block spanning both would have to contain
+     `{% block content %}`, and a child overriding the outer one would lose the
+     inner one. They are one decision expressed as two blocks, which is why
+     landing.html overrides both or neither; overriding one would leave a
+     stranger with a bottom tab bar linking to pages they cannot open.
+  #}
+  {% block chrome_top %}
   <!-- ── Navigation ── -->
   <nav>
     <div class="nav-inner">
@@ -675,10 +716,15 @@
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 21v-7"/><path d="M4 10V3"/><path d="M12 21v-9"/><path d="M12 8V3"/><path d="M20 21v-5"/><path d="M20 12V3"/><path d="M2 14h4"/><path d="M10 8h4"/><path d="M18 12h4"/></svg>
                 Rules
               </a>
-              {# A literal href rather than url_for('household.index'): the
-                 household blueprint is registered only when AUTH_ENABLED, so
-                 url_for would raise a BuildError in every configuration that
-                 runs with auth off -- which is most of the test suite. #}
+              {# Literal hrefs rather than url_for('settings.index') /
+                 url_for('household.index'): both blueprints are registered only
+                 when AUTH_ENABLED, so url_for would raise a BuildError in every
+                 configuration that runs with auth off -- which is most of the
+                 test suite. #}
+              <a href="/settings" class="pm-item" role="menuitem">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M4 21v-1a6 6 0 0 1 6-6h4a6 6 0 0 1 6 6v1"/></svg>
+                Account &amp; security
+              </a>
               <a href="/household" class="pm-item" role="menuitem">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10.5 12 3l9 7.5"/><path d="M5 9.5V21h14V9.5"/><path d="M9 21v-6h6v6"/></svg>
                 Household
@@ -718,11 +764,13 @@
       <button type="button" onclick="closeMobileMenu(); toggleProfileMenu();" class="mm-link">Settings</button>
     </div>
   </div>
+  {% endblock %}
 
   <main id="main" tabindex="-1" class="app-main">
     {% block content %}{% endblock %}
   </main>
 
+  {% block chrome_bottom %}
   <!-- Bottom tab bar (phones only — CSS keeps it display:none on sm+) -->
   <div id="tab-bar">
     <a href="/" class="tab-item">
@@ -753,6 +801,7 @@
       <span>More</span>
     </button>
   </div>
+  {% endblock %}
 
   <!-- Toast container -->
   {# The live region itself — showToast() flips aria-live to "assertive" for

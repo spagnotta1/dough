@@ -1,0 +1,44 @@
+{# The result of following a verification link.  [Phase 10.5]
+
+   Reached from a mail client, so it carries no session and cannot assume one:
+   the success state links to `/`, which serves the landing page to a stranger
+   and the dashboard to somebody already signed in. Either is a sensible place
+   to arrive. #}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{% if invalid %}Link expired{% else %}Email confirmed{% endif %} · Dough</title>
+  {% include '_head_icons.html' %}
+  <meta name="referrer" content="no-referrer">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/dough.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/auth.css') }}">
+</head>
+<body class="auth-shell">
+{% if invalid %}
+  <div class="auth-card auth-notice">
+    <div class="auth-notice__hero"><span data-dough="concerned" data-dough-size="96"></span></div>
+    <h1>That link doesn't work</h1>
+    <p>
+      Confirmation links expire and only work once, so this one has probably
+      already done its job — or it's been waiting in an inbox for too long.
+    </p>
+    <p>Sign in and you can send yourself a fresh one from your account settings.</p>
+    <a class="auth-cta" href="{{ url_for('auth.login') }}">Sign in</a>
+  </div>
+{% else %}
+  <div class="auth-card auth-notice">
+    <div class="auth-notice__hero"><span data-dough="celebrating" data-dough-size="96"></span></div>
+    <h1>Email confirmed</h1>
+    <p>
+      Thanks{% if user and user.username %}, {{ user.username }}{% endif %} — I can reach you at
+      that address now, which is what makes resetting your password possible if
+      you ever need to.
+    </p>
+    <a class="auth-cta" href="{{ url_for('core.dashboard') }}">Go to Dough</a>
+  </div>
+{% endif %}
+  <script defer src="{{ url_for('static', filename='js/dough.js') }}"></script>
+</body>
+</html>

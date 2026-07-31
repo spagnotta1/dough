@@ -74,7 +74,11 @@
   {% if budget_status %}
   <div class="dash-budget-grid ds-rise" style="--ds-delay:60ms">
     {% for s in budget_status %}
-    {% set b = s.budget %}
+    {# Phase 10: budget_status rows are flat dicts from
+       dough/services/budgets.py::status, carrying the budget's own fields
+       alongside the computed ones, rather than an ORM object under a 'budget'
+       key. The alias is kept so the markup below reads unchanged. #}
+    {% set b = s %}
     <article class="ds-card dash-budget dash-budget--{{ s.state }}" id="display-{{ b.id }}">
       <div class="dash-budget__head">
         <h2 class="dash-budget__cat">{{ b.category }}</h2>

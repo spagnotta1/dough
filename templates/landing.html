@@ -1,0 +1,314 @@
+{% extends "base.html" %}
+
+{# The public front door.  [Phase 10.5]
+
+   Extends base.html rather than standing alone the way login.html does, and the
+   difference is the theme engine. auth.css pins the Light palette because those
+   pages have no runtime to read a saved preference with; this page has one, so
+   a returning visitor who chose Midnight sees Midnight here instead of a copper
+   page that switches the moment they sign in. See the header comment in
+   static/css/landing.css.
+
+   What it does override is the chrome. Every link in base.html's nav needs a
+   session, so a stranger would get seven links that bounce to /login and a
+   profile menu offering to sign them out of a session they do not have.
+#}
+
+{% block title %}Dough — your AI-powered financial companion{% endblock %}
+
+{% block chrome_top %}
+<nav>
+  <div class="nav-inner">
+    <div class="nav-row">
+      <div class="nav-left">
+        <div class="nav-brand-box">
+          <a href="{{ url_for('core.dashboard') }}" class="nav-brand">
+            <span class="dough-avatar dough-avatar-sm" aria-hidden="true">
+              <span data-dough="greeting" data-dough-size="36" data-dough-tight></span>
+            </span>
+            Dough
+          </a>
+        </div>
+      </div>
+      <div class="nav-right" style="display:flex;align-items:center;gap:.5rem;">
+        <a class="lp-btn lp-btn--quiet" href="{{ url_for('auth.login') }}">Sign in</a>
+        {% if registration_open %}
+          <a class="lp-btn lp-btn--primary" href="{{ url_for('auth.register') }}">Create account</a>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+</nav>
+{% endblock %}
+
+{# The bottom tab bar is dropped entirely rather than replaced. On a phone it
+   would be a persistent bar of five destinations a signed-out visitor cannot
+   open, permanently covering the bottom of the page they can. #}
+{% block chrome_bottom %}{% endblock %}
+
+{% block content %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/landing.css') }}">
+
+<div class="lp">
+
+  <!-- ── Hero ─────────────────────────────────────────────────────────── -->
+  <section class="lp-hero">
+    <div class="lp__inner lp-hero__grid">
+      <div>
+        <span class="lp-eyebrow">Meet Dough</span>
+        <h1>Your money, <span class="lp-accent">explained</span>.</h1>
+        <p class="lp-hero__lede">
+          Dough connects your accounts, sorts every transaction, watches your
+          budgets and reviews your portfolio — then tells you what actually
+          changed, in plain language. No spreadsheets, no jargon, no shame.
+        </p>
+        <div class="lp-cta-row">
+          {% if registration_open %}
+            <a class="lp-btn lp-btn--primary" href="{{ url_for('auth.register') }}">Create your account</a>
+            <a class="lp-btn lp-btn--ghost" href="{{ url_for('auth.login') }}">Sign in</a>
+          {% else %}
+            {# Registration closed: "Sign in" becomes the primary action, because
+               it is the one that works. The secondary link still goes to
+               /register, which explains what to do instead -- see the `closed`
+               branch of register.html. #}
+            <a class="lp-btn lp-btn--primary" href="{{ url_for('auth.login') }}">Sign in</a>
+            <a class="lp-btn lp-btn--ghost" href="{{ url_for('auth.register') }}">Need an account?</a>
+          {% endif %}
+          <a class="lp-btn lp-btn--quiet" href="#features">Learn more ↓</a>
+        </div>
+
+        <ul class="lp-trust">
+          <li>
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+            Bank credentials never stored
+          </li>
+          <li>
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+            Access tokens encrypted at rest
+          </li>
+          <li>
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10.5 12 3l9 7.5"/><path d="M5 9.5V21h14V9.5"/></svg>
+            One household sees one household's data
+          </li>
+        </ul>
+      </div>
+
+      <div class="lp-hero__art">
+        <span data-dough="greeting" data-dough-size="240"></span>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── Features ─────────────────────────────────────────────────────── -->
+  <section id="features">
+    <div class="lp__inner">
+      <div class="lp-head">
+        <h2>Everything in one place, finally</h2>
+        <p>
+          Five things that usually live in five different apps — and the one
+          that reads all of them together.
+        </p>
+      </div>
+
+      <div class="lp-grid">
+        <article class="lp-card">
+          <div class="lp-card__icon">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><circle cx="4" cy="6" r="1"/><circle cx="4" cy="12" r="1"/><circle cx="4" cy="18" r="1"/></svg>
+          </div>
+          <h3>Transaction management</h3>
+          <p>
+            Every charge sorted into a category automatically, with rules you can
+            teach when it guesses wrong. Search, filter, bulk-edit, and undo a
+            whole import in one click.
+          </p>
+        </article>
+
+        <article class="lp-card">
+          <div class="lp-card__icon">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="7" width="14" height="10" rx="2"/><path d="M6 7V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2h-2"/></svg>
+          </div>
+          <h3>Account aggregation</h3>
+          <p>
+            Link banks, brokerages and crypto exchanges once. Balances,
+            holdings and transactions refresh on their own — or on demand, when
+            you want to see something now.
+          </p>
+        </article>
+
+        <article class="lp-card">
+          <div class="lp-card__icon">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 17l6-6 4 4 7-7"/><polyline points="14 8 20 8 20 14"/></svg>
+          </div>
+          <h3>Investment tracking</h3>
+          <p>
+            Shares, average cost, live prices and gain/loss per position — plus
+            allocation and net-worth charts that redraw themselves after every
+            sync.
+          </p>
+        </article>
+
+        <article class="lp-card">
+          <div class="lp-card__icon">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+          </div>
+          <h3>AI financial assistant</h3>
+          <p>
+            Ask Dough anything about your own money — "why was last month
+            expensive?", "can I afford this?" — and get an answer grounded in
+            your actual figures rather than general advice.
+          </p>
+        </article>
+
+        <article class="lp-card">
+          <div class="lp-card__icon">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+          </div>
+          <h3>Household collaboration</h3>
+          <p>
+            Invite the people you actually share money with. Everyone in a
+            household sees the same accounts — and no household can see
+            another's, ever.
+          </p>
+        </article>
+
+        <article class="lp-card">
+          <div class="lp-card__icon">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21.21 15.89A10 10 0 1 1 8 2.83"/><path d="M22 12A10 10 0 0 0 12 2v10z"/></svg>
+          </div>
+          <h3>Budget intelligence</h3>
+          <p>
+            Set a limit and Dough watches it for you — flagging the categories
+            drifting over before the month ends, not after.
+          </p>
+        </article>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── Detail: insight ──────────────────────────────────────────────── -->
+  <section class="lp-alt">
+    <div class="lp__inner lp-split">
+      <div>
+        <h3>It tells you what changed, not just what happened</h3>
+        <p>
+          A list of transactions is a record. Dough reads the record and reports
+          the story: the subscription that quietly went up, the category running
+          40% hot, the bill landing on Thursday that your balance has not
+          accounted for.
+        </p>
+        <ul>
+          <li>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+            Cash-flow forecast with a runway in months
+          </li>
+          <li>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+            Recurring bills detected, not typed in
+          </li>
+          <li>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+            Unusual charges surfaced for review
+          </li>
+          <li>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+            A net-worth line that goes back as far as your data does
+          </li>
+        </ul>
+      </div>
+      <div class="lp-split__art">
+        <span data-dough="thinking" data-dough-size="200"></span>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── Detail: tone ─────────────────────────────────────────────────── -->
+  <section>
+    <div class="lp__inner lp-split lp-split--flip">
+      <div>
+        <h3>Encouraging, never preachy</h3>
+        <p>
+          Going over budget is a fact to work with, not a failing. Dough is
+          warm without being cute, direct without being alarming, and he will
+          never use fear to get your attention — which, in a product that knows
+          what you earn and what you owe, is the whole difference.
+        </p>
+        <ul>
+          <li>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+            One voice across chat, dashboard and portfolio review
+          </li>
+          <li>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+            Sixteen themes, and it remembers which one is yours
+          </li>
+          <li>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+            Works on the phone as well as it does on the desk
+          </li>
+        </ul>
+      </div>
+      <div class="lp-split__art">
+        <span data-dough="celebrating" data-dough-size="200"></span>
+      </div>
+    </div>
+  </section>
+
+  {# Renders nothing when MARKETING_TESTIMONIALS is empty, which is the default.
+     Placeholder testimonials on a finance landing page are worse than none --
+     see the config entry. #}
+  {% if testimonials %}
+  <section class="lp-alt">
+    <div class="lp__inner">
+      <div class="lp-head"><h2>What people say</h2></div>
+      <div class="lp-grid">
+        {% for t in testimonials %}
+        <article class="lp-card">
+          <p>“{{ t.quote }}”</p>
+          <h3>{{ t.name }}</h3>
+        </article>
+        {% endfor %}
+      </div>
+    </div>
+  </section>
+  {% endif %}
+
+  <!-- ── Closing CTA ──────────────────────────────────────────────────── -->
+  <section class="lp-close">
+    <div class="lp__inner">
+      <div class="lp-close__panel">
+        <div class="lp-head">
+          <h2>Ready when you are</h2>
+          <p>
+            {% if registration_open %}
+              Create an account and connect one thing. Dough will have something
+              to say about it before you have finished linking the second.
+            {% else %}
+              This instance is invitation-only. If somebody has sent you a link,
+              it will sign you straight into their household.
+            {% endif %}
+          </p>
+        </div>
+        <div class="lp-cta-row">
+          {% if registration_open %}
+            <a class="lp-btn lp-btn--primary" href="{{ url_for('auth.register') }}">Create your account</a>
+            <a class="lp-btn lp-btn--ghost" href="{{ url_for('auth.login') }}">Sign in</a>
+          {% else %}
+            <a class="lp-btn lp-btn--primary" href="{{ url_for('auth.login') }}">Sign in</a>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <footer class="lp-foot">
+    <div class="lp-foot__inner">
+      <span>Dough — your AI-powered financial companion.</span>
+      <span>
+        <a class="lp-btn lp-btn--quiet" href="{{ url_for('auth.login') }}">Sign in</a>
+        <a class="lp-btn lp-btn--quiet" href="{{ url_for('auth.forgot_password') }}">Reset password</a>
+      </span>
+    </div>
+  </footer>
+
+</div>
+{% endblock %}

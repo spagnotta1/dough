@@ -50,6 +50,9 @@ personality, and he is deliberately consistent everywhere:
 - Local storage using SQLite
 - Sign-in, and a household you can invite people into — everyone in a household
   sees the same accounts, and no household can see another's data
+- A public landing page, self-serve registration (off by default), password
+  recovery by email, and an account page for changing your password, signing out
+  everywhere, and managing API tokens
 
 ## Account Synchronization (finance_sync)
 
@@ -194,9 +197,73 @@ one nobody else can administer. See `docs/adr/0009-authentication-and-membership
 | `SESSION_ABSOLUTE_SECONDS` | 604800 (7 d) | Signed out this long after signing in, active or not |
 | `INVITE_TTL_HOURS` | 72 | How long an unused invitation link stays valid |
 | `TRUSTED_PROXIES` | 0 | How many reverse-proxy hops in front of the app are yours. Leave at 0 unless you run one — `X-Forwarded-For` is attacker-controlled, and believing it turns the login throttle into a no-op |
+| `ALLOW_REGISTRATION` | 0 | Whether strangers may create an account. Off because this app fronts real bank data and is routinely exposed on a LAN. `/register` still exists when it is off, and says so |
+| `PUBLIC_BASE_URL` | — | The canonical URL, used to build links in outbound mail. Unset means they are built from the request's `Host` header, which is client-controlled |
 
 CSRF protection is always on and has no environment switch. Every unsafe request
-must carry the session's token, including sign-in.
+must carry the session's token, including sign-in, registration and password
+reset.
+
+## Accounts
+
+A **household** is the unit of isolation (below); an **account** is one login
+inside one. Three ways one comes into existence, and they have not changed
+shape — only grown a third:
+
+- **`/setup`** — the first account on an installation, which owns the first
+  household. Runs once and refuses afterwards.
+- **`/join/<token>`** — an invitation into somebody else's household.
+- **`/register`** — self-serve, and **off by default** (`ALLOW_REGISTRATION`).
+  It creates an account *and* a household of its own, with the new account as
+  owner. When registration is closed the route still answers and explains that
+  invitations are how people get in, rather than 404ing at somebody who may
+  simply have mistyped.
+
+### Forgetting your password
+
+`/forgot-password` takes the address on the account and mails a link.
+
+The response is identical whether or not that address has an account — same
+words, same page, same time taken. That is deliberate and it is the whole point
+of the route's design: any difference would make it a free test of whether a
+given person banks with Dough. If you are certain the address is right and
+nothing arrives, the account may not have an address on file; check
+**Account & security**.
+
+Reset links work **once**, expire within the hour, and are spent the moment the
+form loads — so if you fail the password rules you need a fresh link rather than
+a second try. Using one signs out every browser and stops every API token the
+account has issued, which is the point: the reason to need a reset is that
+somebody else may have the old password.
+
+### Account & security
+
+In the profile menu. From there you can:
+
+- change your password (the current one is required — an unlocked screen is a
+  session, and this is the operation that locks the real owner out);
+- add or change your email address, and re-send its confirmation;
+- **sign out everywhere**, which ends every browser session *including this
+  one* and stops every API token — the button to press if a device goes missing;
+- create, list and revoke API tokens, with the date each was created and last
+  used.
+
+An API token is shown once, when it is created. Only a hash is stored, so it
+genuinely cannot be recovered — the same property as an invitation link.
+
+### Email
+
+Verification and reset links go through `MAIL_BACKEND`:
+
+| Value | What it does |
+|---|---|
+| `console` (default) | Prints the message to the terminal. Right for a self-hosted instance with no mail server — and the reason the flow works before anything is configured |
+| `smtp` | Sends it. Needs `MAIL_SERVER`, and uses STARTTLS |
+| `memory` | Keeps it in a list. The test suite's backend |
+
+`console` in production is a warning at startup rather than an error: it means
+reset links are printed to a terminal that nobody locked out of their account
+can reach.
 
 ## Applying the multi-tenancy migration
 
@@ -398,7 +465,8 @@ Nothing is ever deleted from it and there is no retention policy —
 
 ```
 app.py                  the factory: config, db, request hooks, error handlers
-dough/blueprints/       every route, grouped by what it is responsible for
+dough/blueprints/       every HTML route, grouped by what it is responsible for
+dough/api/              the versioned JSON API — envelope, errors, auth, v1/
 dough/services/         the queries and rules, callable without a request
 dough/ai/               the model provider, prompts, caching, output formatting
 dough/auth.py           authentication, authorization, CSRF
@@ -407,7 +475,17 @@ models.py               the schema
 finance_sync/           the institution adapters and the sync pipeline
 ```
 
-Three rules, each with a test behind it rather than a convention:
+Three services are worth knowing about by name, because each is a seam rather
+than a query:
+
+- `dough/services/identity.py` — creating an account, proving an address,
+  replacing a password, invalidating every credential. Three surfaces call it,
+  which is the duplication it exists to prevent.
+- `dough/services/email.py` — `console` / `memory` / `smtp` behind one `send()`.
+- `dough/services/ratelimit.py` — the policy table and a memory backend, with
+  the interface a Redis one would implement.
+
+Four rules, each with a test behind it rather than a convention:
 
 - **A blueprint may not import `app`.** Whatever a route needs from the
   application it gets from `current_app`; whatever it needs from the domain it
@@ -420,10 +498,52 @@ Three rules, each with a test behind it rather than a convention:
   `url_for('transactions')`. URLs themselves are frozen by
   `tests/test_url_map_snapshot.py`, which pins every (rule, methods) pair and
   deliberately ignores endpoint names.
+- **No business logic in `dough/api/v1/`.** A resource module reads the request,
+  calls a service, and shapes a response — the *same* service the HTML blueprint
+  calls. That is what makes "the API and the page agree" structural rather than
+  something anybody has to maintain, and
+  `tests/test_services.py::test_api_resource_holds_no_business_logic` rejects
+  any database write issued from a resource module.
 
 Adding a page means a view in the right blueprint, its query in a service, and a
 line in `EXPECTED_RULES`. If the change needs `app.py`, it is probably wiring —
 and if it isn't, it likely belongs somewhere else.
+
+Adding an API endpoint means the same, plus an entry in `docs/api/openapi.yaml`
+in the same commit — `tests/test_openapi.py` fails a route that is served but
+undocumented, and a documented one that is not served.
+
+## The API
+
+`/api/v1` is the stable contract for every client — the web UI, and anything
+native or third-party that comes later. One response envelope, one error
+vocabulary, one pagination convention, and the same service layer underneath as
+the pages.
+
+```bash
+# Get a token (shown once — only its hash is stored)
+curl -X POST https://localhost:5000/api/v1/auth/login \
+     -H 'Content-Type: application/json' \
+     -d '{"username":"sal","password":"…","device_name":"iPhone"}'
+
+# Use it
+curl https://localhost:5000/api/v1/transactions?page_size=25 \
+     -H 'Authorization: Bearer dgh_…'
+```
+
+Tokens are per-device, scoped (`read` / `write`), revocable individually, and
+never stored in recoverable form. Revoking one does not sign anybody else out.
+
+- `docs/api/README.md` — the conventions, and what to do about the unversioned
+  endpoints (which still work and are not deprecated).
+- `docs/api/openapi.yaml` — the formal specification.
+- `docs/adr/0012-versioned-api-contract.md` — why versioned, why opaque tokens
+  rather than JWT, and what it cost.
+- `docs/adr/0013-credential-generations.md` — how one counter invalidates every
+  session and every token at once.
+- `docs/adr/0014-public-surface-and-identity-lifecycle.md` — why `/` branches
+  instead of moving the dashboard, why a reset link is spent by *loading* the
+  form, and why registration is off by default but the route still exists.
 
 ## License
 

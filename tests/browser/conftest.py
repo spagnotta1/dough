@@ -245,6 +245,22 @@ class PageHealth:
     def expect_server_error(self, url_fragment):
         self.allowed.append(url_fragment)
 
+    def expect_error_status(self, url_fragment):
+        """Tolerate a deliberate 4xx on a document load.  [Phase 10.5]
+
+        Same mechanism as `expect_server_error`, named apart because the two
+        mean different things and a reader should not have to decide which.
+        A 5xx is the application breaking on purpose for a test; a 4xx here is
+        the application *working* — `/register` on a closed instance answers 403
+        with a page explaining why, and `/reset-password/<bad>` answers 404 with
+        a page offering a new link.
+
+        Chromium logs any non-2xx document load as a console error, so without
+        this a correctly-behaving refusal fails the health guard. Still narrow by
+        URL fragment, so an unexpected status from anywhere else still fails.
+        """
+        self.allowed.append(url_fragment)
+
     def tolerates(self, url):
         return any(fragment in (url or '') for fragment in self.allowed)
 
@@ -433,6 +449,24 @@ def auth_cookies(browser, live_server):
     long way, right here — this fixture calls `sign_in`, so a form that stopped
     working takes the whole suite down rather than letting it pass on an injected
     cookie. tests/test_auth_journey.py then asserts the details.
+
+    ── The one thing a test must not do with this  [Phase 10.5] ──
+    **Do not change the seeded account's password, and do not sign it out
+    everywhere.** Both raise `AppUser.session_version`, which invalidates every
+    credential issued under the old value — including these cookies. The next
+    test to ask for `signed_in` is then anonymous, and so is every test after it,
+    and the failures land in whatever file happens to run next rather than in the
+    one that caused them. That is how a password-change test written here turned
+    into 75 failures across the theme sweep.
+
+    Changing the password back does not fix it: the restore is a second bump, so
+    the cached cookie ends up two generations stale rather than one. There is no
+    ordering that works, because "invalidate every other session" is precisely
+    what the feature under test has to do.
+
+    A test that needs to exercise credential invalidation must build its own
+    application and its own account. `tests/browser/test_identity_journey.py`
+    does exactly that, and says why at the test.
     """
     context = browser.new_context(base_url=live_server.url)
     page = context.new_page()

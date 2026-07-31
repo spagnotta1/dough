@@ -46,6 +46,14 @@ def register(app):
         # is part of the conditional -- an installation with authentication off
         # should not be able to reach these views at all, not even by endpoint
         # name through url_for.
-        from dough.blueprints import auth, household
+        #
+        # `settings` joins them in Phase 10.5 and belongs on the same side of the
+        # condition for the same reason: every route in it acts on *an account*
+        # -- changing its password, revoking its sessions, listing the tokens it
+        # issued -- and with authentication off there is no account to act on.
+        # `current_user()` would answer None and every view would fail on the
+        # first attribute access.
+        from dough.blueprints import auth, household, settings
         app.register_blueprint(auth.bp)
         app.register_blueprint(household.bp)
+        app.register_blueprint(settings.bp)

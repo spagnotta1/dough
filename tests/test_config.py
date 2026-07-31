@@ -13,15 +13,45 @@ from config import (BaseConfig, DevelopmentConfig, ProductionConfig,
 #: with an empty default -- never compared by value, see
 #: test_no_secret_is_hardcoded_in_the_config_module for why that matters.
 SECRET_CONFIG_KEYS = {'ANTHROPIC_API_KEY', 'MAIL_PASSWORD', 'SECRET_KEY',
-                      'MAIL_USERNAME', 'REDIS_URL'}
+                      'MAIL_USERNAME', 'REDIS_URL',
+                      # Phase 10.5. ENCRYPTION_KEY is the highest-value one in
+                      # this set: it decrypts the stored Plaid and Coinbase
+                      # access tokens, so a literal here would be a repository
+                      # that reads every connected household's bank data.
+                      'ENCRYPTION_KEY', 'PLAID_CLIENT_ID', 'PLAID_SECRET'}
+
+
+def _production_ready(monkeypatch):
+    """Give ProductionConfig every secret it requires.
+
+    A helper since Phase 10.5, when the required set grew past one. Without it,
+    each test that merely needs production to be *selectable* would carry a
+    growing list of unrelated monkeypatches, and adding the next required secret
+    would fail every one of them for a reason none of them is about.
+    """
+    monkeypatch.setattr(ProductionConfig, 'SECRET_KEY', 'x' * 64, raising=False)
+    monkeypatch.setattr(ProductionConfig, 'ENCRYPTION_KEY', 'y' * 44,
+                        raising=False)
+    # Both Plaid values cleared explicitly, which is a *valid* configuration --
+    # no credentials means the sync adapters run against the sandbox.
+    #
+    # Set here rather than left alone because these are class attributes
+    # evaluated at import, so conftest's `_isolate_live_credentials` fixture
+    # cannot reach them: it deletes the environment variables, and the values
+    # were already read. A developer whose real `.env` holds a Plaid client id
+    # would otherwise have these tests pass or fail depending on what is in it,
+    # which is the exact failure mode the docstring of
+    # `test_no_secret_is_hardcoded_in_the_config_module` describes.
+    monkeypatch.setattr(ProductionConfig, 'PLAID_CLIENT_ID', '', raising=False)
+    monkeypatch.setattr(ProductionConfig, 'PLAID_SECRET', '', raising=False)
 
 
 def test_get_config_selects_by_name(monkeypatch):
     assert get_config('development') is DevelopmentConfig
     assert get_config('testing') is TestingConfig
-    # Production validates on selection, so it needs a key to be selectable at
-    # all -- which is the point of test_production_requires_an_explicit_secret_key.
-    monkeypatch.setattr(ProductionConfig, 'SECRET_KEY', 'x' * 64, raising=False)
+    # Production validates on selection, so it needs its secrets to be
+    # selectable at all -- which is the point of the two tests below.
+    _production_ready(monkeypatch)
     assert get_config('production') is ProductionConfig
 
 
@@ -48,14 +78,92 @@ def test_unknown_environment_is_rejected_loudly(monkeypatch):
 
 
 def test_production_requires_an_explicit_secret_key(monkeypatch):
+    _production_ready(monkeypatch)
     monkeypatch.setattr(ProductionConfig, 'SECRET_KEY', '', raising=False)
-    with pytest.raises(RuntimeError, match='SECRET_KEY must be set'):
+    with pytest.raises(RuntimeError, match='SECRET_KEY'):
         get_config('production')
 
 
-def test_production_accepts_a_provided_secret_key(monkeypatch):
-    monkeypatch.setattr(ProductionConfig, 'SECRET_KEY', 'x' * 64, raising=False)
+def test_production_requires_an_explicit_encryption_key(monkeypatch, tmp_path):
+    """Phase 10.5. The key that decrypts the stored institution tokens.
+
+    Production must refuse rather than generate one, and the reason is worse
+    than the secret-key case. A generated session key signs everyone out; a
+    generated *encryption* key makes every already-stored Plaid and Coinbase
+    token unreadable, and the failure does not arrive at boot — it arrives at
+    the next sync, reported as an encryption error rather than as the missing
+    variable that caused it.
+
+    `BASE_DIR` is redirected at a tmp_path so that a regression which *did*
+    generate a key would be caught by the file assertion rather than quietly
+    writing into the repository.
+    """
+    _production_ready(monkeypatch)
+    monkeypatch.setattr(ProductionConfig, 'BASE_DIR', str(tmp_path), raising=False)
+    monkeypatch.setattr(ProductionConfig, 'ENCRYPTION_KEY', '', raising=False)
+    with pytest.raises(RuntimeError, match='ENCRYPTION_KEY'):
+        get_config('production')
+    assert not (tmp_path / '.sync_encryption_key').exists()
+
+
+def test_production_reports_every_missing_secret_at_once(monkeypatch):
+    """One deploy, one list — not one variable per restart.
+
+    The failure this prevents is an operator setting SECRET_KEY, redeploying,
+    being told about ENCRYPTION_KEY, setting that, redeploying again. Reporting
+    them together is the whole reason `REQUIRED_SECRETS` is a table rather than
+    a chain of `if not X: raise`.
+    """
+    monkeypatch.setattr(ProductionConfig, 'SECRET_KEY', '', raising=False)
+    monkeypatch.setattr(ProductionConfig, 'ENCRYPTION_KEY', '', raising=False)
+    with pytest.raises(RuntimeError) as excinfo:
+        get_config('production')
+    message = str(excinfo.value)
+    assert 'SECRET_KEY' in message and 'ENCRYPTION_KEY' in message
+    # Every entry says how to produce a value. An error naming a variable an
+    # operator has never heard of, without saying what goes in it, sends them to
+    # this repository at deploy time.
+    assert 'secrets.token_hex' in message
+    assert 'Fernet.generate_key' in message
+
+
+def test_production_refuses_half_a_plaid_credential(monkeypatch):
+    """Both or neither. One half is a live-API deployment that fails.
+
+    No credentials at all is a working state — the sync adapters run against the
+    deterministic sandbox. Exactly one is not: the adapter switches to the real
+    API and authenticates with an incomplete credential, in a deployment whose
+    operator believes Plaid is configured.
+    """
+    _production_ready(monkeypatch)
+    monkeypatch.setattr(ProductionConfig, 'PLAID_CLIENT_ID', 'abc', raising=False)
+    monkeypatch.setattr(ProductionConfig, 'PLAID_SECRET', '', raising=False)
+    with pytest.raises(RuntimeError, match='PLAID'):
+        get_config('production')
+
+
+def test_production_accepts_a_fully_configured_deployment(monkeypatch):
+    _production_ready(monkeypatch)
     assert get_config('production') is ProductionConfig
+
+
+def test_production_warns_about_configuration_it_will_still_run(monkeypatch):
+    """Warnings must not be errors, and must not be silent either.
+
+    Each of these has a real use — a demo instance genuinely may want console
+    mail — so refusing to boot over one would teach operators to set an override
+    variable, which then hides the checks that were not judgement calls.
+    """
+    _production_ready(monkeypatch)
+    monkeypatch.setattr(ProductionConfig, 'MAIL_BACKEND', 'console', raising=False)
+    monkeypatch.setattr(ProductionConfig, 'PUBLIC_BASE_URL', '', raising=False)
+
+    # Still selectable: these are warnings, not failures.
+    assert get_config('production') is ProductionConfig
+
+    notes = ' '.join(ProductionConfig.warnings())
+    assert 'MAIL_BACKEND=console' in notes
+    assert 'PUBLIC_BASE_URL' in notes
 
 
 def test_production_never_generates_a_secret_key_file(monkeypatch, tmp_path):
@@ -235,22 +343,43 @@ def test_no_secret_is_hardcoded_in_the_config_module():
             if name not in SECRET_CONFIG_KEYS:
                 continue
             checked.add(name)
-            call = node.value
-            assert isinstance(call, ast.Call), (
+            # Every Call anywhere in the assigned expression, rather than
+            # requiring the value to *be* one.  [Phase 10.5] Two secrets are now
+            # read under either of two names --
+            #
+            #     SECRET_KEY = os.environ.get('SECRET_KEY') or os.environ.get('SESSION_SECRET', '')
+            #
+            # -- which is a BoolOp whose operands are the reads. The property
+            # being checked has not moved: every read must come from the
+            # environment and none may carry a non-empty default. Requiring a
+            # bare Call would have forced the alias into a helper function
+            # purely to satisfy the shape of a test.
+            #
+            # The assertion that there is at least one Call is what keeps this
+            # from passing vacuously on `SECRET_KEY = 'hunter2'`, which is the
+            # literal this test exists to reject.
+            calls = [n for n in ast.walk(node.value) if isinstance(n, ast.Call)]
+            assert calls, (
                 f'{name} must be read from the environment, not assigned a literal')
-            func = call.func
-            reader = func.attr if isinstance(func, ast.Attribute) else getattr(
-                func, 'id', '')
-            assert reader in ('get', '_bool', '_int'), (
-                f'{name} must come from os.environ.get or a config helper, '
-                f'not {reader!r}')
-            # A default argument, if present, must be an empty string. Anything
-            # else is a baked-in credential even when it looks harmless.
-            defaults = [a for a in call.args[1:]] + [
-                kw.value for kw in call.keywords if kw.arg == 'default']
-            for default in defaults:
-                assert isinstance(default, ast.Constant) and default.value == '', (
-                    f'{name} has a non-empty default baked into config.py')
+            for call in calls:
+                func = call.func
+                reader = func.attr if isinstance(func, ast.Attribute) else getattr(
+                    func, 'id', '')
+                # `_plaid_secret` joins the helper list in Phase 10.5. It reads
+                # PLAID_SECRET_<PLAID_ENV> with a fallback to PLAID_SECRET,
+                # matching how the adapter resolves it -- see the function's
+                # docstring for why config has to agree with the adapter here.
+                assert reader in ('get', '_bool', '_int', '_plaid_secret'), (
+                    f'{name} must come from os.environ.get or a config helper, '
+                    f'not {reader!r}')
+                # A default argument, if present, must be an empty string.
+                # Anything else is a baked-in credential even when it looks
+                # harmless.
+                defaults = list(call.args[1:]) + [
+                    kw.value for kw in call.keywords if kw.arg == 'default']
+                for default in defaults:
+                    assert isinstance(default, ast.Constant) and default.value == '', (
+                        f'{name} has a non-empty default baked into config.py')
 
     missing = SECRET_CONFIG_KEYS - checked
     assert not missing, (

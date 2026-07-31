@@ -41,7 +41,27 @@ checked as well, and neither is trusted alone — `Origin` is absent on some
 legitimate same-origin requests, and `Sec-Fetch-Site` is absent on old browsers.
 A missing header is not evidence of anything; a *wrong* one is.
 
-Allowed:   flask, werkzeug, stdlib
+## Credential generation, and why the bump is not a function call
+
+`AppUser.session_version` is a counter every credential is stamped with — the
+session cookie carries the value it was signed in under, `api_tokens` stores the
+value it was issued under, and both are compared on every request. Raising it
+invalidates all of them at once.
+
+It is raised by a `before_flush` listener in this module rather than by whoever
+changes a password, and that is the whole design.  [Phase 10.5] An explicit
+`invalidate(user)` call is a convention: it works until somebody adds a second
+place a password can change — a reset link, an admin action, a CLI — and does
+not know the convention exists. Nothing fails when they forget. The account just
+keeps honouring credentials obtained with the old password, which is the exact
+outcome the mechanism exists to prevent, arriving silently.
+
+So the listener is the rule and there is one exemption, marked at the single
+place that earns it: `upgrade_password_hash`, which changes the stored hash
+without changing the password. Default-deny again, in the shape this file
+already uses twice.
+
+Allowed:   flask, werkzeug, sqlalchemy, stdlib
 Must not:  app, models (except late, function-local imports), finance_sync
 """
 
@@ -54,6 +74,8 @@ import time
 from urllib.parse import urlsplit
 
 from flask import current_app, jsonify, redirect, request, session, url_for
+from sqlalchemy import event, inspect as sa_inspect
+from sqlalchemy.orm import Session as OrmSession
 from werkzeug.exceptions import Forbidden
 from werkzeug.security import check_password_hash, generate_password_hash
 
@@ -65,6 +87,7 @@ __all__ = [
     'PASSWORD_METHOD',
     'SAFE_METHODS',
     'SESSION_CSRF_KEY',
+    'SESSION_VERSION_KEY',
     'client_address',
     'csrf_exempt',
     'csrf_field',
@@ -76,7 +99,9 @@ __all__ = [
     'needs_rehash',
     'owner_required',
     'public',
+    'session_is_current',
     'unauthorized_response',
+    'upgrade_password_hash',
     'validate_csrf',
     'verify_password',
     'wants_json',
@@ -101,6 +126,16 @@ CSRF_HEADER = 'X-CSRF-Token'
 
 #: The form field, for ordinary non-JavaScript submissions.
 CSRF_FIELD = '_csrf_token'
+
+#: Where the session records which credential generation it belongs to.
+#: `AppUser.session_version` as it stood at sign-in; `current_user` refuses a
+#: session whose value no longer matches.  [Phase 10.5]
+#:
+#: In the signed cookie rather than server-side because there is nowhere
+#: server-side to put it — that is what a cookie session means. It is safe
+#: there for the same reason `user_id` is: the cookie is signed, so a client
+#: that could forge this number could forge the identity it sits next to.
+SESSION_VERSION_KEY = '_session_version'
 
 
 class CSRFError(Forbidden):
@@ -136,9 +171,10 @@ def is_public(view):
 def csrf_exempt(view):
     """Mark a view as accepting unsafe methods without a CSRF token.
 
-    Intended for machine callers that authenticate some other way. Nothing
-    uses it yet, and `tests/test_route_guard.py` asserts the exempt set stays
-    empty, so adding the first one is a deliberate, reviewed act.
+    Intended for machine callers that authenticate some other way. Exactly one
+    view carries it — `/api/v1/auth/login`, which accepts a password and so has
+    no session to bind a token to — and `tests/test_csrf.py` pins the set to
+    that one name, so adding the next is a deliberate, reviewed act.
     """
     view._dough_csrf_exempt = True
     return view
@@ -183,8 +219,26 @@ def wants_json():
 
 
 def unauthorized_response():
-    """What an unauthenticated request gets: 401 JSON, or a redirect to login."""
+    """What an unauthenticated request gets: 401 JSON, or a redirect to login.
+
+    Under `/api/v1` the 401 is the versioned envelope rather than the bare
+    `{'error': ...}` the older endpoints answer with.  [Phase 10] A client of a
+    versioned API must be able to parse *every* response the same way, and the
+    one it is most likely to meet first is this one -- a request sent before it
+    has a credential.
+
+    The import is function-local for the same reason `current_user`'s is:
+    `dough/api/guard.py` imports `SAFE_METHODS` from this module, so a
+    module-level import here would close the loop.
+    """
     if wants_json():
+        from dough.api.errors import ErrorCode, api_error_response, is_api_request
+
+        if is_api_request():
+            return api_error_response(
+                401, ErrorCode.UNAUTHENTICATED,
+                'Authentication is required. Send an API token as '
+                '`Authorization: Bearer <token>`.')
         return jsonify({'error': 'authentication required'}), 401
     return redirect(url_for('auth.login', next=request.full_path.rstrip('?')))
 
@@ -294,17 +348,57 @@ def owner_required(view):
 
 
 def current_user():
-    """The signed-in `AppUser`, or None.
+    """Who this request acts as — from an API token or a session — or None.
 
-    The import is function-local for the same reason it is in `tenancy.py`:
-    `models` imports `dough.tenancy`, and a module-level import here would
-    close the loop the moment anything in `models` wanted an auth helper.
+    Reading the bearer actor first is what makes `owner_required` and every
+    other role check work identically on both surfaces.  [Phase 10] Without it,
+    a token-authenticated request would find no user and be refused as though it
+    were anonymous, which is the wrong answer to a credential that has already
+    been verified.
+
+    The explicit credential wins over the session for the reason
+    `_household_for_request` gives: a request may carry both, and the header is
+    the one the caller deliberately attached.
+
+    Both imports are function-local. `models` imports `dough.tenancy` and would
+    close a loop; `dough/api/guard.py` imports `SAFE_METHODS` from this module
+    and would close another.
     """
+    from dough.api.guard import bearer_actor
+
+    actor = bearer_actor()
+    if actor is not None:
+        return actor
+
     from models import AppUser
     uid = session.get('user_id')
     if not uid:
         return None
-    return AppUser.query.get(uid)
+    user = AppUser.query.get(uid)
+    if user is None or not session_is_current(user):
+        return None
+    return user
+
+
+def session_is_current(user):
+    """Was this session minted under the account's current credential generation?
+
+    False means the account has been invalidated since — today, that its
+    password changed.  [Phase 10.5] `current_user` then answers None, and
+    `app.py`'s `_enforce_session_lifetime` clears the cookie and sends the
+    person to the login page, which is the same handling a deleted user already
+    got and the right one here: the session cannot be repaired, only replaced.
+
+    A session with no version recorded at all is refused. That is fail-closed
+    and it costs one sign-in per browser when this ships, because cookies minted
+    before it exist do not carry the key. Accepting them instead would exempt
+    every pre-existing session from the mechanism permanently, and those are
+    precisely the long-lived ones — an absolute lifetime is measured in days,
+    so "it will age out" is not an argument that holds for the session somebody
+    is worried about.
+    """
+    recorded = session.get(SESSION_VERSION_KEY)
+    return recorded is not None and recorded == user.session_version
 
 
 # ---------------------------------------------------------------------------
@@ -334,6 +428,87 @@ def needs_rehash(password_hash):
     not a vulnerability that can be fixed in a migration.
     """
     return not (password_hash or '').startswith(PASSWORD_METHOD.split(':')[0] + ':')
+
+
+def upgrade_password_hash(user, password):
+    """Re-derive a stale hash under the current KDF. True if it was upgraded.
+
+    One implementation, called by both sign-in paths.  [Phase 10] It was inline
+    in `dough/blueprints/auth.py` and was copied into `dough/api/v1/auth.py`
+    when the API login was written -- which is the duplication
+    `tests/test_services.py::test_api_resource_holds_no_business_logic` exists
+    to catch, and it caught it.
+
+    Sharing this matters more than the four lines suggest. Skipping the upgrade
+    on one path means an account that only ever signs in from that surface keeps
+    an obsolete hash indefinitely, and nothing would report it: both logins
+    succeed either way.
+
+    The caller records the audit event rather than this function, because the
+    two surfaces attribute it differently and this module has no opinion about
+    which one is asking.
+    """
+    if not needs_rehash(user.password_hash):
+        return False
+
+    from models import db
+
+    user.password_hash = hash_password(password)
+    # The one exemption from the listener below, and the only place in the
+    # application entitled to set it.  [Phase 10.5] This changes the stored hash
+    # without changing the password, so nothing about the account's credentials
+    # has been superseded: the person just proved they still know it. Bumping
+    # here would sign every one of their devices out on the sign-in that
+    # upgraded their hash -- an invisible, once-per-account logout that would
+    # look like a bug and be blamed on anything but this.
+    #
+    # It cannot be inferred instead of marked. A rehash goes old-KDF -> new-KDF,
+    # and so does a password *change* made by somebody whose hash was stale, so
+    # the two are indistinguishable from the values alone. Guessing would be
+    # wrong in the direction that leaves credentials alive.
+    user._dough_rehash_only = True
+    db.session.commit()
+    return True
+
+
+@event.listens_for(OrmSession, 'before_flush')
+def _bump_session_version_on_password_change(db_session, flush_context, instances):
+    """Raise `session_version` whenever a stored password is replaced.
+
+    A `before_flush` listener for the same reason `dough/tenancy.py` puts its
+    write guard there: it is the last point at which every pending change is
+    visible and can still be added to, so a rule stated here holds for every
+    caller — including ones written later that have never heard of it.
+
+    Only `session.dirty` is examined. A *new* `AppUser` carries a password_hash
+    too, and bumping it would be meaningless: nothing has been issued against an
+    account that does not exist yet, and the row's default already says 1.
+
+    The listener is registered on the generic `sqlalchemy.orm.Session` rather
+    than on Flask-SQLAlchemy's, so it is live in any session this process opens
+    — including the ones `tools/` scripts and a shell use, which are exactly the
+    contexts where somebody resets a password by hand and no route code runs at
+    all.
+
+    Nothing is audited from here. `audit.record` writes through the session, and
+    doing that inside a flush is a re-entrant flush; the event is recorded by
+    whichever caller changed the password, which is also the only party that
+    knows *why* it changed.
+    """
+    from models import AppUser
+
+    for obj in db_session.dirty:
+        if not isinstance(obj, AppUser):
+            continue
+        if not sa_inspect(obj).attrs.password_hash.history.has_changes():
+            continue
+        if getattr(obj, '_dough_rehash_only', False):
+            # Cleared as it is consumed, so the exemption covers exactly the one
+            # flush it was set for. Leaving it set would silently exempt the
+            # next password change made against the same in-memory instance.
+            obj._dough_rehash_only = False
+            continue
+        obj.session_version = (obj.session_version or 1) + 1
 
 
 # ---------------------------------------------------------------------------

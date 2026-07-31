@@ -17,8 +17,11 @@ What is asserted here:
                   rather than a 302 to an HTML login page  [Phase 6].
                -- public routes carry an explicit @public decorator, so the
                   public set is derived from the code  [Phase 6].
-               -- no route accepts an unsafe method without a CSRF token, and
-                  the csrf-exempt set is empty  [Phase 6].
+               -- no route accepts an unsafe method without a CSRF token. The
+                  exempt set was empty from Phase 6 to Phase 9 and holds exactly
+                  one view from Phase 10 (`api_v1_auth.login`, which has no
+                  session to bind a token to); tests/test_csrf.py pins it and
+                  states the argument.
 
                -- authenticated responses carry Cache-Control: no-store, and
                   anonymous and static ones do not  [Phase 8, SEC-0008].
@@ -51,7 +54,31 @@ PASSWORD = 'hunter2boat'
 # to /login tells a load balancer the application is fine when it is not. What
 # makes that acceptable is the response body: check names and booleans, no
 # versions, no configuration, no error text. See dough/blueprints/health.py.
-PUBLIC_ENDPOINTS = {'auth.join', 'auth.login', 'auth.setup',
+# Phase 10 added exactly one: `api_v1_auth.login`. It is where API credentials
+# come from, so a caller with no credential is the entire point of it -- the
+# same argument that makes `auth.login` public. It is also the application's
+# first `@csrf_exempt` view; see tests/test_csrf.py, where that set is pinned
+# and the reasoning for the exemption is written down.
+# Phase 10.5 added five, and one of them is unlike everything above it.
+#
+# Four are ordinary: `auth.register`, `auth.forgot_password`,
+# `auth.reset_password` and `auth.verify_email` are all reached by somebody who
+# by definition cannot sign in -- they have no account yet, or they have lost the
+# password, or they are following a link out of a mail client that carries no
+# cookie. The token is the credential, exactly as it is for `auth.join`.
+#
+# `core.dashboard` is the unusual one, and it is worth reading the marker
+# carefully before assuming it is a mistake. `/` renders the marketing page for a
+# stranger and the dashboard for a signed-in user, so it must be *reachable*
+# without a session. It does not *show* anything without one: `_is_anonymous()`
+# returns before any query runs, and an anonymous request never binds a
+# household, so a tenant query on that path would raise rather than leak. The
+# session-lifetime check still runs for a request that has a session --
+# `_require_login` was changed in the same phase so that `@public` cannot be a
+# way to skip it. See dough/blueprints/core.py.
+PUBLIC_ENDPOINTS = {'api_v1_auth.login', 'auth.forgot_password', 'auth.join',
+                    'auth.login', 'auth.register', 'auth.reset_password',
+                    'auth.setup', 'auth.verify_email', 'core.dashboard',
                     'health.live', 'health.ready', 'static'}
 
 # Sample values for URL converters, so every rule can actually be requested.
@@ -139,7 +166,10 @@ def test_no_route_is_reachable_anonymously(guard_app, anon):
     # Guard against this test silently becoming vacuous -- if _concrete_path or
     # the URL map ever yields nothing, an empty loop would "pass" while checking
     # precisely zero routes.
-    assert len(rules) >= 60, f'only {len(rules)} routes enumerated; expected ~68'
+    # ~68 before Phase 10, ~117 after it added the /api/v1 surface. The floor is
+    # raised with the route count rather than left at 60: a bound that every
+    # plausible regression clears has stopped guarding anything.
+    assert len(rules) >= 110, f'only {len(rules)} routes enumerated; expected ~117'
     assert not [p for p, _, _ in rules if '<' in p], 'unsubstituted URL converter'
 
     leaked = []
@@ -177,16 +207,28 @@ def test_page_routes_redirect_to_login_with_next(anon):
 def test_public_endpoint_set_is_minimal(guard_app):
     """Guards against the allowlist quietly growing.
 
-    Later phases will legitimately expand PUBLIC_ENDPOINTS further (landing,
-    forgot/reset password, verify email, legal pages, healthz). Doing so should
-    be a visible, reviewed edit to this constant -- never an accident. Phase 6
-    added exactly one: `auth.join`. Phase 8 added two: the health probes.
+    Later phases may legitimately expand PUBLIC_ENDPOINTS further (legal pages,
+    a status page). Doing so should be a visible, reviewed edit to this constant
+    -- never an accident. Phase 6 added exactly one: `auth.join`. Phase 8 added
+    two: the health probes. Phase 10 added one: `api_v1_auth.login`. Phase 10.5
+    added five, which is the largest single expansion this set has had and the
+    reason it is worth restating what the marker does and does not mean.
+
+    `@public` suppresses the *login redirect*. It suppresses nothing else. It
+    does not disable tenancy (an anonymous request binds no household, so a
+    scoped query on that path raises rather than leaking), it does not disable
+    CSRF (`/register`, `/forgot-password` and `/reset-password` all POST and all
+    carry a token -- see tests/test_csrf.py), and since Phase 10.5 it does not
+    skip the session-lifetime check either.
 
     Written out literally rather than as `PUBLIC_ENDPOINTS` so that the two are
     checked against each other. A test that compared the constant with itself
     would pass no matter what the constant said.
     """
-    reachable_without_session = {'auth.join', 'auth.login', 'auth.setup',
+    reachable_without_session = {'api_v1_auth.login', 'auth.forgot_password',
+                                 'auth.join', 'auth.login', 'auth.register',
+                                 'auth.reset_password', 'auth.setup',
+                                 'auth.verify_email', 'core.dashboard',
                                  'health.live', 'health.ready', 'static'}
     actual = {r.endpoint for r in guard_app.url_map.iter_rules()} & PUBLIC_ENDPOINTS
     assert actual == reachable_without_session
