@@ -1,5 +1,11 @@
 # Secrets
+# The wildcard covers .env.local, .env.production and whatever the next one is
+# called -- a variant nobody thought to add here is exactly the one that gets
+# committed. .env.example is the documented template and is re-admitted below;
+# it must stay free of real values, which tests/test_secret_hygiene.py checks.
 .env
+.env.*
+!.env.example
 .sync_encryption_key
 .dev-cert.pem
 .dev-key.pem
