@@ -59,6 +59,17 @@ Markdown==3.8.2
 # the code as it stands, not a guarantee about the next feature.
 pillow==12.3.0
 
+# --- Serving ---
+# The production WSGI server. Werkzeug's built-in server is single-threaded and
+# explicitly not for production; `app.run` in app.py's __main__ block is a
+# development convenience and nothing deploys through it.
+#
+# Run with one worker and several threads, never several workers -- see
+# Procfile and docs/deploy-railway.md. Three parts of this application keep
+# state in the serving process and a second worker silently duplicates all of
+# it.
+gunicorn==26.0.0
+
 # --- Tests ---
 # 9.x is a major bump; the suite (921 tests, browser included) was run against
 # it before this pin moved.

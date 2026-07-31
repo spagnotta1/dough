@@ -246,7 +246,16 @@ class BaseConfig:
     AUDIT_PAGE_SIZE = _int('AUDIT_PAGE_SIZE', 100)
 
     # --- Uploads ------------------------------------------------------------
-    UPLOAD_FOLDER = os.path.join(BASE_DIR, 'uploads')
+    # Env-overridable because a container's own filesystem is not storage. On
+    # Railway the image is rebuilt and replaced on every deploy, so the default
+    # -- a directory inside the application -- silently discards every uploaded
+    # statement at the next push, with no error to notice. Point it at the
+    # mounted volume (UPLOAD_FOLDER=/data/uploads) and the files outlive the
+    # deploy. `create_app` makes the directory, so the volume needs no
+    # preparation. The default is unchanged for local installs, where BASE_DIR
+    # is a real directory on a real disk.
+    UPLOAD_FOLDER = (os.environ.get('UPLOAD_FOLDER', '').strip()
+                     or os.path.join(BASE_DIR, 'uploads'))
     MAX_CONTENT_LENGTH = 16 * 1024 * 1024  # 16MB max file size
 
     # --- AI -----------------------------------------------------------------
