@@ -125,8 +125,12 @@ line you typed, not the arguments the script builds for its children.
 `config.py` treats unset as "that feature is off" and empty the same way, with
 more noise.
 
-`ALLOW_REGISTRATION` is deliberately **not** forwarded, so production takes the
-`False` default even though a development `.env` may well have it on.
+`ALLOW_REGISTRATION` is never forwarded from `.env` — it is set explicitly by
+the script, to `0` unless you pass `-AllowRegistration`. Explicitly either way,
+because a variable left unset is a state that depends on what a previous run
+happened to leave behind, and this one decides whether strangers can sign up.
+
+This deployment runs with it **on**; see "Registration is open" below.
 
 ## 5. Deploy from GitHub
 
@@ -239,11 +243,46 @@ Nothing reconciles them, and nothing will. Pick one as authoritative and stop
 the other from syncing — `SYNC_AUTO_ENABLED=0` in the loser's environment. Two
 databases both convinced they are current is worse than either being stale.
 
+## Registration is open
+
+```bash
+railway variable set "ALLOW_REGISTRATION=1"
+```
+
+Unlike `AUTO_UPGRADE_DB`, this one is a plain environment variable all the way
+down — `ProductionConfig` does not override it, so setting it is enough. It is
+read in a class body at import time, though, so the running process keeps the
+old value: `railway redeploy --yes` (or any deploy), not `railway service
+restart`.
+
+A closed instance still serves `/register` and returns 403 with a page
+explaining itself, which is why the URL looks like it works when it does not.
+Check the page body, not the status code.
+
+What opening it does and does not expose:
+
+- `identity.register_account` creates a **household per registration** and makes
+  the new user its owner, in one transaction. A stranger's account starts empty
+  and every scoped query is bound to their own household, so they cannot see
+  your accounts, transactions, or connections.
+- It does mean a URL fronting real bank data accepts signups from anyone who
+  finds it. There is no invitation gate on this path — `/join` is the invited
+  route, `/register` is the open one.
+- The `register` rate limit is spent before the form is parsed and before
+  `scrypt` runs, so the route cannot be used as a CPU amplifier. That limiter is
+  in-memory and resets on deploy (SEC-0010).
+
+`REQUIRE_EMAIL_VERIFICATION` is still off, so an unverified address does not
+block sign-in. Turning it on with `MAIL_BACKEND=console` would lock out every
+new registrant — the two settings have to move together.
+
 ## Known gaps
 
-- **Mail is `console`.** Password-reset and verification links print to the
-  deploy logs instead of being sent. Fine while you are the only account; set
-  `MAIL_BACKEND=smtp` and `MAIL_SERVER` before inviting anyone.
+- **Mail is `console`, and registration is open.** Verification and
+  password-reset links print to the deploy logs instead of being sent. That was
+  cosmetic while you were the only account. It is not now: a registrant who
+  forgets their password has no route back in, and you cannot give them one
+  without reading it out of the logs. Set `MAIL_BACKEND=smtp` and `MAIL_SERVER`.
 - **Back up the volume.** Nothing here replicates `checkbook.db`.
   `tools/backup_db.py` exists; run it on a schedule and pull the output off with
   `railway volume files --volume dough-volume download`.

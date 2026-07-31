@@ -36,6 +36,17 @@ param(
     # on the volume in the dashboard.
     [string]$VolumePath = '/data',
 
+    # Let strangers create accounts at /register. Off unless asked for, and set
+    # explicitly either way rather than left to config.py's default -- running
+    # this script should produce a known state, not one that depends on what a
+    # previous run happened to leave behind.
+    #
+    # Each registration creates its own household and owns it, so a new account
+    # starts empty and cannot see anybody else's accounts or transactions. What
+    # it does mean is that this URL, which fronts real bank data, will accept
+    # signups from anyone who finds it.
+    [switch]$AllowRegistration,
+
     # Print what would be set, touching nothing.
     [switch]$DryRun
 )
@@ -166,14 +177,15 @@ Set-RailwayVar 'PORT' '8080'
 # boot-time migrations and does nothing at all. That is by design: migrations
 # are a deploy step, not a side effect of a process starting. Run the chain
 # yourself after a schema change; see docs/deploy-railway.md.
-Set-RailwayVar 'SYNC_AUTO_ENABLED' '1'
-Set-RailwayVar 'APP_HTTPS'         '1'
+Set-RailwayVar 'SYNC_AUTO_ENABLED'   '1'
+Set-RailwayVar 'APP_HTTPS'           '1'
+Set-RailwayVar 'ALLOW_REGISTRATION'  $(if ($AllowRegistration) { '1' } else { '0' })
 # Railway terminates TLS at one edge proxy in front of this container. Left at
 # 0, dough/auth.py ignores X-Forwarded-For and every request appears to come
 # from the proxy -- so the login throttle would share a single bucket across all
 # clients, and audit rows would record the proxy's address as the actor's.
-Set-RailwayVar 'TRUSTED_PROXIES'   '1'
-Set-RailwayVar 'PUBLIC_BASE_URL'   $PublicBaseUrl
+Set-RailwayVar 'TRUSTED_PROXIES'     '1'
+Set-RailwayVar 'PUBLIC_BASE_URL'     $PublicBaseUrl
 
 foreach ($k in $fromEnv.Keys | Sort-Object) {
     Set-RailwayVar $k $fromEnv[$k] -Secret
@@ -223,7 +235,18 @@ Write-Host ''
 if (-not $fromEnv.ContainsKey('ANTHROPIC_API_KEY')) {
     Write-Host 'Note: ANTHROPIC_API_KEY was not found in .env. The AI surfaces will report themselves unconfigured; everything else works.'
 }
-Write-Host 'Done. MAIL_BACKEND is left at "console": password-reset links print to the'
-Write-Host 'deploy logs rather than being sent. Set MAIL_BACKEND=smtp and MAIL_SERVER if'
-Write-Host 'anyone other than you needs to be able to reset a password.'
+if ($AllowRegistration) {
+    Write-Host 'Registration is OPEN: anyone who reaches /register can create an account.'
+    Write-Host 'Each one gets its own empty household and cannot see yours.'
+    Write-Host ''
+    Write-Host 'MAIL_BACKEND is "console", which is now a real gap rather than a cosmetic'
+    Write-Host 'one: verification and password-reset links print to the deploy logs instead'
+    Write-Host 'of being sent, so a registrant who forgets a password has no way back in and'
+    Write-Host 'you cannot give them one without reading the logs. Set MAIL_BACKEND=smtp and'
+    Write-Host 'MAIL_SERVER before pointing anybody at this URL.'
+} else {
+    Write-Host 'Done. MAIL_BACKEND is left at "console": password-reset links print to the'
+    Write-Host 'deploy logs rather than being sent. Set MAIL_BACKEND=smtp and MAIL_SERVER if'
+    Write-Host 'anyone other than you needs to be able to reset a password.'
+}
 Write-Host ''
