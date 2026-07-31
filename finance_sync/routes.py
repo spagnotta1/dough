@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 import secrets
 
 from flask import (
     Blueprint,
+    current_app,
     flash,
     jsonify,
     redirect,
@@ -15,8 +18,9 @@ from flask import (
     url_for,
 )
 
+from dough.auth import current_user
 from dough.services import audit
-from dough.tenancy import find_owned
+from dough.tenancy import current_household, find_owned
 from models import (
     EVENT_CONNECTION_CREATED,
     EVENT_CONNECTION_REMOVED,
@@ -37,9 +41,62 @@ sync_bp = Blueprint("finance_sync", __name__)
 
 _service = ConnectionService()
 
-# Single-user local app (see README) — Plaid still requires a stable
-# per-end-user id to scope Link sessions to.
-_PLAID_CLIENT_USER_ID = "checkbook-app-user"
+
+def _plaid_client_user_id() -> str:
+    """Who Plaid should think is opening Link. One per *person*.
+
+    This used to be the constant `"checkbook-app-user"`, dating from when this
+    was a single-user local app, and it survived the move to households as a
+    cross-account leak with no database involvement at all.
+
+    `client_user_id` is the key Plaid's returning-user experience remembers
+    people by. Send the same one for everybody and Plaid concludes everybody is
+    the same person: the second account to open Link is offered the *first*
+    account's phone number to send its one-time code to. Nothing in this
+    application ever sent that number anywhere — Plaid recalled it, correctly,
+    for the user id we told it this was.
+
+    ## Per user, not per household
+
+    Households share connections; they do not share phone numbers. Two people in
+    one household are two people, and the number that receives an SMS code
+    belongs to whichever of them is sitting there. Scoping this to the household
+    would fix the reported bug and leave a smaller one behind.
+
+    ## Why it is derived rather than stored, and why it is not just `user.id`
+
+    An HMAC over the application secret, so the value is:
+
+    - **stable** for a given user in a given deployment, which is what makes the
+      returning-user experience work for the person it belongs to;
+    - **unique across deployments** even when they share Plaid API credentials.
+      Sending the raw row id would put staging's user 1 and production's user 1
+      on the same Plaid identity — the same bug again, one level up, and much
+      harder to notice;
+    - **opaque**, so an internal identifier does not become part of a third
+      party's records.
+
+    Rotating `SECRET_KEY` changes it, and the cost of that is bounded: Plaid
+    stops recognising the person and asks for their phone number again. Existing
+    connections are unaffected — an Item lives on the access token exchanged for
+    it, not on this.
+
+    With `AUTH_ENABLED` off there is no user to key on (an install that has
+    turned authentication off has said it is one person), so it falls back to
+    the bound household, which is still narrower than the constant it replaces.
+    """
+    user = current_user()
+    if user is not None:
+        identity = f"user:{user.id}"
+    else:
+        identity = f"household:{current_household()}"
+    secret = current_app.config["SECRET_KEY"]
+    if isinstance(secret, str):
+        secret = secret.encode()
+    digest = hmac.new(secret, f"plaid:{identity}".encode(), hashlib.sha256)
+    # Prefixed so the value is recognisable in a Plaid dashboard, and truncated
+    # because 128 bits is far past what distinguishing users needs.
+    return "dough-" + digest.hexdigest()[:32]
 
 
 def _audit_connected(connection, how):
@@ -168,7 +225,7 @@ def api_plaid_link_token():
         return jsonify({"error": "Plaid is not configured (set PLAID_CLIENT_ID / "
                                   "PLAID_SECRET in .env)"}), 404
     try:
-        link_token = adapter_cls().create_link_token(_PLAID_CLIENT_USER_ID)
+        link_token = adapter_cls().create_link_token(_plaid_client_user_id())
     except SyncError as exc:
         return jsonify({"error": str(exc)}), 502
     return jsonify({"link_token": link_token})
