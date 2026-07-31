@@ -41,6 +41,11 @@
         probably already been used or has run out of time.
       </p>
       <p>Ask whoever sent it to create a new one.</p>
+      {# The one notice branch that gets this. The others end on an `auth-cta`
+         that leads somewhere useful; this one refuses without saying why — on
+         purpose, so a guessed token is not confirmed — and until now it left a
+         stranger on a page with no links on it at all. #}
+      {% include '_auth_back.html' %}
     </div>
 
     {% elif already_signed_in %}
@@ -62,7 +67,10 @@
 
     {% else %}
     <div class="auth-intro">
-      <span data-dough="greeting" data-dough-size="130"></span>
+      {# The wordmark shows here, unlike register.html: whoever followed this
+         link arrived from somebody else's email and nothing else on the page
+         says what Dough is. #}
+      {% with brand_size=130 %}{% include '_auth_brand.html' %}{% endwith %}
       <h2>You've been invited.</h2>
       <p>
         <strong>{{ household.name }}</strong> wants you in on their money.
@@ -73,6 +81,9 @@
       <p>Pick a username and a password and you're in.</p>
     </div>
 
+    {# See register.html: the wrapper is what keeps the link in the card's grid
+       track instead of under the introduction. #}
+    <div class="auth-column">
     <form class="auth-card" method="post">
       {{ csrf_field() }}
       {% include '_auth_flash.html' %}
@@ -99,6 +110,8 @@
       </div>
       <button type="submit" class="auth-btn">Join {{ household.name }}</button>
     </form>
+    {% include '_auth_back.html' %}
+    </div>
     {% endif %}
 
   </div>

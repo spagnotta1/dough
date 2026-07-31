@@ -13,7 +13,8 @@
 </head>
 <body class="auth-shell">
   <div class="auth-wrap">
-    <div class="auth-hello"><span data-dough="greeting" data-dough-size="104"></span></div>
+    {# The wordmark shows here: nothing else on this page names the product. #}
+    <div class="auth-hello">{% include '_auth_brand.html' %}</div>
     <form class="auth-card" method="post">
       {{ csrf_field() }}
       {# Why the login page in particular carries this: it is where every
@@ -41,13 +42,14 @@
          "registration is closed" is worse than no link -- it advertises a door
          that is not there. `/register` still renders its explanation for anyone
          who reaches it another way (the landing page, a bookmark). #}
-      <p class="auth-hint" style="text-align:center;margin-top:14px;">
+      <p class="auth-hint auth-hint--center">
         <a href="{{ url_for('auth.forgot_password') }}">Forgotten your password?</a>
         {% if config.ALLOW_REGISTRATION %}
           <br>No account? <a href="{{ url_for('auth.register') }}">Create one</a>
         {% endif %}
       </p>
     </form>
+    {% include '_auth_back.html' %}
   </div>
   <script defer src="{{ url_for('static', filename='js/dough.js') }}"></script>
 </body>

@@ -1,0 +1,38 @@
+{# "← Back to home" — the secondary way out of a signed-out form.
+
+   The branding link covers the person who knows a logo is clickable. This is
+   for everybody else, and it is what stops these pages being dead ends: before
+   it, `/login` offered a password reset and sometimes a registration link, and
+   `/join` with a broken invitation offered nothing at all.
+
+   Rendered *outside* the card wherever there is one. Everything inside the card
+   is about the form; this is about leaving, and putting it there would make it
+   one more thing to do with the form. Outside also keeps it clear of the flash
+   banners, which stack at the top of the card — the message saying why you are
+   here and the way back out never contend for the same space.
+
+   Kept quiet on purpose: no fill, no border, .78rem. The submit button is the
+   only filled control on these pages and has to stay that way.
+
+   ## Where this belongs, and where it does not
+
+   Not on `/reset-password`. The link that got somebody there is spent by the
+   time the form renders (see the docstring on `auth.reset_password`), so
+   leaving means asking for a new email — an inviting exit on that page is a
+   trap, and the page's own copy already says what to do. The branding stays
+   clickable there because a logo is not an invitation to leave; this is.
+
+   Not on `/setup` either: `/` redirects back to `/setup` while no account
+   exists, so the link would be a loop.
+
+   Not on the notice branches that already carry an `auth-cta` — a closed
+   instance, a spent reset link, a confirmed address. A single-action page is
+   clearer for having one action, and every one of those actions leads somewhere
+   that does offer this. #}
+<p class="auth-back">
+  <a class="auth-back__link" href="{{ url_for('core.dashboard') }}">
+    {# "←" is announced as "left arrow" mid-sentence by some screen readers, and
+       the word "Back" already carries the meaning. #}
+    <span class="auth-back__arrow" aria-hidden="true">&larr;</span>Back to home
+  </a>
+</p>

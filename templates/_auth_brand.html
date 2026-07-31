@@ -1,0 +1,51 @@
+{# The branding on the signed-out pages, as a link home.
+
+   A logo that does not take you home is the first thing a visitor tries and the
+   first thing that fails, and on these pages the mascot is the only branding
+   there is. It was an inert `<span>` on all six of them.
+
+   `core.dashboard` is `/`, which serves the marketing page to somebody with no
+   session and the dashboard to somebody who kept theirs. That is the right
+   destination for both: "home" means the front door you actually have. It is
+   also the endpoint landing.html's own brand link uses, so the two cannot
+   drift apart.
+
+   A plain `<a>` with no handler. These pages load one deferred script, and the
+   way home has to work before it arrives, with it blocked, and for anybody who
+   middle-clicks or copies the address.
+
+   ## Where this belongs, and where it does not
+
+   Only where Dough is *branding*: above or beside a form, at the top of the
+   page. The notice branches (a spent reset link, a closed instance, a bad
+   invitation) draw him "concerned" or "thinking" **about the message** — there
+   he is illustrating the sentence next to him, not standing in for the product,
+   and those pages already carry a primary action of their own. `/setup` is
+   excluded too, and for a harder reason: a fresh install has no accounts, so
+   `/` redirects straight back to `/setup`. A link home that lands you where you
+   started is worse than no link.
+
+   ## Variables, all optional, set with `{% with %}` at the include site
+
+     brand_mood  which expression dough.js should draw   (default 'greeting')
+     brand_size  its size in px                          (default 104)
+     brand_word  show the wordmark, or keep it for screen readers only
+                 (default true — pass false only where the visible copy
+                 immediately below already names the product, as register.html's
+                 "Hi! I'm Dough." does)
+
+   ## The accessible name
+
+   dough.js renders the SVG `aria-hidden` unless a label is asked for (see its
+   header comment), so without text of its own this link is announced as "link"
+   and nothing else. The name comes from the wordmark — visible or not — plus a
+   hidden "home page", which is what says where it goes rather than only what it
+   is. Both halves are always in the markup, so the name does not change with
+   the layout. #}
+{%- set brand_shows_word = brand_word if brand_word is defined else true -%}
+<a class="auth-brand" href="{{ url_for('core.dashboard') }}">
+  <span class="{{ 'auth-brand__word' if brand_shows_word else 'auth-sr' }}">Dough</span>
+  <span data-dough="{{ brand_mood|default('greeting') }}"
+        data-dough-size="{{ brand_size|default(104) }}"></span>
+  <span class="auth-sr">home page</span>
+</a>

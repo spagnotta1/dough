@@ -39,7 +39,12 @@
 {% else %}
   <div class="auth-split">
     <div class="auth-intro">
-      <span data-dough="greeting" data-dough-size="140"></span>
+      {# `brand_word=false`: the heading directly underneath is "Hi! I'm
+         Dough.", and a wordmark 40px above it would say the name twice. The
+         hidden one still gives the link its accessible name. #}
+      {% with brand_size=140, brand_word=false %}
+        {% include '_auth_brand.html' %}
+      {% endwith %}
       <h2>Hi! I'm Dough.</h2>
       <ul>
         <li>I'll sort your transactions and tell you what changed.</li>
@@ -48,6 +53,11 @@
         <li>I'm always just one question away.</li>
       </ul>
     </div>
+    {# The card and the way home are one item in .auth-split's second track.
+       Without the wrapper the grid auto-places the link into the *first*
+       column on a new row, under the introduction rather than under the form
+       it belongs to. #}
+    <div class="auth-column">
     <form class="auth-card" method="post">
       {{ csrf_field() }}
       {% include '_auth_flash.html' %}
@@ -95,10 +105,12 @@
       </div>
 
       <button type="submit" class="auth-btn">Create account</button>
-      <p class="auth-hint" style="text-align:center;margin-top:14px;">
+      <p class="auth-hint auth-hint--center">
         Already have one? <a href="{{ url_for('auth.login') }}">Sign in</a>
       </p>
     </form>
+    {% include '_auth_back.html' %}
+    </div>
   </div>
 {% endif %}
   <script defer src="{{ url_for('static', filename='js/dough.js') }}"></script>

@@ -392,6 +392,143 @@ def test_changing_the_password_keeps_this_browser_signed_in(open_registration_pa
 
 
 # ---------------------------------------------------------------------------
+# The way home
+# ---------------------------------------------------------------------------
+#
+# `tests/test_auth_navigation.py` asserts, for every page on the auth shell,
+# that the branding links to `/`, that "Back to home" is offered where it should
+# be and withheld where it should not, and that both are named. What it cannot
+# assert is that they are on screen, that the thing a person aims at is inside
+# the anchor, and that clicking it arrives somewhere real — the mascot is an SVG
+# a deferred script injects into a `<span>`, so "the anchor is in the markup"
+# says nothing about where the pixels ended up.
+#
+# `/login` is covered in test_auth_journey.py, next to the rest of sign-in.
+# `/reset-password`'s form is not driven here: reaching it needs a live token,
+# which needs an account with an address, and the only one on this server is the
+# shared seeded owner that every other test in the directory signs in as. Its
+# markup is asserted in the file above; what is worth a browser is the *notice*
+# branch, and that one is already exercised further up.
+
+
+@pytest.fixture(scope='module')
+def invitation_path(live_server):
+    """A live invitation on the shared server, as a path.
+
+    Creates a row rather than touching one, which is the rule for this
+    directory. Nothing below ever submits the join form: accepting the
+    invitation would add a member to the seeded household, and the tests that
+    read that household would start depending on the order this file ran in.
+    """
+    from dough.services.membership import issue_invite
+    from dough.tenancy import tenant_scope
+    from models import AppUser, ROLE_MEMBER
+
+    app = live_server.app
+    with app.app_context():
+        household_id = app.config['DEFAULT_HOUSEHOLD_ID']
+        with tenant_scope(household_id):
+            owner = AppUser.query.filter_by(username=USERNAME).first()
+            _invite, token = issue_invite(household_id, owner, role=ROLE_MEMBER,
+                                          label='browser suite')
+    return f'/join/{token}'
+
+
+def test_the_branding_goes_home_from_recovery(page):
+    """Clicked on the mascot itself, which is what a person aims at."""
+    _sign_out(page)
+    visit(page, '/forgot-password')
+    page.click('.auth-brand [data-dough]')
+    page.wait_for_url(lambda url: '/forgot-password' not in url, timeout=10_000)
+    assert page.locator('.lp-hero').is_visible(), (
+        'the logo led somewhere, but not to the landing page')
+
+
+def test_the_way_home_leaves_recovery(page):
+    _sign_out(page)
+    visit(page, '/forgot-password')
+    back = page.locator('.auth-back__link')
+    assert back.is_visible(), 'the way home is in the DOM but not on screen'
+    back.click()
+    page.wait_for_url(lambda url: '/forgot-password' not in url, timeout=10_000)
+    assert page.locator('.lp-hero').is_visible()
+
+
+def test_an_invitation_offers_a_way_home(page, invitation_path):
+    """A stranger who followed somebody else's link should be able to find out
+    what they have been invited *to* before handing over a password."""
+    _sign_out(page)
+    visit(page, invitation_path)
+
+    assert page.locator('.auth-brand').is_visible()
+    back = page.locator('.auth-back__link')
+    assert back.is_visible()
+    back.click()
+    page.wait_for_url(lambda url: '/join/' not in url, timeout=10_000)
+    assert page.locator('.lp-hero').is_visible()
+
+
+def test_a_dead_invitation_is_not_a_dead_end(page, page_health):
+    """The one notice branch with nothing else on it.
+
+    Unknown, expired, revoked and already-used all render this page and none of
+    them says which — deliberately, so a guessed token is not confirmed. That
+    left a stranger on a page with no links at all, which is a security
+    decision paid for in usability by somebody who did nothing wrong.
+    """
+    page_health.expect_error_status('/join/')
+    _sign_out(page)
+    page.goto('/join/' + 'x' * 43, wait_until='load')
+    assert_no_horizontal_overflow(page)
+
+    back = page.locator('.auth-back__link')
+    assert back.is_visible(), 'a refused invitation still offers nothing'
+    back.click()
+    page.wait_for_url(lambda url: '/join/' not in url, timeout=10_000)
+    assert page.locator('.lp-hero').is_visible()
+
+
+def test_the_registration_form_offers_a_way_home(open_registration_page):
+    """Presence and visibility rather than a click-through.
+
+    This server is built per module and may hold no accounts when this runs, and
+    `/` redirects to `/setup` while that is true — so following the link would
+    assert something about first-run rather than about this page. The click is
+    proven on the two pages above, which run against the seeded server.
+    """
+    page = open_registration_page
+    page.goto('/register', wait_until='load')
+
+    for selector in ('.auth-brand', '.auth-back__link'):
+        element = page.locator(selector)
+        assert element.is_visible(), f'{selector} is not on screen'
+        assert element.get_attribute('href') == '/', (
+            f'{selector} does not point home')
+
+
+@pytest.mark.parametrize('name, width, height', VIEWPORTS)
+def test_the_way_home_stays_reachable_at_every_width(page, invitation_path,
+                                                     name, width, height):
+    """In the viewport, not merely rendered.
+
+    A link below the fold on a page somebody was bounced to is a link that does
+    not exist. `/join` is the demanding case: an introduction column, a form and
+    a 130px mascot, stacked into one column once the grid collapses.
+    """
+    _sign_out(page)
+    page.set_viewport_size({'width': width, 'height': height})
+    visit(page, invitation_path, note=f' [{name} {width}px]')
+
+    box = page.locator('.auth-back__link').bounding_box()
+    assert box, f'no way home at {name}'
+    assert box['height'] >= 24, (
+        f"a {box['height']:.0f}px tap target at {name} — under the 24px WCAG "
+        f'2.5.8 asks for')
+    page.locator('.auth-back__link').scroll_into_view_if_needed()
+    assert page.locator('.auth-back__link').is_visible()
+
+
+# ---------------------------------------------------------------------------
 # A second application, with registration open
 # ---------------------------------------------------------------------------
 

@@ -114,6 +114,90 @@ body.auth-shell {
   z-index: 1;
 }
 
+/* ── Brand lockup ──────────────────────────────────────────────────────────
+   The mascot — above the card on login/forgot/reset, beside it on
+   register/join — is the only branding these pages carry, so it is also the
+   first thing somebody clicks when they want to get back out, and until it was
+   a link, clicking it did nothing at all. The markup is one partial:
+   templates/_auth_brand.html, which is also where the reasoning about *which*
+   pages get it lives.
+
+   The wordmark sits *above* Dough, not below him, because below is where
+   .auth-hello's negative margin puts him over the card: a word there would
+   land inside the card's padding, on top of "Welcome back". It is hidden
+   (still in the accessible name) on the one page whose next line already says
+   "Hi! I'm Dough."
+
+   Nothing here is a button. The link inherits the page's own type and the
+   focus ring shape .auth-btn and .auth-cta already use, so the brand reads as
+   branding rather than as a second action competing with Sign in.
+   ────────────────────────────────────────────────────────────────────────── */
+.auth-brand {
+  /* inline-flex, not flex: in .auth-intro this link replaced a bare mascot and
+     must keep sitting wherever that column's text-align puts it — left on a
+     desktop grid, centred once the columns stack. A block-level box would be
+     the full width of the column and would centre the mascot on both. Inside
+     .auth-hello it is a flex item either way, so nothing changes there. */
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  text-decoration: none;
+  color: inherit;
+  border-radius: var(--auth-r-lg);
+}
+
+/* --auth-fg rather than --auth-muted: at .8rem this is small text, and the
+   muted mix lands at 3.3:1 on --auth-bg. A wordmark nobody can read is not a
+   wordmark. */
+.auth-brand__word {
+  font-size: .8rem;
+  font-weight: 600;
+  letter-spacing: .14em;
+  text-transform: uppercase;
+  color: var(--auth-fg);
+}
+.auth-brand:hover .auth-brand__word { color: var(--auth-accent-ink); }
+.auth-brand:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--auth-bg), 0 0 0 4px var(--auth-accent);
+}
+
+/* ── Back to the public page ───────────────────────────────────────────────
+   Outside the card rather than in it: this is navigation away from the page,
+   not a third thing to do with the form. That also keeps it clear of the
+   flash banners, which stack at the top of the card — a message and the way
+   out never compete for the same space, on a phone or anywhere else.
+   ────────────────────────────────────────────────────────────────────────── */
+.auth-back {
+  margin: 14px 0 0;
+  text-align: center;
+  font-size: .78rem;
+}
+/* Two classes deep on purpose: join.html's dead-invitation branch renders this
+   inside .auth-intro, whose own `a` rule is one class *and* one type and would
+   otherwise win. The way out should read the same on every page it appears on. */
+.auth-back .auth-back__link {
+  color: var(--auth-fg);
+}
+.auth-back__link {
+  display: inline-block;
+  /* Padding rather than a height: it takes the target past the 24px WCAG 2.5.8
+     asks for -- .78rem of text is about 15px on its own -- without giving the
+     link a box a reader could mistake for a button. */
+  padding: 6px 12px;
+  border-radius: var(--auth-r-sm);
+  text-decoration: none;
+}
+.auth-back__link:hover { color: var(--auth-accent-ink); text-decoration: underline; }
+.auth-back__link:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--auth-bg), 0 0 0 4px var(--auth-accent);
+}
+/* The glyph is decoration -- the word "Back" already says it -- and a screen
+   reader that announced it would read "left arrow" mid-sentence. */
+.auth-back__arrow { margin-right: .4em; }
+
 /* join.html / setup.html: an introduction column beside the card. On a phone
    the columns stack, mascot first. */
 .auth-split {
@@ -130,6 +214,12 @@ body.auth-shell {
      on its own — it needs its own margin. */
   .auth-intro .dough { margin: 0 auto; }
 }
+
+/* The card plus whatever sits under it — today the way home — as a single item
+   in .auth-split's second track. Auto-placement would otherwise drop that link
+   into the *first* column on a new row, under the introduction instead of
+   under the form it belongs to. */
+.auth-column { display: flex; flex-direction: column; }
 
 /* join.html's message-only branches (invalid link, already signed in): a
    single centred column rather than the two-column grid, which would
@@ -227,6 +317,31 @@ body.auth-shell {
   font-size: .72rem;
   color: var(--auth-ghost);
   margin: -6px 0 12px;
+}
+
+/* The trailing hint under a form's button -- "Forgotten your password?",
+   "Already have one?" -- rather than one sitting under a field it explains.
+   A class because it was three identical `style="text-align:center;
+   margin-top:14px"` attributes, which is the one thing this file exists to
+   stop: a page-local colour or spacing decision that no token can reach. */
+.auth-hint--center {
+  text-align: center;
+  margin-top: 14px;
+}
+
+/* The links inside a hint -- "Forgotten your password?", "Create one",
+   "Sign in" -- were the one place on these pages still rendering in the
+   browser's default blue, which is a literal colour arriving by omission
+   rather than by decision, and it sat next to a copper button. Same ink
+   .auth-intro's links already use, and the same focus ring as every other
+   control here. */
+.auth-hint a {
+  color: var(--auth-accent-ink);
+  border-radius: 3px;
+}
+.auth-hint a:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--auth-panel), 0 0 0 4px var(--auth-accent);
 }
 
 .auth-error {
