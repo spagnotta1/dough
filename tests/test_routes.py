@@ -163,6 +163,58 @@ def test_dashboard_category_cascading_filter(client):
     assert 'id="catRow" hidden' in html
 
 
+def test_a_first_run_dashboard_asks_for_a_connection_not_a_file(client):
+    """An account with no transactions at all is somebody who has just signed
+    up, and the moment they are most willing to set this up is the moment they
+    are looking at this page. It used to point them at a statement upload —
+    the slower of the two paths, and the one they have to keep repeating.
+    """
+    html = client.get("/").get_data(as_text=True)
+
+    assert "Link an account and I'll take it from there" in html
+    assert 'href="/connections" class="ds-btn ds-btn--primary">Connect an institution' in html
+    # Upload survives as the fallback for a bank Plaid cannot reach; it is no
+    # longer the thing being asked for.
+    assert "Or upload a statement" in html
+    # The empty-*window* advice would be wrong here: there is no window to widen.
+    assert "Try a wider date range" not in html
+
+
+def test_an_empty_window_over_a_stocked_ledger_still_gets_filter_advice(client):
+    """The other empty state, which must not be swallowed by the first one.
+    Nothing in March is a filter question, not an onboarding question."""
+    from datetime import date
+
+    from models import Transaction, db
+
+    db.session.add(Transaction(account_name="Checking", date=date(2026, 3, 5),
+                               description="AJI SUSHI", amount=-77.31, category="Food"))
+    db.session.commit()
+
+    html = client.get("/?start_date=2026-04-01&end_date=2026-04-30").get_data(as_text=True)
+
+    assert "No transactions in" in html
+    assert "Try a wider date range" in html
+    assert "Link an account and I'll take it from there" not in html
+
+
+def test_a_connection_awaiting_its_first_sync_is_not_asked_to_connect_again(client):
+    """Linked, but the sync has not landed: the ledger is still empty and the
+    page still has nothing to show. Repeating the invitation there reads as the
+    connection having failed."""
+    from models import db
+
+    db.session.add(InstitutionConnection(institution="plaid", display_name="Plaid",
+                                         status="connected"))
+    db.session.commit()
+
+    html = client.get("/").get_data(as_text=True)
+
+    assert "I'm fetching the history now" in html
+    assert "Check sync status" in html
+    assert "Link an account and I'll take it from there" not in html
+
+
 def test_chat_context_splits_spending_and_income_by_account(app):
     """The assistant can only answer "checking only" if the snapshot carries the
     account dimension over the full history — recent_transactions is too short."""

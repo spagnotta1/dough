@@ -42,7 +42,7 @@ from dough.services.networth import compute_net_worth, portfolio_snapshot
 from dough.services.recurring_service import detect_recurring_full
 
 import dashboard_intel
-from models import AppUser, Budget, Transaction, db
+from models import AppUser, Budget, InstitutionConnection, Transaction, db
 
 bp = Blueprint('core', __name__)
 
@@ -395,11 +395,33 @@ def dashboard():
     ).filter(Transaction.category.isnot(None))
      .group_by(Transaction.category).order_by(func.sum(func.abs(Transaction.amount)).desc()).all()]
 
+    # A dashboard with nothing on it has two different causes, and they want
+    # opposite advice. An empty *window* is a filter question — widen the dates.
+    # An empty *ledger* is a first run, and the answer there is to link an
+    # institution: a connection backfills history and then keeps refilling it
+    # every 12 hours, where a statement upload is one snapshot the person has
+    # to remember to repeat. Telling a brand-new account to go find a CSV was
+    # pointing the one moment they are most willing to set this up at the
+    # slower of the two paths.
+    #
+    # `.first()`, not `.count()`: the question is existence. It only runs when
+    # the selected window came back empty, so a dashboard with data pays
+    # nothing for it.
+    ledger_empty = not transactions and Transaction.query.first() is None
+    # A linked institution whose first sync has not landed yet is still an
+    # empty ledger, but it must not be asked to connect again — that reads as
+    # the connection having failed.
+    awaiting_first_sync = bool(ledger_empty and InstitutionConnection.query
+                               .filter(InstitutionConnection.status != 'disconnected')
+                               .first())
+
     return render_template('dashboard.html',
                            all_categories=all_categories,
                            period_label=period_label,
                            compare_label=compare_label,
                            has_data=bool(transactions),
+                           ledger_empty=ledger_empty,
+                           awaiting_first_sync=awaiting_first_sync,
                            health=health,
                            attention=attention,
                            forecast=forecast,
