@@ -145,8 +145,9 @@ if (Test-Path $envPath) {
     $wanted = @('ANTHROPIC_API_KEY', 'PLAID_CLIENT_ID', 'PLAID_ENV',
                 'PLAID_SECRET_SANDBOX', 'PLAID_SECRET_PRODUCTION',
                 'PLAID_REDIRECT_URI_SANDBOX', 'PLAID_REDIRECT_URI_PRODUCTION',
-                'MAIL_BACKEND', 'MAIL_FROM', 'MAIL_SERVER', 'MAIL_PORT',
-                'MAIL_USERNAME', 'MAIL_PASSWORD', 'MAIL_USE_TLS')
+                'MAIL_BACKEND', 'MAIL_FROM', 'MAIL_DEFAULT_SENDER',
+                'MAIL_SERVER', 'MAIL_PORT', 'MAIL_USERNAME', 'MAIL_PASSWORD',
+                'MAIL_USE_TLS')
     foreach ($line in Get-Content $envPath) {
         if ($line -match '^\s*([A-Z_][A-Z0-9_]*)\s*=\s*(.*)$') {
             $k = $Matches[1]; $v = $Matches[2].Trim().Trim('"').Trim("'")
@@ -259,6 +260,16 @@ if ($mailBackend -eq 'smtp') {
         Write-Host 'WARNING: MAIL_BACKEND=smtp was pushed but MAIL_SERVER was not found in .env.'
         Write-Host 'The application refuses to build that backend, so no mail will be sent and'
         Write-Host 'every send will report a delivery failure. Add MAIL_SERVER and re-run.'
+    } elseif (-not ($fromEnv.ContainsKey('MAIL_FROM') -or $fromEnv.ContainsKey('MAIL_DEFAULT_SENDER'))) {
+        # Worth its own branch rather than folding into the MAIL_SERVER warning,
+        # because this one still boots, still connects, and still authenticates.
+        # config.py falls back to dough@localhost, which a hosted relay refuses
+        # per message -- so the symptom is every send failing at the last step
+        # with the transport apparently working perfectly.
+        Write-Host 'WARNING: MAIL_BACKEND=smtp was pushed but no MAIL_FROM was found in .env.'
+        Write-Host 'The From address falls back to dough@localhost, which a hosted provider'
+        Write-Host 'rejects for every message because it is not a verified sender. Set MAIL_FROM'
+        Write-Host 'to an address confirmed with your provider and re-run.'
     } else {
         Write-Host ("Mail goes out over SMTP via {0}. Confirm it by changing your address on" -f $fromEnv['MAIL_SERVER'])
         Write-Host '/settings and checking the new inbox for the confirmation link.'

@@ -330,7 +330,17 @@ class BaseConfig:
     # console prints verification and reset links to the terminal, which is the
     # right default for a self-hosted instance with no mail server.  [Phase 6]
     MAIL_BACKEND = os.environ.get('MAIL_BACKEND', 'console')
-    MAIL_FROM = os.environ.get('MAIL_FROM', 'dough@localhost')
+    # MAIL_DEFAULT_SENDER is accepted as a second name for MAIL_FROM because it
+    # is the name `flask_mail` uses, and therefore the name every provider's
+    # setup page prints -- Postmark's included. This application is not built on
+    # `flask_mail`, so an operator following those instructions sets a variable
+    # nothing reads, and the failure is not "no From address": it is the default
+    # `dough@localhost`, which a hosted provider rejects for every message
+    # because it is not a verified sender. One accepted alias is cheaper than
+    # that diagnosis. MAIL_FROM wins if somehow both are set.
+    MAIL_FROM = (os.environ.get('MAIL_FROM')
+                 or os.environ.get('MAIL_DEFAULT_SENDER')
+                 or 'dough@localhost')
     MAIL_SERVER = os.environ.get('MAIL_SERVER', '')
     MAIL_PORT = _int('MAIL_PORT', 587)
     MAIL_USERNAME = os.environ.get('MAIL_USERNAME', '')

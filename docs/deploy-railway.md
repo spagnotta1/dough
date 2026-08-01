@@ -120,10 +120,10 @@ line you typed, not the arguments the script builds for its children.
 | `TRUSTED_PROXIES` | `1` | Railway terminates TLS at one proxy. At `0`, `dough/auth.py` ignores `X-Forwarded-For`, so every client looks like the proxy — one shared login-throttle bucket, and audit rows recording the proxy as the actor. |
 | `PUBLIC_BASE_URL` | your URL | Otherwise outbound mail links are built from the client-controlled `Host` header. |
 
-`ANTHROPIC_API_KEY` and the `PLAID_*` values are forwarded from your local
-`.env` if present. Absent ones are skipped rather than set empty, because
-`config.py` treats unset as "that feature is off" and empty the same way, with
-more noise.
+`ANTHROPIC_API_KEY`, the `PLAID_*` values and the `MAIL_*` values are forwarded
+from your local `.env` if present. Absent ones are skipped rather than set
+empty, because `config.py` treats unset as "that feature is off" and empty the
+same way, with more noise.
 
 `ALLOW_REGISTRATION` is never forwarded from `.env` — it is set explicitly by
 the script, to `0` unless you pass `-AllowRegistration`. Explicitly either way,
@@ -274,26 +274,60 @@ What opening it does and does not expose:
 
 `REQUIRE_EMAIL_VERIFICATION` is still off, so an unverified address does not
 block sign-in. Turning it on with `MAIL_BACKEND=console` would lock out every
-new registrant — the two settings have to move together.
+new registrant — the two settings have to move together. Mail now goes out over
+Postmark (below), so that switch is finally *safe* to flip; it is still a
+separate decision, and worth making only after you have watched real
+verification mail arrive.
+
+## Mail goes out through Postmark
+
+```
+MAIL_BACKEND=smtp
+MAIL_SERVER=smtp.postmarkapp.com
+MAIL_PORT=587
+MAIL_USE_TLS=1
+MAIL_USERNAME=<Postmark server API token>
+MAIL_PASSWORD=<the same token>
+MAIL_FROM=no-reply@dough-financial.com
+```
+
+`MAIL_USERNAME` and `MAIL_PASSWORD` holding the same value is not a mistake in
+whoever's notes you copied. Postmark's SMTP endpoint authenticates with the
+Server API token in both fields, which means that single token is the entire
+credential — it belongs in `.env` and in Railway and nowhere else.
+
+`MAIL_FROM` has to be a Sender Signature confirmed in the Postmark dashboard,
+or an address on a domain verified there. Postmark refuses any other `From`
+**per message**, so a wrong value here is a send-time failure and not a startup
+one: the service boots clean, connects, authenticates, and then rejects every
+message. `MAIL_DEFAULT_SENDER` is read as a second name for it, because that is
+the name `flask_mail` uses and therefore the one Postmark's own setup page
+prints — this application does not use `flask_mail`, and an operator following
+those instructions would otherwise set a variable nothing reads and fall back to
+`dough@localhost`, which is exactly the address Postmark refuses.
+
+Until Phase 10.5 `tools/set_railway_env.ps1` carried no `MAIL_*` variable at
+all, so a service configured before that ran on `console` no matter what `.env`
+said. Check with `railway variable list` rather than assuming.
+
+The confirmation is `/settings`: change your address and the link arrives in the
+new inbox. Nothing else in the application reports the difference, because
+sending to `console` *succeeds* — which is why this was invisible for so long.
+
+To watch it from the outside:
+
+```bash
+railway logs | grep "dough.email"
+```
+
+A successful send logs `Sent verify_email mail to <address> via smtp`. A failure
+logs `Verification mail could not be sent` from `dough/blueprints/auth.py`. The
+link itself appears in neither — it is a bearer credential and is deliberately
+kept out of the log stream, so a log that looks uninformative is the intended
+result rather than a gap.
 
 ## Known gaps
 
-- **Mail is `console` unless you configure it, and registration is open.**
-  Verification and password-reset links print to the deploy logs instead of
-  being sent. That was cosmetic while you were the only account. It is not now:
-  a registrant who forgets their password has no route back in, and you cannot
-  give them one without reading it out of the logs.
-
-  Put `MAIL_BACKEND=smtp` in `.env` along with `MAIL_SERVER`, `MAIL_USERNAME`,
-  `MAIL_PASSWORD` and `MAIL_FROM`, then re-run `tools/set_railway_env.ps1`,
-  which pushes all six. Until Phase 10.5 that script carried no `MAIL_*`
-  variable at all, so a service configured before this change is on `console`
-  no matter what `.env` says — check with `railway variable list` rather than
-  assuming.
-
-  The confirmation that it worked is `/settings`: change your address and the
-  link arrives in the new inbox. Nothing else in the application reports the
-  difference, because sending to `console` *succeeds*.
 - **Back up the volume.** Nothing here replicates `checkbook.db`.
   `tools/backup_db.py` exists; run it on a schedule and pull the output off with
   `railway volume files --volume dough-volume download`.

@@ -227,6 +227,61 @@ def test_sqlite_gets_no_connection_pool_options():
     assert TestingConfig.SQLALCHEMY_ENGINE_OPTIONS == {}
 
 
+# --- The sender address -----------------------------------------------------
+
+def _mail_from(monkeypatch, **environ):
+    """Read MAIL_FROM as the class body computes it.
+
+    `config.from_object` copies class attributes, so these are evaluated once at
+    import and `monkeypatch.setenv` alone would assert nothing. Same reload
+    dance as the APP_DEBUG test below.
+    """
+    import importlib
+
+    for name in ('MAIL_FROM', 'MAIL_DEFAULT_SENDER'):
+        monkeypatch.delenv(name, raising=False)
+    for name, value in environ.items():
+        monkeypatch.setenv(name, value)
+    try:
+        return importlib.reload(config_module).BaseConfig.MAIL_FROM
+    finally:
+        importlib.reload(config_module)
+
+
+def test_the_sender_address_comes_from_MAIL_FROM(monkeypatch):
+    assert _mail_from(monkeypatch,
+                      MAIL_FROM='no-reply@dough.example') == 'no-reply@dough.example'
+
+
+def test_MAIL_DEFAULT_SENDER_is_accepted_as_the_same_thing(monkeypatch):
+    """The name `flask_mail` uses, and so the name every provider's setup page
+    prints — Postmark's included.
+
+    This application is not built on `flask_mail`, so without the alias an
+    operator who follows those instructions sets a variable nothing reads. The
+    failure is not a missing From header, which would be obvious: it is the
+    `dough@localhost` default, which a hosted relay rejects per message for not
+    being a verified sender. Every send fails at the last step with the
+    transport working perfectly, which is an expensive thing to diagnose.
+    """
+    assert _mail_from(monkeypatch,
+                      MAIL_DEFAULT_SENDER='no-reply@dough.example') == 'no-reply@dough.example'
+
+
+def test_MAIL_FROM_wins_when_both_are_set(monkeypatch):
+    """Two names for one setting need a stated winner, or the answer is
+    whichever line `os.environ` happened to be asked for first."""
+    assert _mail_from(monkeypatch, MAIL_FROM='wins@dough.example',
+                      MAIL_DEFAULT_SENDER='loses@dough.example') == 'wins@dough.example'
+
+
+def test_an_empty_MAIL_FROM_falls_through_to_the_alias(monkeypatch):
+    """`.env.example` ships both names with one of them blank, and a blank
+    From address is not a choice anybody made."""
+    assert _mail_from(monkeypatch, MAIL_FROM='',
+                      MAIL_DEFAULT_SENDER='alias@dough.example') == 'alias@dough.example'
+
+
 # --- Cookie hardening (see docs/security.md SEC-0001) -----------------------
 
 def test_session_cookie_defaults_are_explicit():
