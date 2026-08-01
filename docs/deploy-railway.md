@@ -284,12 +284,68 @@ verification mail arrive.
 ```
 MAIL_BACKEND=smtp
 MAIL_SERVER=smtp.postmarkapp.com
-MAIL_PORT=587
+MAIL_PORT=2525
 MAIL_USE_TLS=1
 MAIL_USERNAME=<Postmark server API token>
 MAIL_PASSWORD=<the same token>
 MAIL_FROM=no-reply@dough-financial.com
 ```
+
+### Port 2525, not 587
+
+Postmark listens on 25, 587 and 2525, and every setup guide prints 587. On
+Railway that address times out: outbound SMTP on the conventional ports is
+blocked, as it is on most hosts that would otherwise be a convenient spam
+relay. 2525 is the conventional escape hatch and carries the same STARTTLS
+session.
+
+The symptom is worth writing down because it names itself badly. `/settings`
+reports "the confirmation email could not be sent", the log says `Verification
+mail could not be sent`, and both are true and unhelpful — they describe every
+mail failure there is. The line that identifies *this* one is the request
+duration:
+
+```
+[WARN] Verification mail could not be sent  endpoint="settings.change_email"
+[INFO] request  duration_ms=30134.7  path="/settings/email"  status=302
+```
+
+Thirty seconds, repeatable to within a tenth. `SmtpBackend` uses a 10-second
+socket timeout, `smtp.postmarkapp.com` resolves to three addresses, and
+`socket.create_connection` spends the timeout on each in turn: 3 × 10s. A mail
+server that *rejects* a message answers in well under a second, so a round
+multiple of ten seconds means the connection never opened at all.
+
+The other half of the confirmation is on Postmark's side. A refused message
+appears in the server's Activity as a bounce; a blocked connection leaves no
+record anywhere, because nothing arrived. Checking that distinguishes "Postmark
+said no" from "we never reached Postmark" without touching the deployment:
+
+```bash
+curl -s -H "X-Postmark-Server-Token: $TOKEN" \
+     https://api.postmarkapp.com/deliverystats
+```
+
+### A pending account can only mail its own domain
+
+Postmark approves new accounts by hand. Until yours is approved every recipient
+must share the `From` domain, and anything else is refused per message:
+
+```
+ErrorCode: '412' — While your account is pending approval, all recipient
+addresses must share the same domain as the 'From' address.
+```
+
+This is invisible from the SMTP side. Postmark accepts the session, returns
+success, and turns the message into a bounce of type `SMTPApiError` afterwards
+— so code that checks only whether `smtplib` raised will report a successful
+send that never happened. That is a genuine limit of the SMTP path rather than
+a bug here: the outcome is not known when the connection closes. The Activity
+list and `/deliverystats` are the ground truth.
+
+Which means testing mail delivery to an outside address (a Gmail account, say)
+proves nothing until the account is approved. Send to an address on
+`dough-financial.com` first.
 
 `MAIL_USERNAME` and `MAIL_PASSWORD` holding the same value is not a mistake in
 whoever's notes you copied. Postmark's SMTP endpoint authenticates with the
