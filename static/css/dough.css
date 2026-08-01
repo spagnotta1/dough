@@ -1,9 +1,9 @@
 /* ══════════════════════════════════════════════════════════════════════════
    Dough — presentation layer for the mascot and the surfaces he speaks from.
    ──────────────────────────────────────────────────────────────────────────
-   Two halves:
+   Two parts:
 
-     1. Motion. Every animation here is idle-loop scale — a few pixels, a few
+     1. Motion. Every animation is idle-loop scale — a few pixels, a few
         degrees, several seconds long. Dough has to survive being on screen
         the entire time the user is reading a balance, and anything livelier
         than this becomes something you want to close. All of it is switched
@@ -11,157 +11,288 @@
 
      2. Components. The card / bubble / empty-state / avatar shells that carry
         Dough's voice. They derive from design-system.css tokens, so they
-        follow all 16 themes without a per-theme rule.
+        follow every theme without a per-theme rule.
+
+   There is deliberately no third part for *colour*. Dough's artwork is a
+   photograph of a finished brand asset (static/img/dough_V2.jpg) and nothing
+   here paints him. This file used to derive ~12 --dough-* colour tokens that
+   the vector redraw filled itself with, so that his fur tracked each theme's
+   accent. That layer went when the redraw did: you cannot re-tint a raster
+   without altering the artwork, and altering the artwork is the one thing
+   AGENTS.md forbids outright. Dough is the same golden puppy on all 16
+   themes, and the theme shows up in the disc, the bubble and the panel he
+   sits on — the chrome around him, never him.
+
+   The two structural pieces, because the selectors only make sense together:
+
+     [data-dough]   the slot. Owns the entrance and the hover, and draws the
+                    ground shadow.
+     .dough         the <img> dough.js puts inside it. Owns the idle motion.
+
+   They are separate because both animate `transform`, and one element cannot
+   run an entrance and an idle loop on the same property without the second
+   cancelling the first.
    ══════════════════════════════════════════════════════════════════════════ */
 
 :root {
-  /* Props (magnifier rim, sparkles, thought dots) follow the theme accent so
-     they read as part of the UI they annotate. The fur never does. */
-  --dough-accent: var(--red, #7c3aed);
+  /* Two easing curves do most of the work here:
+       --dough-ease    a soft symmetric curve for idle loops. Gentler in and
+                       out than ease-in-out, whose linear-feeling middle makes
+                       slow loops look mechanical.
+       --dough-spring  a mild overshoot for anything that lands. */
+  --dough-ease:   cubic-bezier(.45, .05, .35, .95);
+  --dough-spring: cubic-bezier(.34, 1.42, .64, 1);
 }
 
-.dough { display: block; overflow: visible; }
+:root,
+.dough-avatar,
+.dough-bubble,
+.dough-empty,
+.dough-working {
+  /* The accent the *chrome* wears — the avatar disc, the bubble fill and its
+     tail. Declared on the components rather than only on :root so a card or a
+     branded section that sets its own --red is followed, instead of every
+     placement freezing to whatever the accent was at the document root. */
+  --dough-accent: var(--red, #7c3aed);
+
+  /* The contact shadow under a full-body Dough, replacing the one that was
+     baked into the reference and removed with its background — a fixed grey
+     ellipse cannot follow a theme, and on the dark schemes it read as a smear
+     of lighter paint under his paws. */
+  --dough-ground: color-mix(in srgb, #000000 14%, transparent);
+
+  /* Confetti spot colours. Mixed toward the accent so a celebration reads as
+     this product celebrating rather than as generic party stock. */
+  --dough-confetti-b: color-mix(in oklch, #14b8a6, var(--dough-accent) 22%);
+  --dough-confetti-c: color-mix(in oklch, #f5b301, var(--dough-accent) 22%);
+}
+
+[data-scheme="dark"] {
+  --dough-ground: color-mix(in srgb, #000000 40%, transparent);
+}
+
+/* ── The slot ─────────────────────────────────────────────────────────────
+   inline-block so it can be transformed, line-height 0 so it does not carry
+   a text baseline's worth of dead space under the image. */
+[data-dough] {
+  display: inline-block;
+  position: relative;
+  line-height: 0;
+}
+
+.dough {
+  display: block;
+  /* A soft lift off the panel. Cheap: one drop-shadow on a composited layer,
+     and it replaces what the removed background shading was doing. */
+  filter: drop-shadow(0 2px 3px color-mix(in srgb, #000000 10%, transparent));
+}
+
+/* The ground shadow, on the slot's own ::before so it stays on the floor while
+   he bounces. A shadow that leaves the ground with the dog is what makes a
+   bounce read as "the whole picture moved" instead of "he jumped".
+
+   ::before rather than ::after: both are children of the slot, and ::before
+   paints beneath the <img> without needing a z-index that a stacking context
+   somewhere up the tree could break. Full-body only — an avatar disc is a
+   portrait and has no floor in it. */
+[data-dough]:not([data-dough-tight])::before {
+  content: '';
+  position: absolute;
+  left: 14%;
+  right: 14%;
+  bottom: 1%;
+  height: 5%;
+  border-radius: 50%;
+  background: var(--dough-ground);
+  filter: blur(4px);
+}
 
 /* ══════════════════════════════════════════════════════════════════════════
    Motion
+   ──────────────────────────────────────────────────────────────────────────
+   Everything animates transform or opacity only, so every loop stays on the
+   compositor. There are placements with a dozen Doughs on screen at once.
+
+   The artwork is one pose, so motion is now the whole of the difference
+   between one mood and another. It is also the *only* thing allowed to
+   differ: these move the image, they never modify it.
    ══════════════════════════════════════════════════════════════════════════ */
 
-/* Blink — the cheapest possible sign of life. The lids are faked by
-   squashing the eye group vertically for two frames; at 5.4s apart it reads
-   as a blink and never as a flicker. */
-@keyframes dough-blink {
-  0%, 92%, 100% { transform: scaleY(1); }
-  95%, 97%      { transform: scaleY(.08); }
-}
-.dough-anim-blink .dough-eyes {
-  transform-box: fill-box;
-  transform-origin: center;
-  animation: dough-blink 5.4s ease-in-out infinite;
-}
-
-/* Ear twitch — offset between the two ears so it never looks mechanical. */
-@keyframes dough-twitch-l {
-  0%, 88%, 100% { transform: rotate(0deg); }
-  91%           { transform: rotate(-5deg); }
-  94%           { transform: rotate(2deg); }
-}
-@keyframes dough-twitch-r {
-  0%, 60%, 100% { transform: rotate(0deg); }
-  64%           { transform: rotate(5deg); }
-  68%           { transform: rotate(-2deg); }
-}
-.dough .dough-ear { transform-box: fill-box; }
-.dough .dough-ear-l { transform-origin: 88% 12%; animation: dough-twitch-l 7.3s ease-in-out infinite; }
-.dough .dough-ear-r { transform-origin: 12% 12%; animation: dough-twitch-r 8.9s ease-in-out infinite; }
-
-/* Head tilt — the "I'm working on it" pose, for thinking and curious. */
-@keyframes dough-tilt {
-  0%, 100% { transform: rotate(-4.5deg); }
-  50%      { transform: rotate(2.5deg); }
-}
-.dough-anim-tilt .dough-head {
-  transform-box: fill-box;
-  transform-origin: 50% 95%;
-  animation: dough-tilt 3.4s ease-in-out infinite;
-}
-
-/* Breathe — near-invisible on purpose. Used where Dough is present but not
-   acting: sleeping, concerned, proud. */
+/* Breathe — near-invisible on purpose. Dough present but not acting:
+   sleeping, concerned, proud. */
 @keyframes dough-breathe {
   0%, 100% { transform: translateY(0) scale(1); }
   50%      { transform: translateY(-1.2%) scale(1.012); }
 }
-.dough-anim-breathe .dough-head {
-  transform-box: fill-box;
+.dough-anim-breathe {
   transform-origin: 50% 100%;
-  animation: dough-breathe 3.8s ease-in-out infinite;
+  animation: dough-breathe 3.8s var(--dough-ease) infinite;
+}
+
+/* Float — the resting idle, and what `blink` became. The old blink squashed
+   the eye group vertically, which needed an eye group to squash; a raster has
+   no parts. A slow vertical drift is the equivalent cheap sign of life. */
+@keyframes dough-float {
+  0%, 100% { transform: translateY(0); }
+  50%      { transform: translateY(-2.5%); }
+}
+.dough-anim-blink {
+  transform-origin: 50% 100%;
+  animation: dough-float 4.6s var(--dough-ease) infinite;
+}
+
+/* Head tilt — the "I'm working on it" pose, for thinking and curious. It
+   rotates the whole image now rather than the head on the neck, so the angle
+   is smaller: what reads as a cocked head at 4.5 degrees reads as a picture
+   hung crooked at the same angle applied to the body too. */
+@keyframes dough-tilt {
+  0%, 100% { transform: rotate(-2.2deg); }
+  50%      { transform: rotate(1.4deg); }
+}
+.dough-anim-tilt {
+  transform-origin: 50% 90%;
+  animation: dough-tilt 3.4s var(--dough-ease) infinite;
+}
+
+/* Sweep — Dough casting about while he digs through transactions. The
+   magnifier prop that used to do this was drawn artwork and went with the
+   redraw; the searching *motion* survives it. */
+@keyframes dough-sweep {
+  0%, 100% { transform: translateX(0) rotate(0deg); }
+  35%      { transform: translateX(-2.5%) rotate(-2deg); }
+  70%      { transform: translateX(2%) rotate(1.5deg); }
+}
+.dough-anim-sweep {
+  transform-origin: 50% 90%;
+  animation: dough-sweep 3.1s var(--dough-ease) infinite;
 }
 
 /* Bounce — reserved for genuine good news (goal met, streak held), never for
-   routine state changes, or the celebration stops meaning anything. */
+   routine state changes, or the celebration stops meaning anything. The
+   squash-and-stretch is asymmetric: he compresses on landing, not in the air. */
 @keyframes dough-bounce {
-  0%, 100%   { transform: translateY(0) scale(1, 1); }
-  30%        { transform: translateY(-5%) scale(.985, 1.02); }
-  55%        { transform: translateY(0) scale(1.02, .98); }
-  75%        { transform: translateY(-1.5%) scale(1, 1); }
+  0%, 100% { transform: translateY(0) scale(1, 1); }
+  28%      { transform: translateY(-5.5%) scale(.982, 1.024); }
+  55%      { transform: translateY(0) scale(1.028, .974); }
+  72%      { transform: translateY(-1.6%) scale(.995, 1.006); }
+  88%      { transform: translateY(0) scale(1.006, .994); }
 }
-.dough-anim-bounce .dough-head {
-  transform-box: fill-box;
+.dough-anim-bounce {
   transform-origin: 50% 100%;
-  animation: dough-bounce 1.9s cubic-bezier(.34, 1.42, .64, 1) infinite;
+  animation: dough-bounce 1.9s var(--dough-spring) infinite;
 }
 
-/* Sweep — the magnifier hunting across the frame while Dough digs through
-   transactions. */
-@keyframes dough-sweep {
-  0%, 100% { transform: translate(0, 0) rotate(0deg); }
-  35%      { transform: translate(-7%, 3%) rotate(-9deg); }
-  70%      { transform: translate(2%, -2%) rotate(5deg); }
+/* The ground shadow answers the bounce — it tightens and fades as he lifts. */
+@keyframes dough-ground-bounce {
+  0%, 100% { transform: scaleX(1);    opacity: 1; }
+  28%      { transform: scaleX(.86);  opacity: .62; }
+  55%      { transform: scaleX(1.04); opacity: 1; }
+  72%      { transform: scaleX(.95);  opacity: .85; }
 }
-.dough-anim-sweep .dough-prop-search {
-  transform-box: fill-box;
-  transform-origin: 30% 30%;
-  animation: dough-sweep 3.1s ease-in-out infinite;
+[data-dough]:has(.dough-anim-bounce)::before {
+  animation: dough-ground-bounce 1.9s var(--dough-spring) infinite;
 }
 
-/* Thought dots — the loading indicator for anything Dough is generating.
-   Staggered so the eye reads a direction, the way typing dots do. */
+/* There is no wag. It was a rotation of the tail path, and a raster has no
+   parts to rotate — the tail cannot move without the dog moving with it.
+   Rather than keep a `.dough-wag` class that composes a second animation onto
+   the mood's own (which needs one cascade rule per mood, and had `wag-fast`
+   silently losing to `wag + bounce` on the only two moods that used it), the
+   wag is simply gone. The moods it marked already run the liveliest idles. */
+
+/* ══════════════════════════════════════════════════════════════════════════
+   State effects — the props, as UI
+   ──────────────────────────────────────────────────────────────────────────
+   The magnifier, the thought dots, the sleep z's and the confetti used to be
+   SVG drawn into the mascot. They went with the redraw, and putting them back
+   as artwork would be drawing on Dough again.
+
+   They are better here anyway. These sit *beside* him in the page, follow the
+   theme accent (they annotate the UI, so they should look like the UI), and
+   the thing they used to communicate — "something is generating" — is now
+   carried by a real text label that a screen reader can read and a translator
+   can translate.
+   ══════════════════════════════════════════════════════════════════════════ */
+
+/* Thinking dots. Staggered so the eye reads a direction, the way typing
+   indicators do. */
 @keyframes dough-dot {
-  0%, 100% { opacity: .25; transform: translateY(6%); }
-  50%      { opacity: 1;   transform: translateY(-6%); }
+  0%, 100% { opacity: .25; transform: translateY(2px); }
+  50%      { opacity: 1;   transform: translateY(-2px); }
 }
-.dough-prop-dots circle { transform-box: fill-box; transform-origin: center; }
-.dough-anim-tilt .dough-d1 { animation: dough-dot 1.4s ease-in-out infinite; }
-.dough-anim-tilt .dough-d2 { animation: dough-dot 1.4s ease-in-out .16s infinite; }
-.dough-anim-tilt .dough-d3 { animation: dough-dot 1.4s ease-in-out .32s infinite; }
-
-/* Sleep z's — drift up and fade, one after another. */
-@keyframes dough-zfloat {
-  0%   { opacity: 0; transform: translate(0, 14%) scale(.8); }
-  30%  { opacity: 1; }
-  100% { opacity: 0; transform: translate(6%, -30%) scale(1.1); }
+.dough-dots {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  vertical-align: middle;
 }
-.dough-prop-zzz text { transform-box: fill-box; transform-origin: center; }
-.dough-z1 { animation: dough-zfloat 3.6s ease-out infinite; }
-.dough-z2 { animation: dough-zfloat 3.6s ease-out 1.2s infinite; }
-.dough-z3 { animation: dough-zfloat 3.6s ease-out 2.4s infinite; }
-
-/* Sparkles / confetti — a short twinkle rather than a loop of motion. */
-@keyframes dough-twinkle {
-  0%, 100% { opacity: .35; transform: scale(.75) rotate(0deg); }
-  50%      { opacity: 1;   transform: scale(1.1) rotate(25deg); }
+.dough-dots i {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--dough-accent);
+  animation: dough-dot 1.4s var(--dough-ease) infinite;
 }
-.dough-prop-spark path,
-.dough-prop-confetti > * { transform-box: fill-box; transform-origin: center; }
-.dough-s1 { animation: dough-twinkle 2.2s ease-in-out infinite; }
-.dough-s2 { animation: dough-twinkle 2.2s ease-in-out .5s infinite; }
-.dough-s3 { animation: dough-twinkle 2.2s ease-in-out 1s infinite; }
+.dough-dots i:nth-child(2) { animation-delay: .16s; }
+.dough-dots i:nth-child(3) { animation-delay: .32s; }
 
+/* Confetti. Positioned against the slot rather than the dog, and pointer-events
+   none so a celebration never eats a click on whatever is underneath. */
 @keyframes dough-fall {
-  0%   { opacity: 0; transform: translateY(-70%) rotate(0deg); }
-  20%  { opacity: 1; }
-  100% { opacity: 0; transform: translateY(120%) rotate(220deg); }
+  0%   { opacity: 0; transform: translateY(-40%) rotate(0deg); }
+  15%  { opacity: 1; }
+  100% { opacity: 0; transform: translateY(220%) rotate(320deg); }
 }
-.dough-c1 { animation: dough-fall 2.6s linear infinite; }
-.dough-c2 { animation: dough-fall 2.6s linear .4s infinite; }
-.dough-c3 { animation: dough-fall 2.6s linear .9s infinite; }
-.dough-c4 { animation: dough-fall 2.6s linear 1.3s infinite; }
-.dough-c5 { animation: dough-fall 2.6s linear 1.8s infinite; }
+.dough-confetti {
+  position: absolute;
+  inset: -10% -20% 0;
+  pointer-events: none;
+  overflow: hidden;
+}
+.dough-confetti i {
+  position: absolute;
+  top: 0;
+  /* Spread across the width, and give each piece its own timing from --i so
+     twelve elements need one rule rather than twelve. */
+  left: calc(var(--i) * 8.3%);
+  width: 6px;
+  height: 9px;
+  border-radius: 2px;
+  background: var(--dough-accent);
+  animation: dough-fall 2.6s linear infinite;
+  animation-delay: calc(var(--i) * .17s);
+}
+.dough-confetti i:nth-child(3n)   { background: var(--dough-confetti-b); border-radius: 50%; }
+.dough-confetti i:nth-child(3n+1) { background: var(--dough-confetti-c); }
 
-/* Greeting wave — the one animation that plays a fixed number of times.
-   A perpetually waving dog is a distraction; three waves is a hello. */
-@keyframes dough-wave {
-  0%, 100% { transform: rotate(0deg); }
-  20%      { transform: rotate(-22deg); }
-  40%      { transform: rotate(6deg); }
-  60%      { transform: rotate(-16deg); }
-  80%      { transform: rotate(3deg); }
+/* ── Entrance ────────────────────────────────────────────────────────────
+   Dough settles in rather than appearing. One pass, 420ms, a little
+   overshoot — long enough to be felt on a hero, short enough that a chat
+   byline arriving mid-conversation does not draw the eye from the text that
+   arrived with it. `backwards` holds the first frame during any delay so he
+   never flashes at full size first.
+
+   On the slot, not the image: the image is running an infinite idle on the
+   same property, and the last animation declared would win outright. */
+@keyframes dough-enter {
+  from { opacity: 0; transform: scale(.86) translateY(6%); }
+  to   { opacity: 1; transform: none; }
 }
-.dough-wave {
-  transform-box: fill-box;
-  transform-origin: 80% 90%;
-  animation: dough-wave 1.5s ease-in-out 3;
+[data-dough] {
+  transform-origin: 50% 100%;
+  animation: dough-enter .42s var(--dough-spring) backwards;
 }
+
+/* ── Hover ───────────────────────────────────────────────────────────────
+   Only where Dough is inside something the user can actually click, so a
+   decorative mascot in an empty state does not react to a passing cursor. */
+.dough-avatar [data-dough],
+a [data-dough],
+button [data-dough] { transition: transform .18s var(--dough-spring); }
+
+a:hover [data-dough],
+button:hover [data-dough],
+.dough-avatar:hover [data-dough] { transform: scale(1.06); }
 
 /* ══════════════════════════════════════════════════════════════════════════
    Components — the surfaces Dough talks from
@@ -189,14 +320,18 @@
 }
 /* Exactly 100%, never more. The disc is a hard clip, so any overscale here
    comes straight off Dough's ears — an earlier 112% did that at every size.
-   The tight viewBox is already sized to the disc (see TIGHT in dough.js): it
-   is the circle around the whole mascot plus a little air, so at 100% he
-   lands centred, whole, and just short of the rim. */
-.dough-avatar .dough { width: 100%; height: 100%; }
+   The head crop is already sized to the disc (see head_box in
+   tools/build_dough_assets.py): it is the square around the portrait plus 6%
+   air, so at 100% he lands centred, whole, and just short of the rim. */
+.dough-avatar [data-dough] { width: 100%; height: 100%; }
+.dough-avatar .dough {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  filter: none;   /* the disc already casts the shadow */
+}
 
-/* The scale. Discs are a touch larger than the ones they replace because the
-   drawing inside is no longer cropped to the edges — same apparent Dough,
-   with his ears and paws attached. */
+/* The scale. */
 .dough-avatar-xs { --dough-size: 28px; }   /* chat bylines, dense rows */
 .dough-avatar-sm { --dough-size: 36px; }   /* nav brand, card headers */
 .dough-avatar-md { --dough-size: 48px; }
@@ -259,12 +394,9 @@
 .dough-working {
   display: flex;
   align-items: center;
-  gap: var(--sp-1, .25rem);
+  gap: var(--sp-2, .5rem);
   margin-bottom: var(--sp-3, .75rem);
 }
-/* Trim the transparent gutter the full viewBox leaves for props, so the label
-   sits a normal text gap from Dough rather than a wide one. */
-.dough-working .dough { margin: -8px 0 -8px -10px; }
 .dough-working__label {
   font-size: var(--f-sm, .8125rem);
   font-weight: var(--w-medium, 530);
@@ -277,16 +409,27 @@
    Dough is decorative by contract — nothing he does is the only carrier of
    any message — so the honest response to a reduced-motion preference is to
    stop moving entirely rather than to soften the timing. The mascot stays,
-   the animation does not.
+   the animation does not. That includes the entrance and the hover, which are
+   the two easiest to forget.
    ══════════════════════════════════════════════════════════════════════════ */
 @media (prefers-reduced-motion: reduce) {
+  [data-dough],
+  [data-dough]::before,
   .dough,
-  .dough * {
+  .dough-dots i {
     animation: none !important;
     transition: none !important;
   }
-  /* Props whose keyframes start at opacity 0 would otherwise vanish. */
-  .dough-prop-zzz text,
-  .dough-prop-confetti > *,
-  .dough-prop-spark path { opacity: 1 !important; transform: none !important; }
+
+  /* Confetti is motion and nothing else — a static pile of rectangles beside
+     the mascot communicates nothing, so it is removed rather than frozen. */
+  .dough-confetti { display: none !important; }
+
+  a:hover [data-dough],
+  button:hover [data-dough],
+  .dough-avatar:hover [data-dough] { transform: none !important; }
+
+  /* The entrance starts at opacity 0; without this he never appears. */
+  [data-dough],
+  .dough { opacity: 1 !important; transform: none !important; }
 }

@@ -1,0 +1,76 @@
+{# ══════════════════════════════════════════════════════════════════════════
+   The mascot component. One place that knows how Dough is placed.
+   ──────────────────────────────────────────────────────────────────────────
+   Every mascot placement goes through here rather than hand-writing a
+   <span data-dough>. That is what makes sizing, the accessible label, the
+   avatar disc and the animation opt-out single decisions instead of twenty
+   copies of a convention — the sizes drifted apart (22/23/24/30/56px) once
+   already, before there was a scale to opt into.
+
+       {% from '_dough.html' import dough, dough_avatar, dough_working %}
+
+       {{ dough('celebrate', size=240) }}
+       {{ dough_avatar('idle', 'sm') }}
+       {{ dough_working('Reading your transactions') }}
+
+   ── States, not poses ─────────────────────────────────────────────────────
+   The artwork is one image (brand/dough-master.jpg — see AGENTS.md), so a
+   state never changes what Dough looks like. It selects a *motion*, and for
+   some states a piece of UI that sits beside him:
+
+       idle       resting float                    the default
+       loading    head tilt + thinking dots        a request is in flight
+       thinking   head tilt + thinking dots        a model call is generating
+       searching  side-to-side + thinking dots     digging through data
+       celebrate  bounce + page confetti           genuine good news only
+       success    bounce                           a thing worked
+       sleep      slow breathe                     empty, idle, or nothing due
+       wave       bounce                           hello
+
+   The older names (happy, greeting, curious, watching, reviewing, excited,
+   proud, celebrating, concerned, sleeping) still work — dough.js maps them —
+   so existing pages did not need rewriting.
+   ══════════════════════════════════════════════════════════════════════════ #}
+
+{#- The mascot. `alt` makes him meaningful to a screen reader; leave it unset
+    for the usual decorative case, where the copy beside him already says it. -#}
+{% macro dough(state='idle', size=64, alt='', animate=true, class='') -%}
+  <span class="dough-slot {{ class }}"
+        data-dough="{{ state }}"
+        data-dough-size="{{ size }}"
+        {%- if alt %} data-dough-label="{{ alt }}"{% endif %}
+        {%- if not animate %} data-dough-anim="off"{% endif %}></span>
+{%- endmacro %}
+
+{#- Dough's face in a themed disc. `scale` is one of xs / sm / md / lg; never
+    pass an inline width or height, or this placement silently opts out of the
+    shared scale (tests/test_dough_mascot.py fails it). -#}
+{% macro dough_avatar(state='idle', scale='md', alt='', class='') -%}
+  <span class="dough-avatar dough-avatar-{{ scale }} {{ class }}"
+        {%- if not alt %} aria-hidden="true"{% endif %}>
+    <span data-dough="{{ state }}" data-dough-tight
+          {%- if alt %} data-dough-label="{{ alt }}"{% endif %}></span>
+  </span>
+{%- endmacro %}
+
+{#- Dough visibly doing the job while a model call is in flight — the wait is
+    where a companion earns its keep. The label is required, not optional: it
+    is what carries the state to a screen reader and to anyone who has turned
+    motion off, and it is the reason the thinking dots can be decorative. -#}
+{% macro dough_working(label, state='thinking', size=44) -%}
+  <div class="dough-working" role="status">
+    {{ dough(state, size=size) }}
+    <span class="dough-working__label">{{ label }}…</span>
+  </div>
+{%- endmacro %}
+
+{#- The "nothing here yet" panel every empty screen shares, so Dough greets the
+    user the same way instead of each page inventing a placeholder. -#}
+{% macro dough_empty(title, body='', state='sleep', size=120) -%}
+  <div class="dough-empty">
+    {{ dough(state, size=size) }}
+    <p class="dough-empty-title">{{ title }}</p>
+    {%- if body %}<p class="dough-empty-body">{{ body }}</p>{% endif %}
+    {{ caller() if caller is defined else '' }}
+  </div>
+{%- endmacro %}

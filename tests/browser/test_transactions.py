@@ -14,7 +14,7 @@ on the page produces those query strings, which is a property of the markup and
 the browser's form serialisation rather than of the view.
 """
 
-from .conftest import TRANSACTION_COUNT, visit
+from .conftest import TRANSACTION_COUNT, ledger
 
 ROWS = 'table tbody tr'
 
@@ -25,7 +25,7 @@ def _descriptions(page):
 
 
 def test_the_ledger_lists_the_seeded_transactions(signed_in):
-    visit(signed_in, '/transactions')
+    ledger(signed_in)
     assert signed_in.locator(ROWS).count() == TRANSACTION_COUNT, \
         'the seeded ledger did not render'
     assert any('Netflix' in d for d in _descriptions(signed_in))
@@ -33,7 +33,7 @@ def test_the_ledger_lists_the_seeded_transactions(signed_in):
 
 def test_filtering_by_account_narrows_the_ledger(signed_in):
     page = signed_in
-    visit(page, '/transactions')
+    ledger(page)
     before = page.locator(ROWS).count()
 
     page.select_option('#account', 'Visa')
@@ -50,7 +50,7 @@ def test_filtering_by_account_narrows_the_ledger(signed_in):
 
 def test_searching_matches_on_the_description(signed_in):
     page = signed_in
-    visit(page, '/transactions')
+    ledger(page)
 
     page.fill('#search', 'Netflix')
     page.click('#txnFilterForm button[type="submit"]')
@@ -63,7 +63,7 @@ def test_searching_matches_on_the_description(signed_in):
 
 def test_clearing_the_filters_restores_the_whole_ledger(signed_in):
     page = signed_in
-    visit(page, '/transactions')
+    ledger(page)
 
     page.select_option('#account', 'Visa')
     page.click('#txnFilterForm button[type="submit"]')
@@ -94,7 +94,7 @@ def test_the_edit_dialog_opens_as_a_real_modal(signed_in):
     screenshot.
     """
     page = signed_in
-    visit(page, '/transactions')
+    ledger(page)
     dialog = _open_first_edit(page)
 
     assert dialog.evaluate('d => d.matches(":modal")'), \
@@ -107,7 +107,7 @@ def test_the_edit_dialog_opens_as_a_real_modal(signed_in):
 
 def test_the_edit_dialog_is_populated_from_the_row_it_was_opened_from(signed_in):
     page = signed_in
-    visit(page, '/transactions')
+    ledger(page)
 
     first_description = _descriptions(page)[0]
     _open_first_edit(page)
@@ -119,7 +119,7 @@ def test_the_edit_dialog_is_populated_from_the_row_it_was_opened_from(signed_in)
 
 def test_escape_closes_the_edit_dialog(signed_in):
     page = signed_in
-    visit(page, '/transactions')
+    ledger(page)
     dialog = _open_first_edit(page)
 
     page.keyboard.press('Escape')
@@ -129,7 +129,7 @@ def test_escape_closes_the_edit_dialog(signed_in):
 
 def test_cancel_closes_the_edit_dialog_without_saving(signed_in):
     page = signed_in
-    visit(page, '/transactions')
+    ledger(page)
 
     before = _descriptions(page)[0]
     dialog = _open_first_edit(page)
@@ -149,7 +149,7 @@ def test_saving_an_edit_updates_the_row_in_place(signed_in):
     that the row the answer is written back into is the right one.
     """
     page = signed_in
-    visit(page, '/transactions')
+    ledger(page)
 
     dialog = _open_first_edit(page)
     page.fill('#edit_description', 'Renamed by a browser test')

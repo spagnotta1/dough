@@ -1,17 +1,27 @@
 {# ── App icon + manifest, shared by every page that has its own <head>.
-     Source of truth is static/img/app-icon.svg; the raster sizes are
-     regenerated with `python tools/build_icons.py`. The SVG offered to
-     browsers is the simplified mark, since tabs render it at 16px.
+     Source of truth is the mascot artwork, brand/dough-master.jpg; the raster
+     sizes are regenerated with `python tools/build_dough_assets.py` followed
+     by `python tools/build_icons.py`.
+
+     The tab sizes (16/32/48 and the .ico) carry Dough's *mark* — his eyes and
+     nose — not the whole dog, which is a brown smudge at 16px. The mark is a
+     crop of the same artwork, and it is frozen: see mark_box() in
+     tools/build_dough_assets.py.
+
+     There is no SVG favicon. There used to be — a hand-authored vector
+     redraw of the mascot — and it was a different dog. A photograph cannot
+     be offered as image/svg+xml, and the PNG sizes below cover every browser
+     that mattered to it.
 
      ?v= is a cache buster. Browsers cache favicons far more aggressively
      than ordinary static files — often past a hard reload — so without a
      changing URL a redesigned icon can sit unseen in a pinned tab for
      weeks. Bump this whenever the artwork changes. ── #}
-{% set icon_v = '2' %}
+{% set icon_v = '4' %}
 <link rel="icon" href="{{ url_for('static', filename='img/favicon.ico') }}?v={{ icon_v }}" sizes="32x32">
 <link rel="icon" type="image/png" sizes="16x16" href="{{ url_for('static', filename='img/favicon-16.png') }}?v={{ icon_v }}">
 <link rel="icon" type="image/png" sizes="32x32" href="{{ url_for('static', filename='img/favicon-32.png') }}?v={{ icon_v }}">
-<link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='img/app-icon-mark.svg') }}?v={{ icon_v }}">
+<link rel="icon" type="image/png" sizes="48x48" href="{{ url_for('static', filename='img/favicon-48.png') }}?v={{ icon_v }}">
 <link rel="apple-touch-icon" sizes="180x180" href="{{ url_for('static', filename='img/apple-touch-icon.png') }}?v={{ icon_v }}">
 <link rel="manifest" href="{{ url_for('static', filename='manifest.webmanifest') }}?v={{ icon_v }}">
 <meta name="theme-color" content="#7c3aed">

@@ -12,9 +12,10 @@ Dough is not decoration bolted onto an AI page. He is the product's
 personality, and he is deliberately consistent everywhere:
 
 - **One character, one voice.** Every generated word in the app comes from the
-  shared `DOUGH_PERSONA` prompt in `app.py`. Chat, the dashboard insight, the
-  portfolio review and the one-line briefing all open with it, so they read as
-  the same companion rather than four assistants with similar prompts.
+  shared `DOUGH_PERSONA` prompt in `dough/ai/persona.py`. Chat, the dashboard
+  insight, the portfolio review and the one-line briefing all open with it, so
+  they read as the same companion rather than four assistants with similar
+  prompts.
 - **Warm, never cute.** Dough encourages, never shames, and never uses fear.
   Going over budget is a fact to work with, not a failing. He is also barred
   from dog puns, emoji and filler openers — in a financial product the
@@ -23,12 +24,30 @@ personality, and he is deliberately consistent everywhere:
   `Ask Dough` (the chat), `Dough's Insight` (dashboard), `Dough's Portfolio
   Review` (investments), his Budget Coach line, every empty state, and the
   waiting state of every model call.
-- **The artwork is code.** `static/js/dough.js` composes him from one set of
-  vector parts with twelve expressions (happy, thinking, searching,
-  celebrating, concerned, sleeping…), sharing geometry path-for-path with
-  `static/img/app-icon.svg`, so the icon and the character are provably the
-  same dog. `static/css/dough.css` holds his micro-animations and the card,
-  bubble, avatar and empty-state components he speaks from.
+- **The artwork is one file.** `brand/dough-master.jpg` is Dough — a finished
+  brand asset, and the only one. It is archival: it sits outside `static/`, is
+  never served, and is read only when the assets are rebuilt. Everything the
+  app shows is a crop or a scale of it. `tools/build_dough_assets.py` lifts the
+  cream background off by flooding from the image border (a colour key would
+  punch holes in his eyes, whose whites are 25 levels from the background) and
+  emits a full body, a head-and-ears crop, and the mark — his eyes and nose —
+  which is what the 16/32/48px favicons carry, because no mascot illustration
+  survives 16×16. `tools/build_icons.py` composites those onto tiles.
+  `static/js/dough.js` only decides which crop a slot gets, and
+  `templates/_dough.html` is the macro every page places him through.
+
+  He was briefly a runtime SVG redraw "traced by measurement" from that
+  reference, and it shipped a recognisably different dog. A test now rejects
+  any `<path>` in `dough.js`, because "it matches the reference" is not
+  something anyone can check later.
+- **He does not follow the theme, and that is the point.** A photograph cannot
+  be re-tinted without altering the artwork, so Dough is the same golden puppy
+  on all 16 palettes and the theme lives in the disc, the bubble and the panel
+  behind him. That inverts a constraint rather than removing it: a fixed mascot
+  cannot be pushed away from a surface he clashes with, so
+  `tests/browser/test_dough_theming.py` samples his real rendered pixels in a
+  live engine and fails any theme where he stops separating from the panel —
+  and the fix is that theme's `--panel`, never the drawing.
 - **He is never the only signal.** Nothing important is carried by an
   expression alone — every mascot state has text beside it — and all of his
   motion is switched off under `prefers-reduced-motion`.
@@ -490,6 +509,10 @@ Nothing is ever deleted from it and there is no retention policy —
 - Tailwind CSS for styling
 - Chart.js for visualizations
 - Alpine.js for simple interactivity
+
+`AGENTS.md` at the repository root is the brief for coding agents — the mascot
+rules, the architecture rules and the tenancy constraint, each stated in the
+form the test that enforces it checks. Read it before changing code.
 
 ### Where code goes
 

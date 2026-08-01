@@ -29,7 +29,7 @@ what it mutates.
 
 import socket
 import threading
-from datetime import datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -67,21 +67,35 @@ PASSWORD = 'hunter2boat'
 #: The seeded ledger. Shared by every browser test, so tests read it and do not
 #: mutate it — anything that needs to change a row should create its own.
 #:
+#: Dates are **days before today**, not calendar dates. They used to be literal
+#: 2026-07-xx values, and that made the suite pass only inside one narrow
+#: window of one month: the dashboard defaults its range to "the 1st of this
+#: month → today" and writes it into `session['start_date']`, which is the same
+#: key the ledger reads back (see `sticky_filter`). So a ledger opened after
+#: the dashboard is month-scoped, and fixed July dates matched that window only
+#: between 21 and 31 July 2026. Every test here went red on 1 August and would
+#: have stayed red forever.
+#:
+#: Relative offsets keep the ordering the tests rely on while staying inside
+#: that window on any day of any month — except the 1st, when the window is a
+#: single day; `ledger()` below is what makes the ledger tests independent of
+#: it entirely.
+#:
 #: The last two are deliberately Uncategorized: /rules disables its Analyse
 #: button when nothing is uncategorised, and `/rules/ai-suggest` returns early
 #: with an empty list, so with a fully-categorised ledger the entire AI half of
 #: that page would be untestable.
 TRANSACTIONS = [
-    ('Checking', '2026-07-02', "Trader Joe's",             '-84.21',   'Groceries'),
-    ('Checking', '2026-07-03', 'Rent — 44 Elm St Apt 3B',  '-2150.00', 'Housing'),
-    ('Checking', '2026-07-05', 'Paycheck',                 '4210.55',  'Income'),
-    ('Checking', '2026-07-09', 'Con Edison',               '-118.40',  'Utilities'),
-    ('Visa',     '2026-07-11', 'Delta Air Lines 0062119',  '-612.80',  'Travel'),
-    ('Visa',     '2026-07-14', 'Netflix',                  '-15.99',   'Subscriptions'),
-    ('Visa',     '2026-07-18', 'Whole Foods Market',       '-141.07',  'Groceries'),
-    ('Checking', '2026-07-21', 'Transfer to savings',      '-500.00',  'Transfer'),
-    ('Visa',     '2026-07-16', 'STARBUCKS STORE 8891',     '-6.45',    'Uncategorized'),
-    ('Visa',     '2026-07-19', 'SQ *UNKNOWN VENDOR',       '-31.00',   'Uncategorized'),
+    ('Checking', 19, "Trader Joe's",             '-84.21',   'Groceries'),
+    ('Checking', 18, 'Rent — 44 Elm St Apt 3B',  '-2150.00', 'Housing'),
+    ('Checking', 16, 'Paycheck',                 '4210.55',  'Income'),
+    ('Checking', 12, 'Con Edison',               '-118.40',  'Utilities'),
+    ('Visa',     10, 'Delta Air Lines 0062119',  '-612.80',  'Travel'),
+    ('Visa',      7, 'Netflix',                  '-15.99',   'Subscriptions'),
+    ('Visa',      3, 'Whole Foods Market',       '-141.07',  'Groceries'),
+    ('Checking',  0, 'Transfer to savings',      '-500.00',  'Transfer'),
+    ('Visa',      5, 'STARBUCKS STORE 8891',     '-6.45',    'Uncategorized'),
+    ('Visa',      2, 'SQ *UNKNOWN VENDOR',       '-31.00',   'Uncategorized'),
 ]
 
 TRANSACTION_COUNT = len(TRANSACTIONS)
@@ -108,11 +122,12 @@ def _seed(app):
         db.session.commit()
 
         from decimal import Decimal
+        today = date.today()
         with tenant_scope(household_id):
-            for account, when, desc, amount, category in TRANSACTIONS:
+            for account, days_ago, desc, amount, category in TRANSACTIONS:
                 db.session.add(Transaction(
                     account_name=account,
-                    date=datetime.strptime(when, '%Y-%m-%d').date(),
+                    date=today - timedelta(days=days_ago),
                     description=desc, amount=Decimal(amount),
                     category=category, source='manual'))
             db.session.commit()
@@ -420,6 +435,28 @@ def visit(page, path, note=''):
     """Navigate and hold the result to the baseline every page must meet."""
     page.goto(path, wait_until='load')
     assert_no_horizontal_overflow(page, note)
+
+
+def ledger(page, note=''):
+    """Open /transactions with every filter explicitly empty.
+
+    Not the same as `visit(page, '/transactions')`, and the difference is the
+    reason eight tests here were unreliable. The ledger's filters are sticky in
+    the *session*, and the dashboard writes three of the same keys — it defaults
+    its own range to "the 1st of this month → today" whenever it is opened
+    without one (dough/blueprints/core.py). So a ledger opened after a dashboard
+    inherits a month window that nothing on the ledger asked for, and a test
+    that seeds a transaction outside it sees an empty table.
+
+    Passing every filter as an empty string is what clears them: `sticky_filter`
+    treats a *present but empty* key as "the user cleared this" and an absent
+    one as "fall back to the session".
+
+    A test that wants to assert the sticky behaviour itself should use `visit`
+    and set the filters it means to inherit.
+    """
+    visit(page, '/transactions?account=&category=&direction=&search='
+                '&start_date=&end_date=', note)
 
 
 def sign_in(page):

@@ -359,12 +359,20 @@ def test_budget_spend_includes_the_first_of_the_month(client, app):
 
     Asserted on the total rather than on the SQL, and with a transaction placed
     deliberately on day 1: a fixture using arbitrary dates passes either way.
+
+    The service call pins `today` rather than letting it read the clock. It
+    used to seed days 1-3 of the current month and compare against
+    `status()` — which meant that for the first two days of every month the
+    later transactions were still in the *future*, the window excluded them,
+    and this test reported "the 1st of the month was dropped" for a reason that
+    had nothing to do with the bug it guards. It failed on 1 August 2026
+    exactly that way.
     """
     from datetime import datetime
 
     from dough.services import budgets as budget_service
 
-    today = datetime.now()
+    today = date.today()
     db.session.add(Budget(category='Dining', account_name='both',
                           monthly_limit=100))
     for day in (1, 2, 3):
@@ -373,12 +381,17 @@ def test_budget_spend_includes_the_first_of_the_month(client, app):
             description=f'Meal {day}', amount=-45.0, category='Dining'))
     db.session.commit()
 
-    row = budget_service.status()['budgets'][0]
+    # A window that ends on the 3rd, whatever the real date is.
+    third = datetime(today.year, today.month, 3, 23, 59, 59)
+    row = budget_service.status(today=third)['budgets'][0]
     assert row['spent'] == 135.0, 'the 1st of the month was dropped'
     assert row['state'] == 'danger'
 
-    # And through the API, which is the surface a client sees.
-    assert data_of(client.get('/api/v1/budgets'))['budgets'][0]['spent'] == 135.0
+    # And through the API, which is the surface a client sees. The route reads
+    # the real clock, so it can only have seen the days that have happened —
+    # asserting that, rather than 135, is what keeps this honest on the 1st.
+    so_far = 45.0 * sum(1 for day in (1, 2, 3) if day <= today.day)
+    assert data_of(client.get('/api/v1/budgets'))['budgets'][0]['spent'] == so_far
 
 
 def test_the_csv_sign_inference_is_reachable_and_pure(app):
