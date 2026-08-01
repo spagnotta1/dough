@@ -58,7 +58,8 @@ personality, and he is deliberately consistent everywhere:
   bank, brokerage, or crypto exchange) or Coinbase directly once; balances,
   holdings, and transactions then sync automatically every 12 hours (plus
   manual Refresh / Refresh All)
-- Upload CSV exports from Capital One accounts (still supported)
+- Upload CSV exports from any bank or card — the importer reads the header and
+  works out which columns are the date, the description and the amount
 - Automatic transaction categorization based on keywords
 - Customizable categorization rules
 - Dashboard with spending breakdowns and charts
@@ -154,9 +155,9 @@ flask --app app run
 
 2. Open your web browser and navigate to `http://localhost:5000`
 
-3. Upload your Capital One CSV exports:
+3. Upload a CSV export from any bank or card:
    - Go to the Upload page
-   - Select the account type (Checking or Savings)
+   - Select the account these belong to
    - Choose your CSV file(s)
    - Click Upload
 
@@ -167,12 +168,33 @@ flask --app app run
 
 ## CSV Format
 
-The application expects CSV files exported from Capital One with the following columns:
-- Date
-- Description
-- Amount
-- Category
-- Balance
+Any bank's export, as downloaded. The importer reads the header row and works
+out which column is which, so there is nothing to rename or rearrange first.
+
+It needs three things, under whatever name your bank uses for them:
+
+| Role | Headers understood |
+|---|---|
+| **Date** | `Transaction Date`, `Posted Date`, `Posting Date`, `Date`, `Booking Date`, … |
+| **Description** | `Description`, `Payee`, `Merchant`, `Memo`, `Narrative`, `Details`, `Name`, … |
+| **Amount** | `Amount`, `Transaction Amount` — **or** a `Debit`/`Credit` pair (`Money Out`/`Money In`, `Withdrawal`/`Deposit`, …) |
+
+Case, spacing and punctuation are ignored, so `posted_date` and `Posted Date`
+are the same column. A `Balance` column is used when present and not required.
+
+The two amount shapes are treated differently on purpose. A single column may
+hold an unsigned magnitude, so the direction is inferred from the description
+with the balance delta as a fallback. A **debit/credit pair states the
+direction**, so it is taken as given — otherwise a row under Credit reading
+"PAYMENT THANK YOU" would be booked as money out, which is what the wording
+rules say about that word.
+
+Currency symbols, thousands separators, accountants' `(45.00)` negatives and
+European decimal commas are all read as written.
+
+If a file cannot be mapped, the upload page says so and lists the headers it
+did find, rather than failing with an error id. `tests/test_csv_import.py`
+covers the exports of several banks.
 
 ## Customizing Categories
 

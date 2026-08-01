@@ -59,9 +59,14 @@ SERVICE_FUNCTIONS = {
     # read side; the two are kept apart because the read side is what the sync
     # scheduler and the anomaly scorer use, and it has no business importing
     # pandas-driven CSV handling.
+    # `detect_columns` is here because the importer accepts any bank's CSV and
+    # the header mapping is the part worth testing directly against a header
+    # row. `CsvFormatError` is exported too — the upload route catches it — but
+    # this table is functions only, and it is a class.
     'ledger': ('serialize', 'infer_signed_amount', 'import_csv', 'undo_import',
                'create_transaction', 'update_transaction', 'delete_transaction',
-               'bulk_update_category', 'bulk_delete', 'export_rows'),
+               'bulk_update_category', 'bulk_delete', 'export_rows',
+               'detect_columns'),
     'budgets': ('serialize', 'list_budgets', 'upsert_budget', 'delete_budget',
                 'month_window', 'spend_by_category', 'status'),
     'holdings': ('list_holdings', 'create_holding', 'update_holding',

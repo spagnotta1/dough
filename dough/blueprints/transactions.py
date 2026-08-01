@@ -64,9 +64,25 @@ def upload():
         # takes paths and has no idea which of them it is allowed to delete.
         # `on_file` rather than a loop afterwards so a file is removed as soon as
         # it has been read, which is what the original did.
-        result = ledger.import_csv(saved, account_name, batch_id=batch_id,
-                                   rules_engine=rules_engine,
-                                   on_file=os.remove)
+        try:
+            result = ledger.import_csv(saved, account_name, batch_id=batch_id,
+                                       rules_engine=rules_engine,
+                                       on_file=os.remove)
+        except ledger.CsvFormatError as exc:
+            # A file whose headers the importer cannot map. Before this was
+            # caught it surfaced as a KeyError, which the error handler turned
+            # into a 500 and a trace id — technically honest and completely
+            # useless to somebody who just needs to know their export was the
+            # wrong one. Listing the headers that *were* read is the part that
+            # lets them fix it themselves.
+            for leftover in saved:
+                if os.path.exists(leftover):
+                    os.remove(leftover)
+            flash(
+                f"I couldn't read {exc.filename} — I need "
+                f'{" and ".join(exc.missing)}. The columns I found were: '
+                f'{", ".join(exc.headers)}.', 'error')
+            return redirect(request.url)
 
         if result.added > 0:
             session['last_batch_id'] = batch_id

@@ -38,6 +38,9 @@ and that is a behaviour change wearing a performance improvement's clothes.
 
 from __future__ import annotations
 
+import os
+import re
+
 import pandas as pd
 from sqlalchemy.exc import IntegrityError
 
@@ -46,11 +49,13 @@ from dough.tenancy import get_owned
 
 __all__ = [
     'EDITABLE_FIELDS',
+    'CsvFormatError',
     'ImportResult',
     'bulk_delete',
     'bulk_update_category',
     'create_transaction',
     'delete_transaction',
+    'detect_columns',
     'export_rows',
     'import_csv',
     'infer_signed_amount',
@@ -162,6 +167,142 @@ def infer_signed_amount(description, amount, balance, prev_balance):
     return amount
 
 
+class CsvFormatError(ValueError):
+    """A CSV whose columns could not be understood.
+
+    Carries what was found as well as what was missing, because "I need a date
+    column" is not actionable when the user is looking at a file that plainly
+    has dates in it — the useful half of the message is which headers were
+    actually read.
+    """
+
+    def __init__(self, filename, headers, missing):
+        self.filename = filename
+        self.headers = list(headers)
+        self.missing = list(missing)
+        super().__init__(
+            f'{filename}: could not find {" and ".join(missing)}. '
+            f'Columns found: {", ".join(self.headers) or "(none)"}')
+
+
+def _normalise(header):
+    """Fold a header to its comparable form: lowercase, alphanumerics only.
+
+    Banks vary the punctuation and spacing far more than the words —
+    'Posted Date', 'posted_date', 'POSTED DATE' and 'Posted  Date' are one
+    column with four spellings, and matching on the letters alone collapses
+    them without needing a synonym for each.
+    """
+    return re.sub(r'[^a-z0-9]', '', str(header).lower())
+
+
+#: Header synonyms, by role. Matched against the normalised form above, so
+#: 'Transaction Date' is written here as 'transactiondate'.
+#:
+#: Ordered: the first match in a file wins, so the more specific spelling comes
+#: first. That matters for date — an export with both 'Transaction Date' and
+#: 'Posted Date' should book on the transaction date, which is the one the user
+#: recognises from their statement.
+_SYNONYMS = {
+    'date': ('transactiondate', 'postingdate', 'posteddate', 'postdate',
+             'dateposted', 'transdate', 'bookingdate', 'effectivedate',
+             'valuedate', 'date'),
+    'description': ('transactiondescription', 'originaldescription',
+                    'description', 'payee', 'merchant', 'merchantname',
+                    'narrative', 'particulars', 'details', 'memo', 'name',
+                    'reference'),
+    'amount': ('transactionamount', 'amount', 'amountusd', 'netamount',
+               'value'),
+    'debit': ('debit', 'debitamount', 'withdrawal', 'withdrawals',
+              'withdrawalamount', 'moneyout', 'paidout', 'outflow', 'charges'),
+    'credit': ('credit', 'creditamount', 'deposit', 'deposits',
+               'depositamount', 'moneyin', 'paidin', 'inflow', 'payments'),
+    'balance': ('runningbalance', 'closingbalance', 'ledgerbalance',
+                'balanceamount', 'balance'),
+}
+
+
+def detect_columns(headers):
+    """Map this file's headers onto the roles the importer needs.
+
+    The importer used to hardcode Capital One's four column names, so every
+    other bank's export raised `KeyError` and reached the user as a 500 with a
+    trace id and no hint that the file was the problem.
+
+    Two shapes of export exist and both are common enough to be required:
+
+      **one signed-or-inferred amount column** — Capital One's checking export
+      and most others. The magnitude may be unsigned, so the direction is still
+      inferred by `infer_signed_amount`.
+
+      **separate debit and credit columns** — Capital One's *credit card*
+      export, and the default for most UK and many US banks. Here the direction
+      is explicit and must not be second-guessed: a row with 42.00 under Debit
+      is money out no matter what its description says.
+
+    Returns a dict with keys date, description, amount, debit, credit, balance;
+    the ones that do not apply are None. Raises `CsvFormatError` when a file
+    cannot be read at all, which the upload route turns into a sentence.
+    """
+    lookup = {}
+    for header in headers:
+        lookup.setdefault(_normalise(header), header)
+
+    found = {}
+    for role, names in _SYNONYMS.items():
+        found[role] = next((lookup[n] for n in names if n in lookup), None)
+
+    missing = []
+    if not found['date']:
+        missing.append('a date column')
+    if not found['description']:
+        missing.append('a description column')
+    if not found['amount'] and not (found['debit'] or found['credit']):
+        missing.append('an amount column (or debit/credit columns)')
+    if missing:
+        raise CsvFormatError('', headers, missing)
+
+    # A file carrying both shapes is not ambiguous: the signed column is the
+    # whole truth and the debit/credit pair is a redundant presentation of it.
+    if found['amount']:
+        found['debit'] = found['credit'] = None
+    return found
+
+
+def _money(value):
+    """A number out of whatever the bank wrote in the cell.
+
+    Exports are full of presentation: '$1,234.56', '1 234,56', '(45.00)' for a
+    negative, an empty cell for "not this column". Feeding any of those to
+    `float()` raises, and in a per-row loop that aborts an import most of the
+    way through.
+    """
+    if value is None or (isinstance(value, float) and pd.isnull(value)):
+        return 0.0
+    if isinstance(value, (int, float)):
+        return float(value)
+
+    text = str(value).strip()
+    if not text or text in {'-', '--'}:
+        return 0.0
+
+    negative = text.startswith('(') and text.endswith(')')
+    text = re.sub(r'[^0-9.,\-]', '', text)
+    # A comma is a thousands separator when a dot is also present, and the
+    # decimal mark when it is not ('1.234,56' and '1234,56' are both European).
+    if ',' in text and '.' in text:
+        text = text.replace(',', '') if text.rfind('.') > text.rfind(',') \
+            else text.replace('.', '').replace(',', '.')
+    elif ',' in text:
+        text = text.replace(',', '.') if len(text.split(',')[-1]) in (1, 2) \
+            else text.replace(',', '')
+    if not text or text in {'-', '.'}:
+        return 0.0
+
+    number = float(text)
+    return -abs(number) if negative else number
+
+
 def import_csv(paths, account_name, *, batch_id, rules_engine, on_file=None):
     """Import one or more CSV files into `account_name`. Returns an `ImportResult`.
 
@@ -184,22 +325,46 @@ def import_csv(paths, account_name, *, batch_id, rules_engine, on_file=None):
 
     for path in paths:
         frame = pd.read_csv(path)
-        frame = frame.sort_values(by='Transaction Date')
+        try:
+            cols = detect_columns(frame.columns)
+        except CsvFormatError as exc:
+            # Re-raised with the filename attached: `paths` are temp files the
+            # route saved, and the user needs to know *which* of the several
+            # they dropped in was the one it could not read.
+            raise CsvFormatError(os.path.basename(str(path)),
+                                 exc.headers, exc.missing) from None
+
+        frame = frame.sort_values(by=cols['date'])
         prev_balance = None
 
         for _index, row in frame.iterrows():
-            description = str(row['Transaction Description'])
-            date = pd.to_datetime(row['Transaction Date']).date()
-            amount = float(row['Transaction Amount'])
-            balance = (float(row['Balance'])
-                       if not pd.isnull(row['Balance']) else None)
+            description = str(row[cols['description']])
+            date = pd.to_datetime(row[cols['date']]).date()
+            balance = (_money(row[cols['balance']])
+                       if cols['balance'] and not pd.isnull(row[cols['balance']])
+                       else None)
+
+            if cols['amount']:
+                # One column, magnitude possibly unsigned — the direction is
+                # inferred from the description, with the balance delta as the
+                # fallback. This is the path Capital One's checking export takes
+                # and its behaviour is unchanged.
+                amount = infer_signed_amount(
+                    description, _money(row[cols['amount']]), balance,
+                    prev_balance)
+            else:
+                # Debit and credit columns: the direction is stated, so it is
+                # taken rather than inferred. Guessing here would let a row
+                # described as "PAYMENT" under Credit be booked as an outgo.
+                debit = _money(row[cols['debit']]) if cols['debit'] else 0.0
+                credit = _money(row[cols['credit']]) if cols['credit'] else 0.0
+                amount = abs(credit) - abs(debit)
 
             transaction = Transaction(
                 account_name=account_name,
                 date=date,
                 description=description,
-                amount=infer_signed_amount(description, amount, balance,
-                                           prev_balance),
+                amount=amount,
                 category=rules_engine.get_category(description),
                 import_batch_id=batch_id,
             )
