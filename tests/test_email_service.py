@@ -18,8 +18,9 @@ import logging
 
 import pytest
 
-from dough.services.email import (ConsoleBackend, EmailError, EmailService,
-                                  MemoryBackend, SmtpBackend, build_backend)
+from dough.services.email import (ConsoleBackend, EmailBackend, EmailError,
+                                  EmailService, MemoryBackend, SmtpBackend,
+                                  build_backend)
 
 LINK = 'https://dough.example/reset-password/s3cr3t-t0k3n-value-here'
 
@@ -187,6 +188,69 @@ def test_an_smtp_failure_does_not_quote_the_message_it_was_carrying(monkeypatch)
     assert LINK not in str(excinfo.value)
     assert 'mail.example' in str(excinfo.value)
     assert 'SMTPException' in str(excinfo.value)
+
+
+# ---------------------------------------------------------------------------
+# A delivery failure is an EmailError, whatever the backend raised
+# ---------------------------------------------------------------------------
+
+def test_a_backend_raising_something_unexpected_still_raises_EmailError():
+    """Every caller catches `EmailError` and nothing wider.
+
+    So a backend that raises anything else does not produce "we could not send
+    that mail" — it escapes the route entirely and becomes a 500, on a request
+    that has already committed its database work. Enforced here rather than
+    trusted, because a backend is the part of this module that talks to the
+    outside world.
+    """
+    class _Erratic(EmailBackend):
+        name = 'erratic'
+
+        def send(self, message):
+            raise ValueError('something nobody anticipated')
+
+    service = EmailService(_Erratic())
+    with pytest.raises(EmailError) as excinfo:
+        service.send_verification_email('sam@example.com', LINK)
+
+    assert 'erratic' in str(excinfo.value)
+    assert 'ValueError' in str(excinfo.value)
+
+
+def test_the_conversion_does_not_quote_what_the_backend_said():
+    """Same rule as `SmtpBackend.send`, applied to the failures it did not
+    anticipate: the text of a delivery error can echo the message it was
+    carrying, and this one is carrying a live token."""
+    class _Chatty(EmailBackend):
+        name = 'chatty'
+
+        def send(self, message):
+            raise RuntimeError(f'refused: {message.body}')
+
+    service = EmailService(_Chatty())
+    with pytest.raises(EmailError) as excinfo:
+        service.send_password_reset_email('sam@example.com', LINK)
+
+    assert LINK not in str(excinfo.value)
+
+
+def test_the_console_backend_survives_a_stream_that_cannot_encode_the_frame():
+    """`sys.stdout` on a Windows console is cp1252, which has no U+2500.
+
+    The frame rules are decoration and the link is the payload, so an
+    unencodable character degrades the decoration rather than failing the
+    send — losing a verification mail over a code page is the worst available
+    trade, and no configuration change fixes the operator's terminal.
+    """
+    stream = io.TextIOWrapper(io.BytesIO(), encoding='cp1252', newline='')
+    service = EmailService(ConsoleBackend(stream=stream))
+
+    service.send_verification_email('sam@example.com', LINK, username='sam')
+
+    stream.seek(0)
+    written = stream.buffer.getvalue().decode('cp1252')
+    assert LINK in written, 'the link must survive whatever the frame does'
+    assert 'sam@example.com' in written
 
 
 # ---------------------------------------------------------------------------

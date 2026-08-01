@@ -136,9 +136,17 @@ if ($LASTEXITCODE -ne 0 -or -not $secretKey) { throw 'Could not generate SECRET_
 $fromEnv = @{}
 $envPath = Join-Path $repo '.env'
 if (Test-Path $envPath) {
+    # The MAIL_* names are here for a reason worth stating: without them this
+    # script pushed no mail configuration at all, so every deployment ran on
+    # config.py's default of MAIL_BACKEND=console however carefully .env was
+    # filled in. The symptom is not an error anywhere -- verification and
+    # password-reset mail is "sent" successfully, into the deploy log, and the
+    # person waiting on it simply never receives anything.
     $wanted = @('ANTHROPIC_API_KEY', 'PLAID_CLIENT_ID', 'PLAID_ENV',
                 'PLAID_SECRET_SANDBOX', 'PLAID_SECRET_PRODUCTION',
-                'PLAID_REDIRECT_URI_SANDBOX', 'PLAID_REDIRECT_URI_PRODUCTION')
+                'PLAID_REDIRECT_URI_SANDBOX', 'PLAID_REDIRECT_URI_PRODUCTION',
+                'MAIL_BACKEND', 'MAIL_FROM', 'MAIL_SERVER', 'MAIL_PORT',
+                'MAIL_USERNAME', 'MAIL_PASSWORD', 'MAIL_USE_TLS')
     foreach ($line in Get-Content $envPath) {
         if ($line -match '^\s*([A-Z_][A-Z0-9_]*)\s*=\s*(.*)$') {
             $k = $Matches[1]; $v = $Matches[2].Trim().Trim('"').Trim("'")
@@ -239,14 +247,31 @@ if ($AllowRegistration) {
     Write-Host 'Registration is OPEN: anyone who reaches /register can create an account.'
     Write-Host 'Each one gets its own empty household and cannot see yours.'
     Write-Host ''
-    Write-Host 'MAIL_BACKEND is "console", which is now a real gap rather than a cosmetic'
-    Write-Host 'one: verification and password-reset links print to the deploy logs instead'
-    Write-Host 'of being sent, so a registrant who forgets a password has no way back in and'
-    Write-Host 'you cannot give them one without reading the logs. Set MAIL_BACKEND=smtp and'
-    Write-Host 'MAIL_SERVER before pointing anybody at this URL.'
+}
+
+# Reported from what was actually pushed rather than assumed. The previous
+# version of this message said "MAIL_BACKEND is left at console" unconditionally,
+# which was true only because the script had no way to set it -- and it stayed on
+# screen, reassuringly specific, while being the thing nobody acted on.
+$mailBackend = $fromEnv['MAIL_BACKEND']
+if ($mailBackend -eq 'smtp') {
+    if (-not $fromEnv.ContainsKey('MAIL_SERVER')) {
+        Write-Host 'WARNING: MAIL_BACKEND=smtp was pushed but MAIL_SERVER was not found in .env.'
+        Write-Host 'The application refuses to build that backend, so no mail will be sent and'
+        Write-Host 'every send will report a delivery failure. Add MAIL_SERVER and re-run.'
+    } else {
+        Write-Host ("Mail goes out over SMTP via {0}. Confirm it by changing your address on" -f $fromEnv['MAIL_SERVER'])
+        Write-Host '/settings and checking the new inbox for the confirmation link.'
+    }
 } else {
-    Write-Host 'Done. MAIL_BACKEND is left at "console": password-reset links print to the'
-    Write-Host 'deploy logs rather than being sent. Set MAIL_BACKEND=smtp and MAIL_SERVER if'
-    Write-Host 'anyone other than you needs to be able to reset a password.'
+    Write-Host 'MAIL_BACKEND is "console": verification and password-reset links print to the'
+    Write-Host 'deploy logs instead of being sent, so nothing arrives in anybody''s inbox and'
+    Write-Host 'nobody locked out can reach a reset link. Put MAIL_BACKEND=smtp, MAIL_SERVER,'
+    Write-Host 'MAIL_USERNAME, MAIL_PASSWORD and MAIL_FROM in .env and re-run this script.'
+    if ($AllowRegistration) {
+        Write-Host 'With registration open this is a real gap rather than a cosmetic one: a'
+        Write-Host 'registrant who forgets a password has no way back in, and you cannot give'
+        Write-Host 'them one without reading the logs. Do it before pointing anybody at this URL.'
+    }
 }
 Write-Host ''

@@ -278,11 +278,22 @@ new registrant — the two settings have to move together.
 
 ## Known gaps
 
-- **Mail is `console`, and registration is open.** Verification and
-  password-reset links print to the deploy logs instead of being sent. That was
-  cosmetic while you were the only account. It is not now: a registrant who
-  forgets their password has no route back in, and you cannot give them one
-  without reading it out of the logs. Set `MAIL_BACKEND=smtp` and `MAIL_SERVER`.
+- **Mail is `console` unless you configure it, and registration is open.**
+  Verification and password-reset links print to the deploy logs instead of
+  being sent. That was cosmetic while you were the only account. It is not now:
+  a registrant who forgets their password has no route back in, and you cannot
+  give them one without reading it out of the logs.
+
+  Put `MAIL_BACKEND=smtp` in `.env` along with `MAIL_SERVER`, `MAIL_USERNAME`,
+  `MAIL_PASSWORD` and `MAIL_FROM`, then re-run `tools/set_railway_env.ps1`,
+  which pushes all six. Until Phase 10.5 that script carried no `MAIL_*`
+  variable at all, so a service configured before this change is on `console`
+  no matter what `.env` says — check with `railway variable list` rather than
+  assuming.
+
+  The confirmation that it worked is `/settings`: change your address and the
+  link arrives in the new inbox. Nothing else in the application reports the
+  difference, because sending to `console` *succeeds*.
 - **Back up the volume.** Nothing here replicates `checkbook.db`.
   `tools/backup_db.py` exists; run it on a schedule and pull the output off with
   `railway volume files --volume dough-volume download`.

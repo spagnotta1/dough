@@ -36,6 +36,7 @@ import pytest
 import finance_sync.scheduler as scheduler_module
 from app import create_app
 from dough.services import identity
+from dough.services.email import EmailError
 
 PASSWORD = 'hunter2boat'
 NEW_PASSWORD = 'trombone9pastry'
@@ -740,6 +741,76 @@ def test_changing_the_address_clears_the_verified_stamp(client):
     user = AppUser.query.filter_by(username='sal').one()
     assert user.email == 'moved@example.com'
     assert user.email_verified_at is None
+
+
+def test_changing_the_address_sends_a_verification_to_the_new_one(client, mailbox):
+    _register(client)
+    mailbox.clear()
+
+    _post(client, '/settings/email', {'email': 'moved@example.com'},
+          page_path='/settings')
+
+    assert [(m.purpose, m.to) for m in mailbox.sent] == \
+        [('verify_email', 'moved@example.com')]
+
+
+def _breaking_mail(app, exception):
+    """Install a backend that raises `exception` on every send."""
+    from dough.services.email import EmailBackend, EmailService
+
+    class _Broken(EmailBackend):
+        name = 'broken'
+
+        def send(self, message):
+            raise exception
+
+    app.extensions['dough_email'] = EmailService(_Broken())
+
+
+@pytest.mark.parametrize('exception', [
+    # What a backend is documented to raise...
+    EmailError('nope'),
+    # ...and what one actually raised. `ConsoleBackend` writes the frame rules
+    # with U+2500, which cp1252 cannot encode, so on a Windows console this is
+    # every send.
+    UnicodeEncodeError('cp1252', '─', 0, 1, 'unmapped'),
+])
+def test_an_address_change_reports_a_delivery_failure_rather_than_500ing(
+        client, app, exception):
+    """The address is committed before the mail is attempted.
+
+    So a 500 here is worse than a broken button: the account now points at an
+    unverified new address while the error page says "nothing was changed" —
+    which is the one state in which somebody stops watching the new inbox.
+
+    Parametrised over both exception families on purpose. Only the first was
+    ever caught, and the route's `except (EmailError, IdentityError)` is exactly
+    what the second walked past.
+    """
+    from models import AppUser
+
+    _register(client)
+    _breaking_mail(app, exception)
+
+    response = _post(client, '/settings/email', {'email': 'moved@example.com'},
+                     page_path='/settings')
+
+    assert response.status_code == 302
+    assert AppUser.query.filter_by(username='sal').one().email == \
+        'moved@example.com'
+    assert b'could not be sent' in client.get('/settings').data
+
+
+def test_resending_a_verification_reports_a_delivery_failure_the_same_way(
+        client, app):
+    _register(client)
+    _breaking_mail(app, UnicodeEncodeError('cp1252', '─', 0, 1, 'unmapped'))
+
+    response = _post(client, '/settings/verify-email/resend', {},
+                     page_path='/settings')
+
+    assert response.status_code == 302
+    assert b'could not be sent' in client.get('/settings').data
 
 
 def test_settings_requires_a_session(client):

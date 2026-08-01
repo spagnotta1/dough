@@ -52,6 +52,12 @@ an audit row that failed to write leaves the recorded operation correct, whereas
 a reset mail that failed to send leaves a person waiting forever for a link that
 does not exist. The route catches it and says so.
 
+`EmailService._send` *enforces* that rather than trusting it: anything else a
+backend raises is converted, because every caller catches `EmailError` and
+nothing wider. A backend that raised something else would skip past all of them
+and 500 the request instead — which is what `/settings/email` did, after
+committing the new address, under a page that said nothing had changed.
+
 The one thing a caller must *not* do is let the failure change its response —
 see `dough/blueprints/auth.py`. "We could not send that mail" reveals that the
 address matched an account.
@@ -137,7 +143,7 @@ class ConsoleBackend(EmailBackend):
 
     def send(self, message):
         stream = self._stream or sys.stdout
-        stream.write(
+        text = (
             '\n'
             '─── dough: outbound mail ' + '─' * 40 + '\n'
             f'To:      {message.to}\n'
@@ -146,6 +152,25 @@ class ConsoleBackend(EmailBackend):
             '\n'
             f'{message.body}\n'
             '─' * 64 + '\n')
+        try:
+            stream.write(text)
+        except UnicodeEncodeError:
+            # The stream cannot represent every character in the message, and
+            # the frame rules are the usual culprit -- U+2500 is absent from
+            # cp1252, which is what `sys.stdout` uses on a Windows console.
+            #
+            # Degrading rather than raising, because of what is in `text`: the
+            # link. This backend *is* the delivery mechanism, so a refusal here
+            # is a verification mail that was never sent, and losing it over a
+            # decoration is the worst possible trade. The link itself is
+            # `secrets.token_urlsafe` and survives any encoding intact.
+            #
+            # `_send` would convert the raise into an `EmailError` and the route
+            # would report a delivery failure. That message would be true and
+            # useless: nothing the operator can configure fixes their terminal's
+            # code page, and the mail they need is right there.
+            encoding = getattr(stream, 'encoding', None) or 'ascii'
+            stream.write(text.encode(encoding, 'replace').decode(encoding))
         stream.flush()
 
 
@@ -322,7 +347,30 @@ class EmailService:
     # -- delivery -----------------------------------------------------------
 
     def _send(self, message):
-        self.backend.send(message)
+        try:
+            self.backend.send(message)
+        except EmailError:
+            raise
+        except Exception as exc:
+            # Every caller in the application catches `EmailError` and nothing
+            # wider, because that is the contract this module's docstring
+            # states. A backend that raises anything else therefore does not
+            # produce "we could not send that mail" -- it produces a 500, on a
+            # route that has already committed its database work. That is how
+            # `/settings/email` came to save a new address and then answer with
+            # an error page reading "nothing was changed".
+            #
+            # So the contract is enforced here rather than trusted. A backend is
+            # the one part of this module that talks to the outside world; it is
+            # the last place to assume only the anticipated exceptions arrive.
+            #
+            # Type only, never the exception's own text -- an SMTP failure can
+            # quote the message it was carrying, and that message holds a live
+            # token. Same rule as `SmtpBackend.send`, applied to the failures it
+            # did not anticipate.
+            raise EmailError(
+                f'The {self.backend.name} mail backend failed '
+                f'({type(exc).__name__}).') from None
         # The fact, not the payload. `to` and `purpose` are what answer "is
         # delivery working, and was this flow reached"; the body holds the token
         # and is never passed to the logger.
