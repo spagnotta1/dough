@@ -11,17 +11,20 @@ from a test with no request.
 
 ## What this is and is not
 
-It is the *seam*. SEC-0018 records why `/api/v1` has no limit today, and the
-reason is not that nobody thought of it: the throttle this application already
-has is in-memory and per-process (SEC-0010), so extending that to the API would
-extend a control that resets on restart and does not span workers — the
+It is the *seam*. The interface came first, in Phase 10.5, with only the
+authentication policies wired: SEC-0018 recorded that extending an in-memory,
+per-process control (SEC-0010) to the API and the AI budget would be the
 appearance of a limit rather than one.
 
-That argument is about the **backend**, not about the interface. So the
-interface exists now, every call site is written against it, the policies are
-declared and tested, and `MemoryBackend` is what stands behind them until a
-shared store arrives. Swapping in Redis is then a `RATELIMIT_BACKEND` change and
-one new class, rather than finding every call site under deadline.
+That argument is about the **backend**, not about the interface — which is why
+the interface was built anyway, with every policy declared and tested. Phase
+10.6 wired the remaining four, because opening registration changed what the
+imperfect ceiling was being compared against: not a better limit, but none. See
+the `POLICIES` docstring.
+
+`MemoryBackend` still stands behind all of it until a shared store arrives.
+Swapping in Redis is then a `RATELIMIT_BACKEND` change and one new class, rather
+than finding every call site under deadline.
 
 `MemoryBackend`'s limitations are real and are not hidden. `Limiter.backend.name`
 is `'memory'`, `/health/ready` does not claim otherwise, and SEC-0010's entry
@@ -125,23 +128,34 @@ class Decision:
 
 #: Every limit this application declares, in one readable table.
 #:
-#: **Declared is not the same as enforced, and the difference is deliberate.**
-#: The first four policies have call sites today (`/register`,
-#: `/forgot-password` twice, and the verification re-send). `ai`, `ai_daily`,
-#: `api` and `api_write` do not: they are the shapes SEC-0018 describes, written
-#: now so that the numbers are reviewable as a set and so that wiring them is a
-#: one-line change per route rather than a design exercise.
+#: **All eight are enforced as of Phase 10.6.** Four have been since 10.5
+#: (`/register`, `/forgot-password` twice, the verification re-send). The other
+#: four were declared-but-unwired until registration opened to the public:
 #:
-#: They are not wired yet for the reason SEC-0018 gives, which is about the
-#: backend rather than the interface: `MemoryBackend` is per process and resets
-#: on restart, so enforcing an AI budget with it would produce a ceiling that a
-#: restart clears and a second worker doubles — the appearance of a cost control
-#: rather than one, on the surface where the cost is real money.
+#: - `ai` and `ai_daily` — in `AIService._require_budget`, so `generate` and
+#:   `stream` are the whole surface and no future AI route can miss it.
+#: - `api` and `api_write` — in `dough/api/guard.py`'s `enforce_rate_limit`,
+#:   one `before_request` covering every resource.
+#:
+#: The reasoning that held them back is worth keeping rather than deleting,
+#: because it is still true of the backend and explains what these limits are
+#: not. `MemoryBackend` is per process and resets on restart, so an AI budget
+#: enforced with it is a ceiling a restart clears and a second worker doubles.
+#: SEC-0018 called that the appearance of a cost control rather than one.
+#:
+#: What changed is not the backend but what it is being compared against. That
+#: judgement weighed an imperfect ceiling against a proper one and reasonably
+#: preferred to wait. With `ALLOW_REGISTRATION` on, the actual alternative is no
+#: ceiling at all on a surface a stranger can reach and that spends real money
+#: per request. A limit that a restart clears still refuses the sixty-first call
+#: in an hour, and "no limit" refuses none. Redis remains the fix for what this
+#: does not cover; it is no longer the thing standing between the application
+#: and a bounded bill.
 #:
 #: `tests/test_ratelimit.py::test_the_declared_policies_match_their_call_sites`
-#: pins which of the two each policy is, so a policy that quietly acquires or
-#: loses a call site is a failing test rather than a silent change in what this
-#: application actually limits.
+#: pins which policies have call sites, so one that quietly acquires or loses
+#: one is a failing test rather than a silent change in what this application
+#: actually limits.
 #:
 #: The three tiers exist because the thing being protected differs. Authentication
 #: is protecting a *credential*, so it is strict and the cost of a false positive

@@ -111,11 +111,20 @@ def test_an_unknown_policy_raises_rather_than_defaulting():
         policy_for('no_such_policy')
 
 
-#: Policies that have a call site today. The rest are declared for SEC-0018's
-#: sake and are not enforced yet — see the `POLICIES` docstring for why that is
-#: a decision about the *backend* rather than an unfinished wiring job.
+#: Policies that have a call site today.
+#:
+#: Every declared policy is now enforced. The four cost and traffic policies
+#: were wired in Phase 10.6, when registration opened: `ai` and `ai_daily` in
+#: `dough/ai/service.py`, `api` and `api_write` in `dough/api/guard.py`.
+#:
+#: SEC-0018's original reasoning for leaving them declared-but-unwired still
+#: describes the backend accurately — `MemoryBackend` resets on restart and does
+#: not span workers. What changed is the comparison. That argument weighed an
+#: imperfect ceiling against a perfect one; the live alternative is *no* ceiling
+#: on a public signup form, and a limit that a restart clears still refuses the
+#: hundredth request in an hour, which no limit does not.
 ENFORCED = {'register', 'password_reset', 'password_reset_account',
-            'email_verification'}
+            'email_verification', 'ai', 'ai_daily', 'api', 'api_write'}
 
 
 def test_the_declared_policies_match_their_call_sites():
@@ -144,7 +153,15 @@ def test_the_declared_policies_match_their_call_sites():
     declarations = os.path.join(root, 'services', 'ratelimit.py')
 
     #: Functions whose first argument is a policy name.
-    limiter_calls = {'check', 'peek', 'reset', '_limited'}
+    #:
+    #: `_limited` and `_spend` are the local wrappers that add the logging and
+    #: audit around a refusal (`dough/blueprints/auth.py`, and both
+    #: `dough/ai/service.py` and `dough/api/guard.py` respectively). They are
+    #: listed because the policy name is a literal at *their* call sites and a
+    #: variable inside them -- which is the shape any such helper will have, so
+    #: recognising the wrapper is what keeps this test measuring enforcement
+    #: rather than measuring how many wrappers exist.
+    limiter_calls = {'check', 'peek', 'reset', '_limited', '_spend'}
 
     named = set()
     for dirpath, _dirs, files in os.walk(root):

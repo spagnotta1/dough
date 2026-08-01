@@ -58,7 +58,8 @@ import time
 # is not what this module depends on. It depends on catalog.
 import dough.ai.catalog as catalog
 from dough.ai.cache import GLOBAL_SCOPE, Cache, CacheKey, MemoryCache
-from dough.ai.errors import AIConfigurationError, AIError, AIResponseError
+from dough.ai.errors import (AIBudgetExceeded, AIConfigurationError, AIError,
+                             AIResponseError)
 from dough.ai.types import ChatRequest, StreamEnd, TextDelta
 
 logger = logging.getLogger(__name__)
@@ -195,6 +196,7 @@ class AIService:
         """One completion. Accepts a `ChatRequest` or `build_request` keywords."""
         request = self._coerce(request, kwargs)
         self._require_available(request)
+        self._require_budget(request)
         started = time.monotonic()
         try:
             response = self.adapter.generate(request)
@@ -215,6 +217,7 @@ class AIService:
         """
         request = self._coerce(request, kwargs)
         self._require_available(request)
+        self._require_budget(request)
         started = time.monotonic()
         for event in self.adapter.stream(request):
             if isinstance(event, StreamEnd):
@@ -323,6 +326,96 @@ class AIService:
                 'no AI provider is configured',
                 provider=getattr(self.adapter, 'name', 'none'),
                 model=request.model)
+
+    def _require_budget(self, request):
+        """Spend one unit of this household's AI allowance, or refuse.
+        [Phase 10.6 — wires SEC-0018's `ai` and `ai_daily` policies]
+
+        ## Why here and not at the twenty-odd call sites
+
+        `generate` and `stream` are the only two ways a completion is ever
+        requested — `generate_json` and `stream_text` both funnel through them —
+        so this is the whole surface, and it is two functions rather than the
+        eight routes and growing that reach them. The argument is the one
+        `dough/api/guard.py` makes about scope enforcement: a route added later
+        inherits the limit instead of having to remember it. A cost control that
+        each new AI feature must opt into is a cost control that the next AI
+        feature will not have.
+
+        It also means the budget is spent where the *provider call* happens, so
+        a cache hit costs nothing. `cached()` calls its producer only on a miss,
+        which is the correct accounting: the ceiling is on spending money, and a
+        cached answer did not.
+
+        ## What it keys on when there is no household
+
+        `'unscoped'` — a shared bucket, not an exemption. Nothing in the request
+        path reaches here without a household, so this covers background work
+        and future callers; giving them no limit at all would leave a hole whose
+        size is however many such callers get written later.
+
+        ## What happens with no application
+
+        Nothing. The service is constructible without Flask (the adapter tests
+        do exactly that) and a limiter lives on an app, so with no app context
+        there is nothing to spend against and the call proceeds. That is not a
+        bypass a request can reach: every route runs in one.
+        """
+        from flask import has_app_context
+
+        if not has_app_context():
+            return
+
+        from dough.services.ratelimit import current_limiter
+        from dough.tenancy import current_household
+
+        try:
+            limiter = current_limiter()
+        except RuntimeError:
+            # No limiter installed. An application built without `Limiter.init_app`
+            # is a wiring bug rather than a policy decision, but failing the AI
+            # call is the wrong way to report it -- `current_limiter` already
+            # raises a clear message on the surfaces that must not be silent.
+            return
+
+        identity = current_household() or 'unscoped'
+
+        # Both names written as literals, one call each, rather than a loop over
+        # a tuple. `tests/test_ratelimit.py` finds call sites by reading the AST
+        # for a *constant* first argument, precisely so that "which policies does
+        # this application actually enforce" is answerable by reading rather than
+        # by running it -- and a loop variable makes both the test and a person
+        # grepping for `'ai_daily'` miss the one place it is used.
+        #
+        # Hourly first: a caller who has exhausted both should be told about the
+        # window that reopens sooner.
+        self._spend('ai', identity, limiter, request)
+        self._spend('ai_daily', identity, limiter, request)
+
+    def _spend(self, policy_name, identity, limiter, request):
+        """One policy. Raises `AIBudgetExceeded` if this call is over it."""
+        decision = limiter.check(policy_name, identity)
+        if decision.allowed:
+            return
+
+        logger.warning(
+            'AI budget %s exhausted household=%s surface=%s retry_after=%ss',
+            policy_name, identity, request.metadata.get('surface', '-'),
+            decision.retry_after)
+        # Function-local, as `_log` imports them: this module must not name
+        # `models` at module scope (see the header).
+        from dough.services import audit
+        from models import EVENT_RATE_LIMITED
+        audit.record(EVENT_RATE_LIMITED,
+                     metadata={'policy': policy_name,
+                               'retry_after': decision.retry_after,
+                               'surface': request.metadata.get('surface')})
+        raise AIBudgetExceeded(
+            f'{policy_name} budget exhausted',
+            retry_after=decision.retry_after,
+            policy=policy_name,
+            provider=getattr(self.adapter, 'name', 'none'),
+            model=request.model)
 
     def _log(self, response, request, elapsed):
         usage = response.usage

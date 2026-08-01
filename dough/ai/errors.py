@@ -120,7 +120,42 @@ class AIResponseError(AIError):
     retryable = True
 
 
+class AIBudgetExceeded(AIError):
+    """*This household* has spent its allowance. Ours, not the provider's.
+
+    Deliberately a separate class from `AIRateLimited`, which they superficially
+    resemble — both mean "not now, try later". They are opposite in the two ways
+    that matter to whoever reads the log:
+
+    - `AIRateLimited` is the provider throttling *us*, so it affects every
+      household at once and is a capacity problem. This is one household
+      reaching a ceiling this application set, so it affects exactly them and is
+      the control working.
+    - `AIRateLimited` firing a lot means asking the provider for more headroom.
+      This firing a lot means either the limit is too low or somebody is
+      abusing an account, and those need telling apart from a graph.
+
+    Folding them together would make the cost control invisible in exactly the
+    logs somebody scans when the bill is wrong.
+
+    `retryable` is True because the window does reset — but not soon. See
+    `retry_after`, which is seconds and is always populated here (the limiter
+    knows precisely when the window turns over, which a provider rarely says).
+    """
+
+    user_message = ("We've hit this household's limit on questions for now. "
+                    "The allowance refreshes shortly — try me again then.")
+    retryable = True
+
+    def __init__(self, *args, retry_after=None, policy=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.retry_after = retry_after
+        #: which policy refused — `ai` (hourly) or `ai_daily`
+        self.policy = policy
+
+
 __all__ = [
     'AIError', 'AIConfigurationError', 'AIAuthenticationError',
     'AIRateLimited', 'AITimeout', 'AIUnavailable', 'AIResponseError',
+    'AIBudgetExceeded',
 ]

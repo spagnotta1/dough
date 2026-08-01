@@ -50,7 +50,8 @@ from __future__ import annotations
 
 from flask import current_app, g, has_app_context, request
 
-from dough.api.errors import API_PREFIX, ErrorCode, InsufficientScope, api_error_response
+from dough.api.errors import (API_PREFIX, ErrorCode, InsufficientScope,
+                              RateLimited, api_error_response)
 from dough.auth import SAFE_METHODS
 from dough.services import api_tokens
 
@@ -59,6 +60,7 @@ __all__ = [
     'authenticate_bearer',
     'bearer_actor',
     'bearer_token',
+    'enforce_rate_limit',
     'install',
     'require_scope',
 ]
@@ -249,6 +251,81 @@ def require_scope(scope):
     return decorator
 
 
+def enforce_rate_limit():
+    """Spend one unit of this token's API allowance, or refuse with 429.
+    [Phase 10.6 — wires SEC-0018's `api` and `api_write` policies]
+
+    ## Once, here, rather than per resource
+
+    The same argument as scope enforcement above: a resource added later
+    inherits the limit instead of having to remember it. A rate limit each new
+    endpoint must opt into is one the next endpoint will not have.
+
+    ## Why this covers bearer requests and not session ones
+
+    Both policies declare `per='token'`, and `tests/test_ratelimit.py` pins that.
+    A request authenticated by session cookie has no token, so there is no key
+    to spend against that would honour the declaration — and inventing one (per
+    user, say) would mean the table says `token` while the code counts users,
+    which is the exact drift `Policy.scope` exists to prevent.
+
+    That leaves session traffic to `/api/v1` unlimited by this hook, and that is
+    a real residual rather than a hidden one: it is recorded in SEC-0018. It is
+    the narrower half of the problem — a session belongs to somebody who logged
+    in, is bounded by the session lifetime, and the expensive surface behind it
+    (model calls) is metered per household in `dough/ai/service.py` regardless
+    of how the caller authenticated.
+
+    ## Order
+
+    Registered after `authenticate_bearer`, which is what puts the token on `g`.
+    Before it, every request would look unauthenticated and nothing would ever
+    be counted.
+    """
+    if not request.path.startswith(API_PREFIX):
+        return None
+    token = bearer_token()
+    if token is None:
+        return None
+
+    from dough.services.ratelimit import current_limiter
+
+    try:
+        limiter = current_limiter()
+    except RuntimeError:
+        return None
+
+    # The token's id, never the credential itself. The presented secret is a
+    # bearer credential and a rate-limit key ends up in a dict, a log line and
+    # eventually a Redis keyspace -- none of which are places for it.
+    identity = token.id
+
+    # Both names as literals, for the reason `dough/ai/service.py` spells out:
+    # `tests/test_ratelimit.py` reads the AST for a constant first argument, so
+    # that which policies are enforced is answerable by reading the code.
+    _spend('api', identity, limiter)
+    if request.method not in SAFE_METHODS:
+        _spend('api_write', identity, limiter)
+    return None
+
+
+def _spend(policy_name, identity, limiter):
+    """One policy against one token. Raises `RateLimited` when it is spent."""
+    decision = limiter.check(policy_name, identity)
+    if decision.allowed:
+        return
+
+    current_app.logger.warning('Rate limit %s reached for token %s',
+                               policy_name, identity)
+    from dough.services import audit
+    from models import EVENT_RATE_LIMITED
+    audit.record(EVENT_RATE_LIMITED,
+                 metadata={'policy': policy_name, 'token_id': identity,
+                           'retry_after': decision.retry_after,
+                           'method': request.method, 'path': request.path})
+    raise RateLimited(headers={'Retry-After': str(decision.retry_after)})
+
+
 def install(app):
     """Register the bearer hook. Must run before `app.py`'s auth hooks.
 
@@ -257,3 +334,4 @@ def install(app):
     ordering argument the logging hook itself is registered under.
     """
     app.before_request(authenticate_bearer)
+    app.before_request(enforce_rate_limit)
