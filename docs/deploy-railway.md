@@ -282,22 +282,32 @@ verification mail arrive.
 ## Mail goes out through Postmark
 
 ```
-MAIL_BACKEND=smtp
-MAIL_SERVER=smtp.postmarkapp.com
-MAIL_PORT=2525
-MAIL_USE_TLS=1
-MAIL_USERNAME=<Postmark server API token>
-MAIL_PASSWORD=<the same token>
+MAIL_BACKEND=postmark
+MAIL_PASSWORD=<Postmark server API token>
 MAIL_FROM=no-reply@dough-financial.com
 ```
 
-### Port 2525, not 587
+### Railway blocks outbound SMTP, so this does not use SMTP
 
-Postmark listens on 25, 587 and 2525, and every setup guide prints 587. On
-Railway that address times out: outbound SMTP on the conventional ports is
-blocked, as it is on most hosts that would otherwise be a convenient spam
-relay. 2525 is the conventional escape hatch and carries the same STARTTLS
-session.
+The block covers 587 and 2525 alike — 2525 is the conventional escape hatch and
+it is closed here too, so there is no port to move to. This is ordinary for a
+platform that would otherwise make a convenient spam relay, and it is not
+configurable from this side.
+
+`MAIL_BACKEND=postmark` sends the same message over Postmark's HTTP API on 443
+instead, which nothing filters. It is one variable: `PostmarkBackend` reads the
+server API token from `MAIL_PASSWORD`, because with Postmark the SMTP password
+*is* the API token, so there is no second copy of the credential to keep in
+step. The `MAIL_SERVER`/`MAIL_PORT` values can stay in place, unused, for an
+installation that later runs somewhere SMTP works.
+
+Measured both ways from the same code and credentials:
+
+| Transport | From a laptop | From Railway |
+|---|---|---|
+| SMTP :587 | reaches Postmark | times out at 30s |
+| SMTP :2525 | reaches Postmark | times out at 30s |
+| HTTPS :443 | reaches Postmark | reaches Postmark |
 
 The symptom is worth writing down because it names itself badly. `/settings`
 reports "the confirmation email could not be sent", the log says `Verification
@@ -343,14 +353,20 @@ send that never happened. That is a genuine limit of the SMTP path rather than
 a bug here: the outcome is not known when the connection closes. The Activity
 list and `/deliverystats` are the ground truth.
 
+Over the HTTP API the outcome is in the response, so `PostmarkBackend` checks
+it and a rejection is a rejection: the same message fails in about 0.2 seconds
+with `ErrorCode 412` instead of appearing to succeed. That difference is the
+second reason to prefer this transport, after the one that forced it.
+
 Which means testing mail delivery to an outside address (a Gmail account, say)
 proves nothing until the account is approved. Send to an address on
 `dough-financial.com` first.
 
-`MAIL_USERNAME` and `MAIL_PASSWORD` holding the same value is not a mistake in
-whoever's notes you copied. Postmark's SMTP endpoint authenticates with the
-Server API token in both fields, which means that single token is the entire
-credential — it belongs in `.env` and in Railway and nowhere else.
+One token is the entire credential. Postmark's SMTP endpoint authenticates with
+the Server API token in *both* the username and password fields, and the HTTP
+API uses the same string as its `X-Postmark-Server-Token` header — so
+`MAIL_PASSWORD` carries it whichever transport is in use, and it belongs in
+`.env` and in Railway and nowhere else.
 
 `MAIL_FROM` has to be a Sender Signature confirmed in the Postmark dashboard,
 or an address on a domain verified there. Postmark refuses any other `From`

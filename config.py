@@ -346,6 +346,13 @@ class BaseConfig:
     MAIL_USERNAME = os.environ.get('MAIL_USERNAME', '')
     MAIL_PASSWORD = os.environ.get('MAIL_PASSWORD', '')
     MAIL_USE_TLS = _bool('MAIL_USE_TLS', True)
+    # MAIL_BACKEND=postmark sends over HTTPS instead of SMTP, which is the only
+    # thing that works on a host blocking outbound mail ports -- Railway blocks
+    # 587 and 2525 alike. The token defaults to MAIL_PASSWORD because with
+    # Postmark they are the same string, so switching transports is one
+    # variable rather than a second copy of a credential to keep in step.
+    MAIL_POSTMARK_TOKEN = os.environ.get('MAIL_POSTMARK_TOKEN', '')
+    MAIL_POSTMARK_STREAM = os.environ.get('MAIL_POSTMARK_STREAM', 'outbound')
 
     # --- Rate limiting  [Phase 10.5, SEC-0018] ------------------------------
     # `memory` is one process and resets on restart -- see SEC-0010 and the

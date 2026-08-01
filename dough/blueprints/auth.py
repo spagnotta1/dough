@@ -279,12 +279,25 @@ def send_verification(user, *, quiet=False):
         current_email().send_verification_email(
             user.email, _external_url('auth.verify_email', token=token),
             username=user.username)
-    except (EmailError, identity.IdentityError):
-        # The exception's text is deliberately not logged: an SMTP error can
-        # quote the message it was carrying, and that message holds a live
-        # token. `dough/services/email.py` raises with the host and the type
-        # only, and this keeps even that out of the audit trail.
-        current_app.logger.warning('Verification mail could not be sent')
+    except (EmailError, identity.IdentityError) as exc:
+        # An `EmailError`'s text is safe to log and nothing else's is. That is
+        # not a guess about the wording: `dough/services/email.py` constructs
+        # every one of them from a host, a type name or a numeric provider
+        # error code, and `EmailService._send` converts anything a backend
+        # raises into that shape rather than trusting it to. The payload cannot
+        # reach the log through this path, which was the whole worry -- a
+        # delivery error can quote the message it was carrying, and this one
+        # carries a live token.
+        #
+        # Logging only the bare sentence, as this did, was the cautious choice
+        # and it was the wrong one. "Verification mail could not be sent" is
+        # true of every mail failure there is: a blocked port, a refused
+        # sender, an unapproved account. Diagnosing one meant querying the
+        # provider's API from a laptop, and an operator who cannot do that has
+        # nothing at all to go on.
+        reason = str(exc) if isinstance(exc, EmailError) else type(exc).__name__
+        current_app.logger.warning('Verification mail could not be sent: %s',
+                                   reason)
         if not quiet:
             raise
         return False

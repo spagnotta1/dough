@@ -22,9 +22,13 @@ because two of the three answers are not SMTP at all:
   can prove a reset mail was sent to the right address without a network, a
   fixture mail server, or a monkeypatch of the module under test.
 - `smtp` — actually send it.
+- `postmark` — send it over HTTPS instead, because SMTP is not always
+  reachable. See `PostmarkBackend`.
 
-The three share a `send()` signature and nothing else, which is what makes
-`MAIL_BACKEND` a real switch rather than a branch inside every call site.
+The four share a `send()` signature and nothing else, which is what makes
+`MAIL_BACKEND` a real switch rather than a branch inside every call site — and
+it is what made moving off SMTP one environment variable rather than an edit to
+every route that sends mail.
 
 ## The link is never written to the log
 
@@ -65,9 +69,12 @@ address matched an account.
 
 from __future__ import annotations
 
+import json
 import logging
 import smtplib
 import sys
+import urllib.error
+import urllib.request
 from email.message import EmailMessage as _MimeMessage
 
 from flask import current_app
@@ -79,6 +86,7 @@ __all__ = [
     'EmailMessage',
     'EmailService',
     'MemoryBackend',
+    'PostmarkBackend',
     'SmtpBackend',
     'build_backend',
     'current_email',
@@ -246,6 +254,113 @@ class SmtpBackend(EmailBackend):
                 f'({type(exc).__name__}).') from None
 
 
+class PostmarkBackend(EmailBackend):
+    """Send through Postmark's HTTP API rather than its SMTP endpoint.
+
+    This exists because of a property of the host rather than a preference
+    about protocols. Railway blocks outbound SMTP -- 587 and 2525 alike, which
+    is ordinary for a platform that would otherwise be a convenient spam relay
+    -- so `SmtpBackend` cannot open the connection at all. Port 443 is not
+    filtered anywhere this application is likely to run, and Postmark accepts
+    exactly the same message over it.
+
+    The failure that motivated this is worth recognising by shape, because it
+    describes itself badly. A blocked port produces a send that takes *exactly*
+    30 seconds and then reports a generic delivery failure: `SmtpBackend` uses a
+    10-second socket timeout, `smtp.postmarkapp.com` resolves to three
+    addresses, and `socket.create_connection` spends the full timeout on each in
+    turn. A mail server that refuses a message answers in well under a second,
+    so a round multiple of ten seconds means nothing was ever connected to.
+
+    `urllib` rather than `requests`: this module's contract is stdlib only, and
+    one JSON POST does not justify breaking it.
+    """
+
+    name = 'postmark'
+
+    endpoint = 'https://api.postmarkapp.com/email'
+
+    #: Set by `EmailService` after construction, as on `SmtpBackend`.
+    from_address = 'dough@localhost'
+
+    def __init__(self, *, token, stream='outbound', timeout=10):
+        self.token = token
+        self.stream = stream
+        self.timeout = timeout
+
+    def __repr__(self):
+        # The token is the entire credential -- it authenticates the API and
+        # doubles as the SMTP password -- and a backend is exactly the kind of
+        # object that ends up in a traceback. Same reasoning as
+        # `EmailMessage.__repr__`, which omits the body.
+        return f'<PostmarkBackend stream={self.stream!r}>'
+
+    def send(self, message):
+        payload = json.dumps({
+            'From': self.from_address,
+            'To': message.to,
+            'Subject': message.subject,
+            'TextBody': message.body,
+            'MessageStream': self.stream,
+        }).encode('utf-8')
+        request = urllib.request.Request(
+            self.endpoint, data=payload, method='POST',
+            headers={'Content-Type': 'application/json',
+                     'Accept': 'application/json',
+                     'X-Postmark-Server-Token': self.token})
+
+        try:
+            with urllib.request.urlopen(request, timeout=self.timeout) as response:
+                body = self._decode(response.read())
+        except urllib.error.HTTPError as exc:
+            # Postmark puts a numeric ErrorCode in the body of a 4xx, and it is
+            # the only part worth surfacing. The accompanying free text is not
+            # reproduced: it echoes fields from the request, and this request
+            # carries a live verification link. The code alone identifies the
+            # problem -- 412 is "account pending approval", 300 is a bad From
+            # address -- and Postmark's Activity list holds the full text for
+            # anyone who needs it.
+            raise EmailError(
+                f'Postmark refused the message (HTTP {exc.code}, '
+                f'ErrorCode {self._error_code(exc)}).') from None
+        except (urllib.error.URLError, OSError) as exc:
+            raise EmailError(
+                f'Postmark could not be reached ({type(exc).__name__}).') from None
+
+        # A 200 is not by itself a send. Postmark answers 200 with a non-zero
+        # ErrorCode for some rejections, and the SMTP path taught this lesson
+        # expensively: it returns success at the protocol level and turns the
+        # message into a bounce afterwards, so "nothing raised" was reported as
+        # a delivered mail that had never left. Here the outcome is in the
+        # response, so it is checked.
+        code = body.get('ErrorCode', 0)
+        if code:
+            raise EmailError(f'Postmark refused the message (ErrorCode {code}).')
+
+        # The MessageID ties this send to a row in Postmark's Activity list,
+        # which is the only place the true outcome lives. A fact about the
+        # message, not its contents -- the same rule the module logs by.
+        logger.info('Postmark accepted %s for %s as %s', message.purpose,
+                    message.to, body.get('MessageID', 'unknown'))
+
+    @staticmethod
+    def _decode(raw):
+        try:
+            return json.loads(raw.decode('utf-8'))
+        except (ValueError, UnicodeDecodeError):
+            # A proxy or captive portal answering 200 with HTML is a real
+            # deployment condition, and it must not read as a successful send.
+            raise EmailError(
+                'Postmark returned a response that was not JSON.') from None
+
+    @staticmethod
+    def _error_code(exc):
+        try:
+            return json.loads(exc.read().decode('utf-8')).get('ErrorCode', 'none')
+        except Exception:
+            return 'unreadable'
+
+
 def build_backend(config):
     """Pick a backend from configuration. Unknown names fail loudly.
 
@@ -268,8 +383,24 @@ def build_backend(config):
                            username=config.get('MAIL_USERNAME', ''),
                            password=config.get('MAIL_PASSWORD', ''),
                            use_tls=config.get('MAIL_USE_TLS', True))
+    if name == 'postmark':
+        # MAIL_PASSWORD is accepted as the token because with Postmark it *is*
+        # the token -- their SMTP endpoint authenticates with the server API
+        # token in both the username and password fields. Reading it here means
+        # moving a working SMTP configuration onto the API is one variable,
+        # MAIL_BACKEND, with no second copy of the credential to keep in step.
+        token = (config.get('MAIL_POSTMARK_TOKEN')
+                 or config.get('MAIL_PASSWORD') or '').strip()
+        if not token:
+            raise EmailError(
+                'MAIL_BACKEND=postmark requires MAIL_POSTMARK_TOKEN (or '
+                'MAIL_PASSWORD) to hold a Postmark server API token.')
+        return PostmarkBackend(
+            token=token,
+            stream=(config.get('MAIL_POSTMARK_STREAM') or 'outbound'))
     raise EmailError(
-        f'Unknown MAIL_BACKEND {name!r}; expected console, memory or smtp.')
+        f'Unknown MAIL_BACKEND {name!r}; expected console, memory, smtp or '
+        f'postmark.')
 
 
 class EmailService:

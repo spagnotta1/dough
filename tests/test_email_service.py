@@ -14,13 +14,16 @@ Nothing else in the application would report it.
 """
 
 import io
+import json
 import logging
+import urllib.error
+import urllib.request
 
 import pytest
 
 from dough.services.email import (ConsoleBackend, EmailBackend, EmailError,
-                                  EmailService, MemoryBackend, SmtpBackend,
-                                  build_backend)
+                                  EmailService, MemoryBackend, PostmarkBackend,
+                                  SmtpBackend, build_backend)
 
 LINK = 'https://dough.example/reset-password/s3cr3t-t0k3n-value-here'
 
@@ -251,6 +254,167 @@ def test_the_console_backend_survives_a_stream_that_cannot_encode_the_frame():
     written = stream.buffer.getvalue().decode('cp1252')
     assert LINK in written, 'the link must survive whatever the frame does'
     assert 'sam@example.com' in written
+
+
+# ---------------------------------------------------------------------------
+# Postmark over HTTPS, for hosts that block SMTP
+# ---------------------------------------------------------------------------
+
+class _FakeResponse:
+    def __init__(self, payload):
+        self._payload = json.dumps(payload).encode('utf-8')
+
+    def read(self):
+        return self._payload
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+
+@pytest.fixture()
+def postmark(monkeypatch):
+    """A `PostmarkBackend` whose HTTP call is captured rather than made."""
+    sent = []
+
+    def _urlopen(request, timeout=None):
+        sent.append(request)
+        return _FakeResponse({'ErrorCode': 0, 'MessageID': 'abc-123'})
+
+    monkeypatch.setattr(urllib.request, 'urlopen', _urlopen)
+    backend = PostmarkBackend(token='server-token-value')
+    return EmailService(backend, from_address='dough@example'), sent
+
+
+def test_postmark_posts_the_message_as_json(postmark):
+    service, sent = postmark
+    service.send_verification_email('sam@example.com', LINK, username='sam')
+
+    assert len(sent) == 1
+    body = json.loads(sent[0].data.decode('utf-8'))
+    assert body['To'] == 'sam@example.com'
+    assert body['From'] == 'dough@example'
+    assert LINK in body['TextBody']
+    # Postmark routes on this and rejects a message whose stream does not
+    # exist, so a default of "outbound" is the difference between working out
+    # of the box and a 422 nobody expects.
+    assert body['MessageStream'] == 'outbound'
+
+
+def test_postmark_authenticates_with_the_server_token(postmark):
+    service, sent = postmark
+    service.send_verification_email('sam@example.com', LINK)
+    # urllib title-cases header names it is given.
+    assert sent[0].get_header('X-postmark-server-token') == 'server-token-value'
+
+
+def test_a_200_carrying_an_error_code_is_not_a_send(monkeypatch):
+    """The lesson the SMTP path taught expensively.
+
+    Postmark accepts an SMTP session, returns success, and turns the message
+    into a bounce afterwards — so "nothing raised" was reported as a delivered
+    mail that had never left. Over HTTP the outcome is in the response, and
+    ignoring it would reproduce exactly that bug in a place that can avoid it.
+    """
+    monkeypatch.setattr(urllib.request, 'urlopen',
+                        lambda request, timeout=None: _FakeResponse(
+                            {'ErrorCode': 412, 'Message': 'pending approval'}))
+    service = EmailService(PostmarkBackend(token='t'))
+
+    with pytest.raises(EmailError, match='412'):
+        service.send_verification_email('sam@example.com', LINK)
+
+
+def test_a_rejection_reports_the_code_and_not_postmark_s_prose(monkeypatch):
+    """Postmark's error text echoes fields from the request, and the request
+    carries a live link. The numeric code identifies the problem on its own."""
+    def _raise(request, timeout=None):
+        raise urllib.error.HTTPError(
+            'https://api.postmarkapp.com/email', 422, 'Unprocessable', {},
+            io.BytesIO(json.dumps({'ErrorCode': 300,
+                                   'Message': f'rejected: {LINK}'}).encode()))
+
+    monkeypatch.setattr(urllib.request, 'urlopen', _raise)
+    service = EmailService(PostmarkBackend(token='t'))
+
+    with pytest.raises(EmailError) as excinfo:
+        service.send_password_reset_email('sam@example.com', LINK)
+
+    assert '300' in str(excinfo.value)
+    assert LINK not in str(excinfo.value)
+
+
+def test_an_unreachable_postmark_is_a_delivery_failure(monkeypatch):
+    """Not a 500. This is the case that started the whole exercise."""
+    def _raise(request, timeout=None):
+        raise urllib.error.URLError('connection timed out')
+
+    monkeypatch.setattr(urllib.request, 'urlopen', _raise)
+    service = EmailService(PostmarkBackend(token='t'))
+
+    with pytest.raises(EmailError, match='could not be reached'):
+        service.send_verification_email('sam@example.com', LINK)
+
+
+def test_a_response_that_is_not_json_is_not_a_send(monkeypatch):
+    """A proxy or captive portal answering 200 with HTML is a real deployment
+    condition, and it must not read as delivered."""
+    class _Html:
+        def read(self):
+            return b'<html>you are behind a portal</html>'
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+    monkeypatch.setattr(urllib.request, 'urlopen',
+                        lambda request, timeout=None: _Html())
+    service = EmailService(PostmarkBackend(token='t'))
+
+    with pytest.raises(EmailError, match='not JSON'):
+        service.send_verification_email('sam@example.com', LINK)
+
+
+def test_neither_the_token_nor_the_link_reaches_the_log(postmark, caplog):
+    service, _sent = postmark
+    with caplog.at_level(logging.DEBUG):
+        service.send_password_reset_email('sam@example.com', LINK)
+
+    assert 'server-token-value' not in caplog.text
+    assert LINK not in caplog.text
+    # What is logged is the MessageID, which is the row in Postmark's Activity
+    # list — the only place the true outcome of a send is recorded.
+    assert 'abc-123' in caplog.text
+
+
+def test_a_postmark_backend_repr_does_not_carry_the_token():
+    """It is the whole credential — it authenticates the API and doubles as the
+    SMTP password — and a backend lands in tracebacks like anything else."""
+    assert 'server-token-value' not in repr(PostmarkBackend(token='server-token-value'))
+
+
+def test_postmark_is_built_from_configuration():
+    backend = build_backend({'MAIL_BACKEND': 'postmark', 'MAIL_POSTMARK_TOKEN': 'tok'})
+    assert isinstance(backend, PostmarkBackend)
+    assert backend.token == 'tok'
+
+
+def test_postmark_falls_back_to_the_smtp_password_for_its_token():
+    """With Postmark they are the same string — their SMTP endpoint takes the
+    server API token as both username and password. Reading it here makes
+    moving a working SMTP setup onto the API one variable, with no second copy
+    of the credential to keep in step."""
+    backend = build_backend({'MAIL_BACKEND': 'postmark', 'MAIL_PASSWORD': 'tok'})
+    assert backend.token == 'tok'
+
+
+def test_postmark_without_a_token_is_refused_rather_than_attempted():
+    with pytest.raises(EmailError, match='MAIL_POSTMARK_TOKEN'):
+        build_backend({'MAIL_BACKEND': 'postmark'})
 
 
 # ---------------------------------------------------------------------------
