@@ -231,10 +231,17 @@
      ═══════════════════════════════════════════════════════════════════════ */
 
   :root {
-    /* Default: THEMES.light — the warm paper look. A visitor with no saved
-       preference never runs applyTheme(), so this block *is* the default
-       theme; keep it in sync with THEMES.light and with the fallback literal
-       in the <head> init script above. */
+    /* THEMES['light'] — the warm paper look, shown in the picker as "Dough".
+       A visitor with no saved preference never runs applyTheme(), so this
+       block *is* what they see; keep it in sync with THEMES['light'] and with
+       the fallback literal in the <head> init script above.
+
+       Note the keys and the labels do not line up, and deliberately so: the
+       key `light` is labelled "Dough" and the key `default` is labelled
+       "Light". The labels were renamed; the keys were not, because a key is
+       what `localStorage['check-theme']` stores, and changing one would reset
+       the theme of every existing visitor. Match on the key, never the
+       label. */
     --bg:     #f0ebe3;
     --fg:     #5a5248;
     --panel:  #faf6f0;
@@ -878,10 +885,10 @@
      THEME SYSTEM  (mirrors Odysseus's THEMES object exactly)
      ═══════════════════════════════════════════════════════════════════════ */
   var THEMES = {
-    'default':   { bg:'#f3f4f6', fg:'#111827', panel:'#ffffff', border:'#e5e7eb', red:'#7c3aed', label:'Default'   },
+    'default':   { bg:'#f3f4f6', fg:'#111827', panel:'#ffffff', border:'#e5e7eb', red:'#7c3aed', label:'Light'     },
     'dark':      { bg:'#282c34', fg:'#9cdef2', panel:'#111111', border:'#355a66', red:'#e06c75', label:'Dark'       },
     'midnight':  { bg:'#0d1117', fg:'#c9d1d9', panel:'#161b22', border:'#30363d', red:'#f85149', label:'Midnight'   },
-    'light':     { bg:'#f0ebe3', fg:'#5a5248', panel:'#faf6f0', border:'#d4cdc2', red:'#c47d5a', label:'Light'      },
+    'light':     { bg:'#f0ebe3', fg:'#5a5248', panel:'#faf6f0', border:'#d4cdc2', red:'#c47d5a', label:'Dough'      },
     'paper':     { bg:'#faf8f5', fg:'#3b3836', panel:'#ffffff', border:'#d5d0c8', red:'#c5ac4a', label:'Paper'      },
     'cyberpunk': { bg:'#0a0a0f', fg:'#0ff0fc', panel:'#12101a', border:'#9b30ff', red:'#e040fb', label:'Cyberpunk'  },
     'retrowave': { bg:'#1a1a2e', fg:'#e94560', panel:'#16213e', border:'#533483', red:'#e94560', label:'Retrowave'  },
