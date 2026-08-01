@@ -1,19 +1,22 @@
 """Take a verified, online backup of the application database.
 
-Uses SQLite's backup API rather than copying the file. A plain `shutil.copy`
-of a live SQLite database can capture a torn page set if the sync scheduler
-thread (finance_sync/scheduler.py) commits mid-copy; `Connection.backup()`
-holds the right locks and produces a consistent snapshot without stopping the
-app.
+The mechanics moved to `dough/services/backup.py` in Phase 10.6 and did not
+change; this is now the command-line front end to them. The reason for the move
+is that backups are also taken on a schedule (`BackupScheduler`), and an
+operator's manual backup and the unattended one have to be the same code — a
+snapshot path that only this file exercises is one nobody runs nightly.
 
-Every backup is verified before it is kept:
+What that module guarantees, restated because it is why you would trust the
+output: the copy is made with SQLite's backup API rather than `shutil.copy`, so
+a commit from the sync thread mid-copy cannot tear it; and every copy is
+verified (`PRAGMA integrity_check`, plus per-table row counts against the
+source) before it is kept, with a failing copy deleted rather than left to be
+discovered at a restore.
 
-  1. `PRAGMA integrity_check` on the copy must return "ok".
-  2. Row counts for every table in the source must match the copy.
-
-A backup that fails either check is deleted rather than left on disk, because
-a corrupt file that *looks* like a backup is worse than no backup at all --
-it is the one you reach for at the worst possible moment.
+Backing up the database is not backing up the deployment. `.sync_encryption_key`
+holds the key to every stored institution credential and is not in this file;
+restoring without it gives you an application that starts and cannot sync. See
+docs/runbooks/disaster-recovery.md.
 
 Usage:
     python tools/backup_db.py                  # back up checkbook.db
@@ -25,111 +28,27 @@ Usage:
 from __future__ import annotations
 
 import argparse
-import datetime as dt
 import os
-import sqlite3
 import sys
 
+# Imported from the application package, so this command and the scheduled loop
+# run one implementation. Path insert rather than an installed package because
+# this repository is not pip-installed; `tools/dr_drill.py` does the same. From
+# `__file__` rather than `os.getcwd()` so it works from any directory.
 REPO_ROOT = os.path.abspath(os.path.dirname(os.path.dirname(__file__)))
+sys.path.insert(0, REPO_ROOT)
+
+from dough.services.backup import (  # noqa: E402  (after the path insert)
+    BackupError, backup, describe, prune, verify)
+
 DEFAULT_DB = os.path.join(REPO_ROOT, 'checkbook.db')
 DEFAULT_BACKUP_DIR = os.path.join(REPO_ROOT, 'backups')
+
+#: The CLI keeps its own retention default, unchanged from before the split.
+#: `BackupScheduler` keeps 7 instead, and the difference is deliberate: this
+#: number bounds a directory somebody is filling by hand, usually around a
+#: migration, while the scheduler's bounds a week of dailies.
 DEFAULT_KEEP = 5
-
-
-def _table_names(conn: sqlite3.Connection) -> list[str]:
-    rows = conn.execute(
-        "SELECT name FROM sqlite_master WHERE type='table' "
-        "AND name NOT LIKE 'sqlite_%' ORDER BY name").fetchall()
-    return [r[0] for r in rows]
-
-
-def _row_counts(conn: sqlite3.Connection) -> dict[str, int]:
-    # Table names come from sqlite_master, not user input, so the f-string
-    # here cannot carry injected SQL. Identifiers can't be parameterised.
-    return {t: conn.execute(f'SELECT COUNT(*) FROM "{t}"').fetchone()[0]
-            for t in _table_names(conn)}
-
-
-def verify(backup_path: str, expected_counts: dict[str, int] | None = None) -> list[str]:
-    """Return a list of problems; empty means the backup is sound."""
-    problems: list[str] = []
-    conn = sqlite3.connect(f'file:{backup_path}?mode=ro', uri=True)
-    try:
-        result = conn.execute('PRAGMA integrity_check').fetchone()[0]
-        if result != 'ok':
-            problems.append(f'integrity_check returned {result!r}')
-
-        if expected_counts is not None:
-            actual = _row_counts(conn)
-            for table, expected in sorted(expected_counts.items()):
-                if table not in actual:
-                    problems.append(f'table {table!r} missing from backup')
-                elif actual[table] != expected:
-                    problems.append(
-                        f'table {table!r}: {actual[table]} rows in backup, '
-                        f'{expected} in source')
-            for table in sorted(set(actual) - set(expected_counts)):
-                problems.append(f'table {table!r} present in backup but not source')
-    finally:
-        conn.close()
-    return problems
-
-
-def prune(backup_dir: str, stem: str, keep: int) -> list[str]:
-    """Delete all but the `keep` newest backups. Returns what was removed."""
-    if keep <= 0:
-        return []
-    candidates = sorted(
-        (e for e in os.scandir(backup_dir)
-         if e.is_file() and e.name.startswith(stem + '-') and e.name.endswith('.db')),
-        key=lambda e: e.stat().st_mtime,
-        reverse=True)
-    removed = []
-    for entry in candidates[keep:]:
-        os.remove(entry.path)
-        removed.append(entry.name)
-    return removed
-
-
-def backup(db_path: str, backup_dir: str, *, label: str | None = None,
-           keep: int = DEFAULT_KEEP) -> str:
-    if not os.path.exists(db_path):
-        raise SystemExit(f'No database at {db_path}')
-
-    os.makedirs(backup_dir, exist_ok=True)
-    stem = os.path.splitext(os.path.basename(db_path))[0]
-    stamp = dt.datetime.now().strftime('%Y%m%d-%H%M%S')
-    suffix = f'-{label}' if label else ''
-    dest_path = os.path.join(backup_dir, f'{stem}-{stamp}{suffix}.db')
-
-    source = sqlite3.connect(f'file:{db_path}?mode=ro', uri=True)
-    try:
-        expected = _row_counts(source)
-        dest = sqlite3.connect(dest_path)
-        try:
-            source.backup(dest)
-        finally:
-            dest.close()
-    finally:
-        source.close()
-
-    problems = verify(dest_path, expected)
-    if problems:
-        os.remove(dest_path)
-        for problem in problems:
-            print(f'  FAIL  {problem}', file=sys.stderr)
-        raise SystemExit(f'Backup verification failed; {dest_path} deleted.')
-
-    size_mb = os.path.getsize(dest_path) / (1024 * 1024)
-    total = sum(expected.values())
-    print(f'Backed up {db_path}')
-    print(f'       -> {dest_path}  ({size_mb:.2f} MB)')
-    print(f'   verified: integrity_check ok, {len(expected)} tables, {total} rows')
-
-    for name in prune(backup_dir, stem, keep):
-        print(f'    pruned: {name}')
-
-    return dest_path
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -154,7 +73,20 @@ def main(argv: list[str] | None = None) -> int:
         print(f'{args.verify_only}: integrity_check ok')
         return 0
 
-    backup(args.db, args.dir, label=args.label, keep=args.keep)
+    try:
+        dest_path = backup(args.db, args.dir, label=args.label)
+    except BackupError as exc:
+        print(f'  FAIL  {exc}', file=sys.stderr)
+        return 1
+
+    print(f'Backed up {args.db}')
+    print(f'       -> {describe(dest_path)}')
+    print('   verified: integrity_check ok, row counts match source')
+
+    stem = os.path.splitext(os.path.basename(args.db))[0]
+    for name in prune(args.dir, stem, args.keep):
+        print(f'    pruned: {name}')
+
     return 0
 
 

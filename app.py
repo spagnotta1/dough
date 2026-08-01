@@ -48,6 +48,7 @@ from dough.logging import configure_logging, current_trace_id
 # guarantee. `create_app` puts it on `app.extensions` so the dependency is a
 # fact about the application rather than a comment about an unused import.
 from dough.services import audit
+from dough.services.backup import install as install_backups
 from dough.services.cache import household_scope
 from dough.services.email import EmailService
 from dough.services.ratelimit import Limiter
@@ -701,6 +702,7 @@ def create_app(test_config=None, config_name=None):
         init_scheduler(app, interval_hours=app.config.get('SYNC_INTERVAL_HOURS', 12),
                        autostart=False)
 
+    install_backups(app)   # verified database snapshots on a schedule [10.6]
     return app
 
 def _ensure_dev_cert(base_dir):

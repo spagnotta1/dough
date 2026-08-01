@@ -283,6 +283,22 @@ class BaseConfig:
     # thread (used by the test suite for determinism).
     SYNC_SYNCHRONOUS = False
 
+    # --- Backups  [Phase 10.6] ----------------------------------------------
+    # On by default, which is the opposite of SYNC_AUTO_ENABLED's history and
+    # deliberately so. An unattended sync that nobody wanted makes network calls
+    # to somebody's bank; an unattended backup writes a file next to a file. The
+    # failure modes are not symmetric, and the one this defaults toward is the
+    # one where a deployment nobody configured still has yesterday's data.
+    BACKUP_AUTO_ENABLED = _bool('BACKUP_AUTO_ENABLED', True)
+    BACKUP_INTERVAL_HOURS = float(os.environ.get('BACKUP_INTERVAL_HOURS', 24))
+    # A week of dailies. The bound that matters is disk: these are whole copies
+    # of the database, so N snapshots is N times its size.
+    BACKUP_KEEP = _int('BACKUP_KEEP', 7)
+    # Empty means "beside the database file", which is what puts snapshots on
+    # the mounted volume in production rather than inside the replaceable image.
+    # See `dough.services.backup.backup_target`.
+    BACKUP_DIR = os.environ.get('BACKUP_DIR', '')
+
     # --- Session cookie -----------------------------------------------------
     # Assigned, never setdefault'd: Flask ships these keys already present, so
     # setdefault is a silent no-op. See docs/security.md SEC-0001.
@@ -429,6 +445,10 @@ class TestingConfig(BaseConfig):
     AUTO_UPGRADE_DB = False
     SYNC_AUTO_ENABLED = False
     SYNC_SYNCHRONOUS = True
+    # No backup thread under test. The suite's database is `sqlite://` or a
+    # tmp_path file, so `backup_target` would decline anyway -- this says so at
+    # the level of intent rather than relying on that.
+    BACKUP_AUTO_ENABLED = False
     # Captures every outbound message in a list instead of printing or sending
     # it, so a test can assert a reset mail went to the right address without a
     # network or a monkeypatch. See dough/services/email.py::MemoryBackend.
