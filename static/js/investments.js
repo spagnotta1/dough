@@ -301,15 +301,17 @@
     B.portfolioDonut = function () {
       var t = CheckCharts.tokens();
       var P = CheckCharts.palette();
-      var mix = data.netWorthMix || {};
-      var labels = Object.keys(mix);
+      // [label, value] pairs rather than an object: arc colours are assigned by
+      // position and have to line up with the server-rendered legend rows, so
+      // the order has to survive JSON serialisation.
+      var mix = data.netWorthMix || [];
       return withValueLabels('portfolioDonut', {
         type: 'doughnut',
         data: {
-          labels: labels,
+          labels: mix.map(function (e) { return e[0]; }),
           datasets: [{
-            data: labels.map(function (k) { return mix[k]; }),
-            backgroundColor: labels.map(function (_, i) { return P[i % P.length]; }),
+            data: mix.map(function (e) { return e[1]; }),
+            backgroundColor: mix.map(function (_, i) { return P[i % P.length]; }),
             borderWidth: 2,
             borderColor: t.surface
           }]
