@@ -193,23 +193,53 @@ nothing whatsoever. **That has not changed and should not** — two workers raci
 the same migration is the hazard `config.py` documents, and a process about to
 answer requests should not mutate a schema other processes are serving.
 
-The chain runs as a Railway pre-deploy command instead, declared in
-[`railway.toml`](../railway.toml):
+The chain runs from the start command instead, in `Procfile`:
 
-```toml
-[deploy]
-preDeployCommand = ["flask db upgrade"]
+```
+web: flask db upgrade && gunicorn --workers 1 --threads 4 --timeout 120 --bind 0.0.0.0:$PORT wsgi:app
 ```
 
-Railway runs it in its own container, once, with this service's environment and
-volume attached, and the new deployment receives traffic only if it exits zero.
-So a failed migration is a failed deploy with the previous version still
-serving — which is the right outcome, because a migration that cannot apply is a
-release that should not go out. No `FLASK_APP` is needed: Flask's discovery finds
-`create_app` in `app.py` at the image's working directory.
+Three properties, and each one is the reason this is not `AUTO_UPGRADE_DB`:
 
-Running it by hand over SSH still works and is the way to migrate without
-deploying:
+- **It runs before traffic.** `&&` is sequential: the migration finishes before
+  gunicorn is executed, so nothing is listening on `$PORT` until the schema is
+  current. Railway holds traffic on the previous deployment until the new one
+  passes its healthcheck, and a failed migration means gunicorn never starts, the
+  healthcheck never passes, and the old version keeps serving. A migration that
+  cannot apply is a release that should not go out.
+- **It runs once, and nothing races it.** This is a shell step in front of the
+  server, not code inside `create_app()`. Gunicorn has not forked when it runs,
+  so there is exactly one process regardless of `--workers`. The hazard
+  `config.py` documents is N workers each executing the boot-time upgrade; that
+  hazard needs N processes and there are none yet.
+- **It is outside the application.** `ProductionConfig.AUTO_UPGRADE_DB` is still
+  `False` and `create_app()` is unchanged, so nothing about how the app behaves
+  when a *person* starts it has moved.
+
+No `FLASK_APP` is needed: Flask's discovery finds `create_app` in `app.py` at the
+image's working directory.
+
+### Why not a pre-deploy command
+
+Because it cannot work here, and it fails silently. From Railway's volume
+documentation:
+
+> Volumes are not mounted during pre-deploy time, if your pre-deploy command
+> attempts to read or write data to a volume, it should be done as part of the
+> start command.
+
+The database is on the volume. A pre-deploy `flask db upgrade` therefore creates
+an empty SQLite file inside the throwaway pre-deploy container, migrates that,
+and exits zero. This was measured, not assumed: the first attempt logged
+`Running upgrade  -> 3b62eabfb5e5` and every revision after it — the entire chain
+from nothing — while `/data/checkbook.db` sat at head and untouched.
+
+`railway.toml` keeps the pre-deploy command anyway, relabelled as what it
+actually is: a check that the chain applies cleanly from an empty database, which
+fails the deploy if a revision is broken before the start command reaches the
+real data with it.
+
+Running the chain by hand is still the way to migrate without deploying:
 
 ```bash
 railway ssh --service dough "cd /app && flask db upgrade"

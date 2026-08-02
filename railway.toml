@@ -3,51 +3,39 @@
 # `Procfile` — continues to come from the service settings in the dashboard.
 
 [deploy]
-# Run the migration chain once, before the new deployment receives traffic.
+# A check that the migration chain applies cleanly from an empty database.
+# **This is not how the live database gets migrated** — see `Procfile` for that,
+# and read on for why it cannot be done here.
 #
-# ## Why this exists
+# ## Why the migration is not run here
 #
-# On 2026-08-02 `/rules` and `/goals` returned 500 on production for every
-# request. Nothing was wrong with the code: Phase 11A and 11B shipped
-# `20260802_08_category_rules` and `20260802_09_goals`, the application was
-# deployed, and the migration chain was not. Production sat at
-# `20260730_07_identity`, so `category_rules`, `goals` and `goal_contributions`
-# did not exist, and the two pages that select from them were the only two that
-# failed. `sqlite3.OperationalError: no such table: category_rules` reached a
-# person as "Something went wrong".
+# The obvious home for `flask db upgrade` is a pre-deploy command, and it does
+# not work on this deployment. Railway's volume documentation:
 #
-# The deploy step was documented (`docs/deploy-railway.md`, "Migrations are
-# manual") and it was simply not performed. A deploy step that depends on
-# somebody remembering it is a deploy step that eventually does not happen, and
-# the failure is invisible until a user opens the one page that needs the new
-# table.
+#   "Volumes are not mounted during pre-deploy time, if your pre-deploy command
+#    attempts to read or write data to a volume, it should be done as part of
+#    the start command."
 #
-# ## Why here rather than in the application
+# The database is on the volume, at `/data/checkbook.db`. So a pre-deploy
+# `flask db upgrade` resolves `DATABASE_URL` against a path that is not there,
+# creates an empty SQLite file in the throwaway container, migrates *that*, and
+# exits zero. Measured rather than assumed: the first deploy of this file logged
+# `Running upgrade  -> 3b62eabfb5e5` and every revision after it — the whole
+# chain from zero, against a database that had never existed — while the live
+# one sat at head, untouched, four hundred rows heavier.
 #
-# This is deliberately *not* `AUTO_UPGRADE_DB`. `ProductionConfig` assigns
-# `AUTO_UPGRADE_DB = False` as a class attribute and that stays true — see
-# `config.py` and ADR-0007 §5. Migrating from inside a serving process means
-# every worker races the same chain at boot, and it means a process that is
-# about to answer requests mutates a schema other processes are already serving.
+# A hook that reports success while protecting nothing is worse than no hook,
+# because the next person reads the config and stops looking.
 #
-# A pre-deploy command has neither property. Railway runs it in its own
-# container, exactly once, with this service's environment and volume attached,
-# and the new deployment only starts receiving traffic if it exits zero. So the
-# ordering the application could not guarantee — schema first, then traffic — is
-# guaranteed by the platform instead, and the single-worker reasoning in
-# `docs/deploy-railway.md` ("Why one worker") is untouched.
+# ## What it is instead
 #
-# A failure here is a failed deploy, not a half-migrated live service: the
-# previous deployment keeps serving. That is the right outcome. A migration that
-# cannot apply is a release that should not go out.
+# Left in place, deliberately, for the one thing it *can* do: a broken revision
+# — a syntax error, a bad `down_revision`, an `op` call that raises — fails the
+# deploy here, before the start command reaches the real database with it. That
+# is a fresh-database check only. It cannot catch a revision that is valid in
+# the abstract and wrong against production's actual data, which is what
+# `tools/backup_db.py` and the disaster-recovery runbook are for.
 #
-# ## Why the bare command works
-#
-# No `FLASK_APP` is set on this service and none is needed — Flask's own
-# discovery finds `create_app` in `app.py`, which is the repo root and the
-# image's working directory. Verified in the deployed container:
-# `flask db current` answers `20260802_09_goals (head)`.
-#
-# `flask db upgrade` is a no-op when the database is already at head, so a
-# deploy that changes no schema costs one container start and nothing else.
+# `flask db upgrade` needs no `FLASK_APP` — Flask's discovery finds `create_app`
+# in `app.py`, at the image's working directory.
 preDeployCommand = ["flask db upgrade"]
