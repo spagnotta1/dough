@@ -324,6 +324,84 @@ class FinancialCopilot:
 
         return self._cached_or_unavailable('copilot_budget_coach', produce)
 
+    def affordability(self, *, one_off=0.0, monthly=0.0, label=None,
+                      months=None):
+        """Feature 9 — can they afford it, and what does the answer depend on?
+
+        The verdict is decided by `dough/services/affordability.py` and handed
+        to the model already made. That separation is the whole design: a
+        language model asked "can I afford a $40,000 car" will produce a
+        confident, plausible, unverifiable answer, and the one thing it must not
+        do here is decide. It explains a band that arithmetic chose.
+
+        Not cached. A scenario is a one-off question with caller-supplied
+        numbers, so the cache key would be as large as the input and the hit
+        rate would be zero.
+        """
+        from dough.services import affordability
+
+        scenario = affordability.assess(
+            one_off=one_off, monthly=monthly, label=label,
+            months=months or self.months, anchor=self.anchor)
+
+        if not self.is_available:
+            # The structured assessment is still the useful half, and it needed
+            # no model to produce. Returning it without prose beats returning
+            # nothing at all.
+            return dict(scenario, available=False)
+
+        try:
+            data, _ = self.ai.generate_json(
+                messages=[{'role': 'user',
+                           'content': json.dumps(scenario, default=str)}],
+                system=(persona.COPILOT_STYLE + '\n\n' + persona.COPILOT_GROUNDING
+                        + '\n\n' + persona.AFFORDABILITY_FORMAT),
+                role='ask', max_tokens=800,
+                metadata={'surface': 'copilot_affordability'})
+        except AIError as exc:
+            logger.warning('affordability narration failed: %s', exc)
+            return dict(scenario, available=False, reason=exc.user_message)
+
+        # The computed verdict wins over anything the model wrote. Merged in
+        # this order deliberately: if a reply ever contained a `verdict` key it
+        # would be the model's opinion, and this is not a question it gets a
+        # vote on.
+        data.update(scenario)
+        data['available'] = True
+        return data
+
+    def investments(self):
+        """Feature 8 — a plain-English read on the portfolio.
+
+        Built on `wealth_context()`, which derives from `wealth_snapshot()` —
+        the same single derivation the Investments page renders and the existing
+        `/api/v1/copilot/investments/brief` sends. Reusing it is what keeps the
+        copilot from narrating a figure the page does not show.
+
+        What this adds over that endpoint is the grounding contract and a shape
+        that separates allocation, diversification and performance, so a reader
+        can find the part they wanted.
+        """
+        if not self.is_available:
+            return {'available': False}
+
+        def produce():
+            from dough.services.finance_context import wealth_context
+
+            data, _ = self.ai.generate_json(
+                messages=[{'role': 'user',
+                           'content': json.dumps(wealth_context(), default=str)}],
+                system=(persona.WEALTH_STYLE + '\n\n' + persona.COPILOT_GROUNDING
+                        + '\n\n' + persona.INVESTMENT_REVIEW_FORMAT),
+                role='brief', max_tokens=1000,
+                metadata={'surface': 'copilot_investment_review'})
+            data['available'] = True
+            for key in ('observations', 'questions'):
+                data.setdefault(key, [])
+            return data
+
+        return self._cached_or_unavailable('copilot_investment_review', produce)
+
     # -- questions ------------------------------------------------------------
 
     def answer(self, question, *, history=None, max_tokens=700):

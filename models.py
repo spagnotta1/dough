@@ -656,6 +656,138 @@ class CategoryRule(TenantScopedMixin, db.Model):
         return f'<CategoryRule {self.category}: {self.keyword!r}>'
 
 
+class Goal(TenantScopedMixin, db.Model):
+    """A financial goal the household is saving toward. [Phase 11B]
+
+    ## Why a table rather than a derived figure
+
+    Everything else in Phase 11 is *derived* — a trend, a score, an anomaly are
+    all opinions about transactions, recomputable from the ledger and owning no
+    state. A goal is the opposite: it is a statement of intent that no amount of
+    transaction history can infer. Nobody's spending reveals that they are
+    saving for a wedding rather than a deposit, and guessing would be exactly
+    the fabrication the rest of this phase exists to prevent.
+
+    That is the whole reason 11B needs a migration and 11A did not.
+
+    ## `saved` is stored, not computed
+
+    The tempting design is to derive progress from a linked account's balance.
+    It is wrong for the common case: people save for several goals in one
+    account, so a balance cannot be divided between them, and the first time
+    somebody adds a second goal every figure silently becomes the same number.
+
+    So the amount saved is recorded, and `GoalContribution` holds the history
+    behind it — which is what makes "you added $400 last month" answerable, and
+    momentum measurable, without a second guess about which deposit belonged to
+    which goal.
+
+    ## `target_date` is nullable, deliberately
+
+    "Pay off the card" and "$20,000 by June" are both goals, and only one has a
+    date. Requiring one would make the app ask for a number the user has not
+    decided, and any default it offered would become a deadline they never set.
+    `dough/services/goals.py` projects a completion date from momentum instead,
+    and labels it as a projection.
+    """
+
+    __tablename__ = 'goals'
+
+    #: The kinds the brief names. `kind` drives copy and ordering only — every
+    #: kind is the same arithmetic — so an unrecognised value degrades to
+    #: 'custom' rather than breaking a page.
+    KINDS = ('emergency_fund', 'debt_payoff', 'vacation', 'home', 'retirement',
+             'custom')
+
+    STATUSES = ('active', 'achieved', 'paused', 'archived')
+
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(80), nullable=False)
+    kind = db.Column(db.String(30), nullable=False, default='custom',
+                     server_default='custom')
+    target_amount = db.Column(db.Numeric(12, 2), nullable=False)
+    saved_amount = db.Column(db.Numeric(12, 2), nullable=False, default=0,
+                             server_default='0')
+    target_date = db.Column(db.Date, nullable=True)
+    #: What the household intends to put aside each month. Their number, not a
+    #: derived one — it is the plan, and `goals.py` compares actual momentum
+    #: against it. Nullable because a goal without a plan is still a goal.
+    monthly_target = db.Column(db.Numeric(12, 2), nullable=True)
+    status = db.Column(db.String(20), nullable=False, default='active',
+                       server_default='active')
+    note = db.Column(db.String(280), nullable=True)
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow,
+                           onupdate=datetime.utcnow)
+    achieved_at = db.Column(db.DateTime, nullable=True)
+
+    contributions = db.relationship(
+        'GoalContribution', backref='goal', lazy=True,
+        cascade='all, delete-orphan',
+        order_by='GoalContribution.occurred_on.desc()')
+
+    __table_args__ = (
+        # Leads with household_id for the reason every other unique index here
+        # does: without it, the second family to name a goal "Emergency fund"
+        # collides with the first, and the error reads as a duplicate-name
+        # problem rather than the tenancy bug it is.
+        Index('idx_goal_unique_name', 'household_id', 'name', unique=True),
+        Index('idx_goal_status', 'household_id', 'status'),
+    )
+
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'name': self.name,
+            'kind': self.kind,
+            'target_amount': float(self.target_amount),
+            'saved_amount': float(self.saved_amount),
+            'target_date': self.target_date.isoformat() if self.target_date else None,
+            'monthly_target': (float(self.monthly_target)
+                               if self.monthly_target is not None else None),
+            'status': self.status,
+            'note': self.note,
+        }
+
+    def __repr__(self):
+        return f'<Goal {self.name}: {self.saved_amount}/{self.target_amount}>'
+
+
+class GoalContribution(TenantScopedMixin, db.Model):
+    """One deposit toward a goal. [Phase 11B]
+
+    The history behind `Goal.saved_amount`. Kept as rows rather than only a
+    running total because "how much did I put aside last month?" and "is my
+    momentum improving?" are the two questions that make goal tracking worth
+    having, and a single number answers neither.
+
+    `amount` may be negative — money comes back out of a holiday fund, and a
+    withdrawal recorded as a contribution of `-200` keeps the arithmetic and the
+    history honest. Refusing withdrawals would push people to edit the total
+    directly, which loses the record entirely.
+    """
+
+    __tablename__ = 'goal_contributions'
+
+    id = db.Column(db.Integer, primary_key=True)
+    goal_id = db.Column(db.Integer, db.ForeignKey('goals.id'), nullable=False,
+                        index=True)
+    amount = db.Column(db.Numeric(12, 2), nullable=False)
+    occurred_on = db.Column(db.Date, nullable=False)
+    note = db.Column(db.String(200), nullable=True)
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+
+    __table_args__ = (
+        Index('idx_goal_contribution_when', 'household_id', 'goal_id',
+              'occurred_on'),
+    )
+
+    def to_dict(self):
+        return {'id': self.id, 'goal_id': self.goal_id,
+                'amount': float(self.amount),
+                'occurred_on': self.occurred_on.isoformat(), 'note': self.note}
+
+
 class LogEntry(TenantScopedMixin, db.Model):
     id = db.Column(db.Integer, primary_key=True)
     account_type = db.Column(db.String(50), nullable=False)  # 'checking' or 'savings'

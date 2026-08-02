@@ -76,6 +76,7 @@ SCOPED_TABLES = (
     'connected_accounts', 'conversations', 'financial_accounts', 'holdings',
     'household_invites', 'log_entry', 'portfolio_snapshots',
     'recurring_dismissals', 'sync_errors', 'sync_history', 'transactions',
+    'goals', 'goal_contributions',
 )
 
 #: The one table that carries `household_id` and is allowed to leave it NULL,
@@ -100,7 +101,8 @@ EXPECTED_NULLABLE_HOUSEHOLD = {
 #: 20260727_04, `api_tokens` from 20260730_05, `email_verifications` from
 #: 20260730_07.
 NEW_TABLES = ('households', 'household_invites', 'audit_events', 'api_tokens',
-              'email_verifications', 'category_rules')
+              'email_verifications', 'category_rules', 'goals',
+              'goal_contributions')
 
 #: The only tables a synchronization run may add rows to. Shorthand for
 #: `--may-grow sync`. Deliberately a short list: a sync that inserted a budget
@@ -125,6 +127,9 @@ EXPECTED_UNIQUE = {
     # add STARBUCKS to Coffee collides with the first, and the failure reads as
     # a duplicate-rule error rather than the tenancy bug it is.
     'category_rules': ('household_id', 'category', 'keyword'),
+    # [Phase 11B] Without household_id leading it, the second family to name a
+    # goal "Emergency fund" collides with the first.
+    'goals': ('household_id', 'name'),
     'transactions': ('household_id', 'account_name', 'date', 'description',
                      'amount'),
 }

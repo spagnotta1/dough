@@ -367,6 +367,56 @@ def test_budgets_ranked_by_how_far_over_they_project(household):
     assert [b['category'] for b in projected['budgets']] == ['Blown', 'Safe']
 
 
+# ── Affordability (F9) and investments (F8) ─────────────────────────────────
+
+def test_affordability_returns_the_computed_verdict_without_a_model(household):
+    """The structured half is the useful half, and it needs no model.
+
+    A language model asked "can I afford a car" produces a confident, plausible,
+    unverifiable answer. Here the verdict is arithmetic, so it survives the AI
+    being switched off entirely.
+    """
+    result = _copilot(configured=False).affordability(monthly=200,
+                                                      label='A car payment')
+
+    assert result['available'] is False
+    assert result['verdict'] in ('comfortable', 'tight', 'not_without_changes',
+                                 'cannot_assess')
+    assert result['assumptions'] and result['uncertainties']
+
+
+def test_the_model_cannot_overturn_the_computed_verdict(household, monkeypatch):
+    """The one question the model does not get a vote on."""
+    copilot = _copilot(configured=True)
+    computed = copilot.affordability(one_off=999999)['verdict']
+
+    monkeypatch.setattr(
+        copilot.ai, 'generate_json',
+        lambda *a, **k: ({'answer': 'Sure, go for it!',
+                          'verdict': 'comfortable'}, None))
+
+    result = copilot.affordability(one_off=999999)
+    assert result['verdict'] == computed == 'not_without_changes'
+
+
+def test_the_affordability_prompt_forbids_saying_yes(household):
+    from dough.ai import persona
+
+    assert 'never say yes' in persona.AFFORDABILITY_FORMAT
+    assert 'never present this as financial advice' in persona.AFFORDABILITY_FORMAT
+
+
+def test_the_investment_prompt_forbids_recommendations(household):
+    from dough.ai import persona
+
+    assert 'No recommendations' in persona.INVESTMENT_REVIEW_FORMAT
+    assert 'not a licensed advisor' in persona.INVESTMENT_REVIEW_FORMAT
+
+
+def test_investments_degrades_without_a_model(household):
+    assert _copilot(configured=False).investments() == {'available': False}
+
+
 # ── Wiring ──────────────────────────────────────────────────────────────────
 
 def test_current_copilot_uses_the_apps_ai_service(household):

@@ -48,12 +48,50 @@ which serialises a real context and greps it.
 | **Orchestration** | `dough/ai/copilot.py` | `FinancialCopilot` |
 | 1 — Monthly review | `dough/ai/copilot.py` | `monthly_review()` |
 | 5 — Budget coaching | `dough/ai/copilot.py` | `budget_coaching()` |
-| 13 — Prompts | `dough/ai/persona.py` | `COPILOT_GROUNDING` + two formats |
+| 8 — Investment intelligence | `dough/ai/copilot.py` | `investments()` |
+| 9 — Affordability analysis | `affordability.py` + `copilot.py` | `assess()`, `affordability()` |
+| 13 — Prompts | `dough/ai/persona.py` | `COPILOT_GROUNDING` + four formats |
 
-Features 8 and 9 (investment intelligence, affordability analysis) are the two
-AI surfaces still to build; both are now a method on `FinancialCopilot` rather
-than a new integration. Feature 10 (goals) is Phase 11B, because it is the only
-part that needs a table.
+**All fifteen Phase 11A features are implemented.** Feature 10 (goal tracking)
+is Phase 11B, because it is the only part that needs a table.
+
+### Feature 9 — affordability, and the word it never says
+
+`affordability.assess()` decides the verdict; the model only explains it. That
+split is the point: a language model asked "can I afford a $40,000 car" produces
+a confident, plausible, unverifiable answer, and this is not a question it gets
+a vote on. `test_the_model_cannot_overturn_the_computed_verdict` asserts the
+computed value wins even when the reply contains its own.
+
+The verdict is a **band with a reason** — `comfortable`, `tight`,
+`not_without_changes`, `cannot_assess` — never a yes. `AFFORDABILITY_FORMAT`
+says so in as many words, because the module can see a few months of somebody's
+past and the user is the only one who knows whether next year resembles it.
+
+Three things it does that a naive version would not:
+
+- **Medians, not means.** One tax refund moves a mean enough to change the
+  verdict, in the direction that encourages spending.
+- **It judges the worst month, not just the typical one.** A commitment that
+  fits the median month and not the worst one fails occasionally, which is
+  exactly when a household can least absorb it.
+- **It excludes months before the household's first record.** Counting them as
+  zero-income months let two months of history look like six mostly-empty ones,
+  which passed the "enough history" check and then reported a median income of
+  zero. Same distinction `trends._trim_leading_absence` draws.
+
+Every answer carries its `assumptions` and its `uncertainties`, and the latter
+is never empty — it is the honest half of an affordability answer, not a
+disclaimer to bury.
+
+### Feature 8 — investments
+
+Built on `wealth_context()` over `wealth_snapshot()` — the same single
+derivation the Investments page renders, so the copilot cannot narrate a figure
+the page does not show. What it adds is the grounding contract and a shape that
+separates allocation, diversification and performance. `INVESTMENT_REVIEW_FORMAT`
+forbids recommendations outright: describing a trade-off is the job, resolving
+it is not.
 
 ---
 
@@ -331,7 +369,7 @@ belongs in 11B alongside the goals table.
 
 ## Testing
 
-185 tests added across nine files, all green, with the existing suite unchanged.
+209 tests added across ten files, all green, with the existing suite unchanged.
 
 ```
 tests/test_analytics.py       25   aggregation, windows, one-query guarantee, tenancy
@@ -342,7 +380,8 @@ tests/test_health.py          15   inputs, unmeasurable dimensions, no dashboard
 tests/test_finsearch.py       21   the seven questions from the brief, literally
 tests/test_ai_context.py      22   context shape, provenance, size, tenancy
 tests/test_insights_hub.py    13   the consolidated page, and what it did not remove
-tests/test_copilot.py         25   coordination, cache scoping, retrieval, projections
+tests/test_copilot.py         30   coordination, cache scoping, retrieval, projections
+tests/test_affordability.py   24   two scenario shapes, and never saying yes
 ```
 
 Most of the trend and anomaly tests assert a **negative** — that nothing is
@@ -416,10 +455,10 @@ is recorded here rather than dismissed, and it is worth a look if it recurs.
   surfaces onto `FinancialCopilot` changes what long-standing prompts see, which
   deserves its own pass and its own before/after comparison rather than being
   bundled here.
-- **`brief()`, `monthly_review()` and `budget_coaching()` have no route yet.**
-  They are tested and callable; nothing serves them. That is deliberate — adding
-  endpoints means `docs/api/openapi.yaml` entries in the same commit, and the
-  question of which surface each belongs on is a product decision.
+- **The generated surfaces have no route yet.** `brief()`, `monthly_review()`,
+  `budget_coaching()`, `affordability()` and `investments()` are tested and
+  callable; nothing serves them over HTTP. That is deliberate — adding endpoints
+  means `docs/api/openapi.yaml` entries in the same commit, and which surface
+  each belongs on is a product decision.
 - No API endpoints were added, so `docs/api/openapi.yaml` is unchanged.
-- Investment intelligence (F8) and affordability (F9) are unbuilt.
 - Goals, projections and long-term planning are Phase 11B.

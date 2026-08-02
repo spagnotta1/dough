@@ -105,6 +105,12 @@ _SCOPED_TABLES = (
     # they pay — so an export that omitted them would be incomplete and a
     # deletion that skipped them would leave that behind.
     ('category_rules', 'CategoryRule'),
+    # [Phase 11B] A goal is data the household created by hand and cannot
+    # recover from anywhere else, which makes omitting it from an export worse
+    # than omitting a derived figure. Contributions come with it: the history
+    # is what makes the total meaningful.
+    ('goals', 'Goal'),
+    ('goal_contributions', 'GoalContribution'),
 )
 
 #: Column names never included in an export, matched case-insensitively as a

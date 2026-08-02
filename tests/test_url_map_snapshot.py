@@ -141,12 +141,18 @@ EXPECTED_RULES = {
     # Added in Phase 8, deliberately and recorded here rather than silently:
     # these are the two URLs a supervisor and a load balancer call, and they are
     # public by design (a health check behind a login is not a health check).
+    ("/health/live", ("GET",)),
+    ("/health/ready", ("GET",)),
+    # [Phase 11B] Goal tracking -- the only part of Phase 11 with its own table.
+    ("/goals", ("GET",)),
+    ("/goals/<int:goal_id>/contribute", ("POST",)),
+    ("/goals/<int:goal_id>/delete", ("POST",)),
+    ("/goals/<int:goal_id>/edit", ("POST",)),
+    ("/goals/new", ("POST",)),
     # [Phase 11A] The consolidated Insights hub. Added, not moved: /anomalies
     # and /recurring below are still served and still linked, they simply no
     # longer each hold a slot in the primary nav.
     ("/insights", ("GET",)),
-    ("/health/live", ("GET",)),
-    ("/health/ready", ("GET",)),
     ("/household", ("GET",)),
     ("/household/invites", ("POST",)),
     ("/household/invites/<int:invite_id>/revoke", ("POST",)),

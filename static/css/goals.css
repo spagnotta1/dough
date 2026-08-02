@@ -1,0 +1,142 @@
+/* Goals — Phase 11B.
+ *
+ * Only what the design system does not carry. Cards, progress bars, inputs,
+ * buttons, chips and the collapsed <details> all come from design-system.css
+ * and insights.css; these rules are the goal card's own layout.
+ */
+
+.goal-total {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.25rem;
+  min-width: 12rem;
+}
+
+.goal-total__figure {
+  font-size: clamp(1.4rem, 3.5vw, 1.9rem);
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+.goal-total__bar { width: 100%; margin-top: 0.15rem; }
+
+/* auto-fit rather than a media query: the breakpoint follows the container,
+   so the grid behaves the same inside a narrow column as on a wide page. */
+.goal-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(20rem, 1fr));
+  gap: 1.25rem;
+}
+
+.goal__head { align-items: flex-start; gap: 1rem; }
+
+.goal__pct {
+  font-size: 1.35rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.goal__bar { margin: 0.85rem 0 1.1rem; }
+.goal__fill--done { background: var(--ok-mark, var(--accent)); }
+
+/* ── Facts ──────────────────────────────────────────────────────────────── */
+
+.goal__facts {
+  display: grid;
+  gap: 0.65rem;
+  margin: 0 0 1rem;
+}
+
+.goal__fact { margin: 0; }
+
+.goal__fact dt {
+  font-size: 0.74rem;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  opacity: 0.6;
+  margin-bottom: 0.1rem;
+}
+
+.goal__fact dd {
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.goal__flag {
+  display: inline-block;
+  padding: 0.05rem 0.45rem;
+  border-radius: 999px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  background: var(--surface-2, rgba(127, 127, 127, 0.08));
+}
+
+.goal__flag--warn { color: var(--warn-mark, inherit); }
+.goal__flag--done { color: var(--ok-mark, inherit); }
+
+.goal__note {
+  margin: 0 0 1rem;
+  padding-inline-start: 0.7rem;
+  border-inline-start: 2px solid var(--surface-3, rgba(127, 127, 127, 0.18));
+}
+
+/* ── Forms ──────────────────────────────────────────────────────────────── */
+
+.goal__add {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.goal__add input[type="number"] { flex: 1 1 7rem; min-width: 0; }
+.goal__add input[type="date"] { flex: 1 1 9rem; min-width: 0; }
+
+.goal__hint { margin: 0.4rem 0 0; opacity: 0.7; }
+
+.goal__more { margin-top: 1rem; }
+
+.goal__edit,
+.goal__new {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
+  gap: 0.75rem 1rem;
+  align-items: end;
+}
+
+.goal__edit label,
+.goal__new label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
+.goal__edit button { align-self: end; }
+.goal__new-submit { display: flex; align-items: end; }
+
+.goal__more form + form { margin-top: 0.9rem; }
+
+/* A label that exists only for a screen reader. The design system has no
+   utility for this, and the alternative -- an aria-label on the input -- is
+   what the date field beside it already uses. */
+.ds-visually-hidden-label {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+@media (max-width: 30rem) {
+  .goal__add { flex-direction: column; align-items: stretch; }
+  .goal-total { align-items: flex-start; }
+}

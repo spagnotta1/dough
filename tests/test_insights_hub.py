@@ -175,18 +175,30 @@ def test_the_dismiss_endpoints_still_work(populated):
 
 
 def test_the_primary_nav_carries_insights_and_not_the_two_it_absorbed(populated):
-    """Six links, not seven — the room the consolidation was for."""
+    """The consolidation freed a slot, and Phase 11B spent it on Goals.
+
+    The count went 7 -> 6 when Anomalies and Recurring folded into Insights,
+    then back to 7 when Goals arrived. That is the intended trade rather than a
+    regression: the same width now carries two destinations people visit
+    (Insights, Goals) instead of two single-table pages they rarely did, and
+    the nav is still only revealed at 1024px where seven links fit — see the
+    comment above `#primary-nav` in base.html.
+
+    What must stay true is the substance below: the two absorbed pages are not
+    in the primary nav, and are still reachable.
+    """
     import re
 
     body = _get(populated).get_data(as_text=True)
     nav = re.search(r'<div id="primary-nav">(.*?)</div>', body, re.DOTALL).group(1)
 
     assert '/insights' in nav
+    assert '/goals' in nav
     assert '/anomalies' not in nav
     assert '/recurring' not in nav
     # Counted on the anchors, not on the class: "Ask Dough" carries
-    # `nav-link nav-link--accent`, so counting the class name reports seven.
-    assert nav.count('<a href=') == 6
+    # `nav-link nav-link--accent`, so counting the class name over-reports.
+    assert nav.count('<a href=') == 7
 
 
 def test_the_absorbed_pages_stay_reachable_from_the_touch_menu(populated):

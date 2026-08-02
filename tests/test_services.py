@@ -175,6 +175,25 @@ SERVICE_FUNCTIONS = {
     # `remove_category` is new, and its absence was a user-visible bug: the
     # Rules page's delete button called `remove_rule(category, None)`, matched
     # nothing, and reported success.
+    # Feature 9. Two shapes -- a one-off cost out of savings, a recurring
+    # commitment out of surplus -- and a verdict that is deliberately a band
+    # with a reason, never a yes. Medians rather than means throughout: one tax
+    # refund moves a mean enough to change the answer, in the direction that
+    # encourages spending.
+    'affordability': ('assess', 'capacity'),
+    # ---------------------------------------------------------------------
+    # Phase 11B. Feature 10 -- the only part of Phase 11 that needs a table.
+    # ---------------------------------------------------------------------
+    # A goal is a statement of intent, not an opinion about transactions: no
+    # amount of history reveals that somebody is saving for a wedding rather
+    # than a deposit, and inferring it would be the fabrication the rest of the
+    # phase exists to prevent. `momentum` is the recent rate rather than the
+    # lifetime average, because an abandoned goal has a healthy average and no
+    # momentum, and `projection` returns None rather than a distant date when
+    # there is no rate to project from.
+    'goals': ('list_goals', 'describe', 'momentum', 'projection', 'summary',
+              'create_goal', 'update_goal', 'contribute', 'delete_goal',
+              'contributions'),
     'rules_service': ('all_rules', 'as_engine', 'categories', 'seed_defaults',
                       'add_rule', 'remove_rule', 'remove_category',
                       'rename_category', 'reorder', 'replace_all',

@@ -357,6 +357,75 @@ BUDGET_COACH_FORMAT = (
 )
 
 
+#: Feature 9 — affordability. The verdict and every figure arrive already
+#: computed by `dough/services/affordability.py`; this prompt exists to stop the
+#: model turning a band into a promise.
+AFFORDABILITY_FORMAT = (
+    "Answer whether this household can afford the scenario described.\n\n"
+
+    "`verdict` has already been decided from their records, and so has every "
+    "figure. Explain it — do not re-derive it, and do not overturn it.\n"
+    "  comfortable          it fits with room to spare\n"
+    "  tight                it fits, and leaves little margin\n"
+    "  not_without_changes  it does not fit as things stand\n"
+    "  cannot_assess        there is not enough history to say\n\n"
+
+    "The hard rule: **never say yes.** Not 'you can afford this', not 'this is "
+    "affordable', not 'you're fine'. Say what the numbers do — what it leaves, "
+    "what it takes, what it depends on — and let them decide. You are reading "
+    "their past; they are the only one who knows whether next year looks like "
+    "it.\n\n"
+
+    "Reply with ONLY a JSON object, no prose around it, shaped like:\n"
+    '{"answer": "2-4 sentences. Lead with what the numbers show, name the '
+    'figure that decides it, and say what it would leave them with.",\n'
+    ' "depends_on": ["the 2-3 things that would change this answer, in their '
+    'terms"],\n'
+    ' "assumptions": ["restate the assumptions you were given, in plain words, '
+    'shortened"],\n'
+    ' "if_they_want_it": "One concrete thing that would move it from tight to '
+    'comfortable, or from not-yet to possible — or null if it already is."}\n\n'
+
+    "Use `uncertainties` — they are the honest part of the answer, not a "
+    "disclaimer to bury. If the worst month in the window would not have "
+    "covered it, say so plainly; that is the month that decides whether a "
+    "commitment is survivable. Never imply a future outcome is certain, and "
+    "never present this as financial advice."
+)
+
+#: Feature 8 — the investments read. Longer honesty rules than anywhere else,
+#: for the reason `WEALTH_STYLE` gives: this is where a confident overstatement
+#: could move real money.
+INVESTMENT_REVIEW_FORMAT = (
+    "Give a plain-English read on this portfolio.\n\n"
+    "Reply with ONLY a JSON object, no prose around it, shaped like:\n"
+    '{"summary": "2-4 sentences on what this portfolio is and how it is doing. '
+    'Name the single thing that most defines it.",\n'
+    ' "allocation": "1-2 sentences on how it is split, and what that split '
+    'means in practice.",\n'
+    ' "diversification": "1-2 sentences. Name any real concentration by '
+    'position, sector or region, with the figure.",\n'
+    ' "performance": "1-2 sentences on gains and losses, saying what the '
+    'figure does and does not cover.",\n'
+    ' "observations": [{"title": "Short phrase", "detail": "One sentence with '
+    'the figure and why it matters."}],\n'
+    ' "questions": ["2-3 short follow-up questions in the user\'s voice"]}\n\n'
+
+    "What you must not do here:\n"
+    "- **No recommendations.** Not buy, not sell, not rebalance, not "
+    "'consider shifting'. Describe what is there and what it implies; naming a "
+    "trade-off is your job, resolving it is not.\n"
+    "- Sector, region and market-cap labels come from a built-in reference "
+    "table, not a market feed. `allocation_coverage` says how much of the "
+    "portfolio could be classified — say 'estimated' when you lean on them, and "
+    "say so explicitly if coverage is low.\n"
+    "- `unrealized_gain` covers only holdings with a recorded cost basis. If "
+    "`basis_note` says otherwise, do not quote a gain as if it covered "
+    "everything.\n"
+    "- You are not a licensed advisor, and nothing here is tax advice."
+)
+
+
 #: The chat non-streaming path, which returns a fixed JSON envelope. Predates
 #: the persona and deliberately keeps its own voice: it feeds a legacy analysis
 #: view rather than the conversational UI.

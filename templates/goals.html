@@ -1,0 +1,247 @@
+{% extends "base.html" %}
+
+{% block title %}Goals · Dough{% endblock %}
+
+{#
+  Goals — Phase 11B.
+
+  A goal is a status, so it gets a card rather than a table row: the progress
+  bar, what is left, and what the current pace means for the finish date. The
+  projection is always shown with the basis it rests on, because a date with no
+  stated basis reads as a promise.
+#}
+
+{% block content %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/insights.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/goals.css') }}">
+
+<div class="ds-stack ds-stack-6">
+
+  <header class="ds-section__head ds-rise">
+    <div>
+      <h1 class="ds-section__title">Goals</h1>
+      <p class="ds-section__sub">
+        What you are saving toward, and what your current pace means for it.
+      </p>
+    </div>
+    {% if summary.count %}
+    <div class="goal-total">
+      <span class="ds-num goal-total__figure">{{ summary.total_saved|money }}</span>
+      <span class="ds-meta">of {{ summary.total_target|money }} across
+        {{ summary.count }} goal{{ '' if summary.count == 1 else 's' }}</span>
+      {% if summary.overall_progress_pct is not none %}
+      <div class="ds-progress goal-total__bar" role="img"
+           aria-label="Overall progress: {{ summary.overall_progress_pct }} percent">
+        <span class="ds-progress__fill"
+              style="width: {{ summary.overall_progress_pct }}%"></span>
+      </div>
+      {% endif %}
+    </div>
+    {% endif %}
+  </header>
+
+  {% if summary.stalled or summary.behind_plan %}
+  <section class="ds-card ds-rise" aria-labelledby="goalAttention">
+    <h2 id="goalAttention" class="ds-section__title">Worth a look</h2>
+    <ul class="ins-list">
+      {% for name in summary.stalled %}
+      <li class="ins-item ins-item--warning">
+        <p class="ins-item__what">Nothing has gone into <strong>{{ name }}</strong>
+          in the last {{ 3 }} months.</p>
+      </li>
+      {% endfor %}
+      {% for name in summary.behind_plan %}
+      {% if name not in summary.stalled %}
+      <li class="ins-item ins-item--info">
+        <p class="ins-item__what"><strong>{{ name }}</strong> is going slower
+          than the monthly amount you set.</p>
+      </li>
+      {% endif %}
+      {% endfor %}
+    </ul>
+  </section>
+  {% endif %}
+
+  {# ── The goals ───────────────────────────────────────────────────────── #}
+  {% if summary.goals %}
+  <div class="goal-grid">
+    {% for goal in summary.goals %}
+    <section class="ds-card ds-rise goal" aria-labelledby="goal-{{ goal.id }}">
+
+      <div class="ds-card__head goal__head">
+        <div>
+          <h2 id="goal-{{ goal.id }}" class="ds-section__title">{{ goal.name }}</h2>
+          <p class="ds-meta">
+            {{ goal.saved_amount|money }} of {{ goal.target_amount|money }}
+            {%- if goal.remaining %} · {{ goal.remaining|money }} to go{% endif %}
+          </p>
+        </div>
+        <span class="ds-num goal__pct">{{ goal.progress_pct }}%</span>
+      </div>
+
+      <div class="ds-progress goal__bar" role="img"
+           aria-label="{{ goal.name }}: {{ goal.progress_pct }} percent of {{ goal.target_amount|money }}">
+        <span class="ds-progress__fill {{ 'goal__fill--done' if goal.is_complete }}"
+              style="width: {{ goal.progress_pct }}%"></span>
+      </div>
+
+      {# ── Pace and projection ──────────────────────────────────────── #}
+      <dl class="goal__facts">
+        <div class="goal__fact">
+          <dt>Recent pace</dt>
+          <dd>
+            {% if goal.momentum.stalled %}
+              <span class="goal__flag goal__flag--warn">nothing in
+                {{ goal.momentum.window_months }} months</span>
+            {% else %}
+              {{ goal.momentum.per_month|money }}/mo
+              {%- if goal.pace.vs_plan %}
+                <span class="ds-meta">
+                  vs {{ goal.pace.vs_plan.planned|money }} planned
+                </span>
+              {% endif %}
+            {% endif %}
+          </dd>
+        </div>
+
+        <div class="goal__fact">
+          <dt>Projected finish</dt>
+          <dd>
+            {% if goal.projection.complete %}
+              <span class="goal__flag goal__flag--done">reached</span>
+            {% elif goal.projection.date %}
+              {{ goal.projection.date }}
+              <span class="ds-meta">({{ goal.projection.basis }},
+                {{ goal.projection.confidence }} confidence)</span>
+            {% else %}
+              <span class="ds-meta">{{ goal.projection.basis }}</span>
+            {% endif %}
+          </dd>
+        </div>
+
+        {% if goal.pace.vs_target_date %}
+        <div class="goal__fact">
+          <dt>Your deadline</dt>
+          <dd>
+            {{ goal.pace.vs_target_date.target_date }}
+            {% if goal.pace.vs_target_date.overdue %}
+              <span class="goal__flag goal__flag--warn">passed</span>
+            {% elif goal.pace.required_per_month %}
+              <span class="ds-meta">needs
+                {{ goal.pace.required_per_month|money }}/mo</span>
+            {% endif %}
+          </dd>
+        </div>
+        {% endif %}
+      </dl>
+
+      {% if goal.note %}<p class="ds-meta goal__note">{{ goal.note }}</p>{% endif %}
+
+      {# ── Record a contribution ────────────────────────────────────── #}
+      <form method="POST" action="{{ url_for('goals.contribute', goal_id=goal.id) }}"
+            class="goal__add">
+        {{ csrf_field() }}
+        <label class="ds-visually-hidden-label" for="amount-{{ goal.id }}">
+          Amount to add to {{ goal.name }}
+        </label>
+        <input type="number" step="0.01" id="amount-{{ goal.id }}" name="amount"
+               class="ds-input ds-input--sm" placeholder="Amount" required>
+        <input type="date" name="occurred_on" class="ds-input ds-input--sm"
+               aria-label="Date for {{ goal.name }} contribution">
+        <button type="submit" class="ds-btn ds-btn--sm">Add</button>
+      </form>
+      <p class="ds-meta goal__hint">
+        A negative amount records money taken back out.
+      </p>
+
+      <details class="ins-details goal__more">
+        <summary class="ins-details__summary">
+          <span class="ds-meta">Edit or delete</span>
+          <span class="ins-details__chevron" aria-hidden="true">▾</span>
+        </summary>
+        <div class="ins-details__body">
+          <form method="POST" action="{{ url_for('goals.edit', goal_id=goal.id) }}"
+                class="goal__edit">
+            {{ csrf_field() }}
+            <label>Name
+              <input type="text" name="name" value="{{ goal.name }}"
+                     class="ds-input ds-input--sm" maxlength="80" required>
+            </label>
+            <label>Target
+              <input type="number" step="0.01" name="target_amount"
+                     value="{{ goal.target_amount }}" class="ds-input ds-input--sm"
+                     required>
+            </label>
+            <label>Per month
+              <input type="number" step="0.01" name="monthly_target"
+                     value="{{ goal.monthly_target or '' }}"
+                     class="ds-input ds-input--sm">
+            </label>
+            <label>Deadline
+              <input type="date" name="target_date"
+                     value="{{ goal.target_date or '' }}"
+                     class="ds-input ds-input--sm">
+            </label>
+            <button type="submit" class="ds-btn ds-btn--sm ds-btn--secondary">
+              Save changes
+            </button>
+          </form>
+
+          <form method="POST" action="{{ url_for('goals.delete', goal_id=goal.id) }}">
+            {{ csrf_field() }}
+            <button type="submit" class="ds-btn ds-btn--sm ds-btn--danger"
+                    onclick="return confirm('Delete “{{ goal.name }}” and its whole contribution history?')">
+              Delete goal
+            </button>
+          </form>
+        </div>
+      </details>
+    </section>
+    {% endfor %}
+  </div>
+  {% else %}
+  <div class="ds-card ds-rise">
+    <div class="ds-empty">
+      <p class="ds-empty__body">
+        No goals yet. Add one below — an emergency fund, a holiday, a deposit —
+        and I will track the pace and tell you what it means for the finish date.
+      </p>
+    </div>
+  </div>
+  {% endif %}
+
+  {# ── Add a goal ──────────────────────────────────────────────────────── #}
+  <section class="ds-card ds-rise" aria-labelledby="newGoal">
+    <h2 id="newGoal" class="ds-section__title">Add a goal</h2>
+    <form method="POST" action="{{ url_for('goals.create') }}" class="goal__new">
+      {{ csrf_field() }}
+      <label>What for
+        <input type="text" name="name" class="ds-input" maxlength="80"
+               placeholder="Emergency fund" required>
+      </label>
+      <label>Kind
+        <select name="kind" class="ds-input">
+          {% for value, label in kinds %}
+          <option value="{{ value }}">{{ label }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label>Target amount
+        <input type="number" step="0.01" min="0.01" name="target_amount"
+               class="ds-input" placeholder="6000" required>
+      </label>
+      <label>Per month <span class="ds-meta">(optional)</span>
+        <input type="number" step="0.01" name="monthly_target" class="ds-input"
+               placeholder="500">
+      </label>
+      <label>Deadline <span class="ds-meta">(optional)</span>
+        <input type="date" name="target_date" class="ds-input">
+      </label>
+      <div class="goal__new-submit">
+        <button type="submit" class="ds-btn">Add goal</button>
+      </div>
+    </form>
+  </section>
+
+</div>
+{% endblock %}

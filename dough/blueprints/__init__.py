@@ -28,7 +28,7 @@ to sign in, nobody to invite, and `/join` would create a login the application
 has no way to use.
 """
 
-from dough.blueprints import (budgets, chat, core, health, insights,
+from dough.blueprints import (budgets, chat, core, goals, health, insights,
                               investments, legal, log, rules, transactions)
 
 #: Registered in every configuration.
@@ -38,8 +38,8 @@ from dough.blueprints import (budgets, chat, core, health, insights,
 #: not signed in and is deciding whether to — putting them behind the auth
 #: condition would hide them from exactly their audience, and Plaid's production
 #: review fetches the privacy URL anonymously.
-ALWAYS = (core.bp, transactions.bp, insights.bp, budgets.bp, rules.bp, log.bp,
-          chat.bp, investments.bp, health.bp, legal.bp)
+ALWAYS = (core.bp, transactions.bp, insights.bp, budgets.bp, goals.bp,
+          rules.bp, log.bp, chat.bp, investments.bp, health.bp, legal.bp)
 
 
 def register(app):

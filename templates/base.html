@@ -750,16 +750,22 @@
              nav covers the same destinations below this width. See the
              #primary-nav rules in the <style> block above.
 
-             [Phase 11A] Six links now, not seven: "Anomalies" and "Recurring"
-             were narrow one-table pages that each held a permanent slot in a
-             bar that already did not fit, and both are reached from the
-             Insights hub, which is where somebody actually goes looking for
-             them. Neither page was removed — see dough/blueprints/insights.py. #}
+             [Phase 11A] "Anomalies" and "Recurring" were narrow one-table
+             pages that each held a permanent slot in a bar that already did not
+             fit, and both are reached from the Insights hub, which is where
+             somebody actually goes looking for them. Neither page was removed —
+             see dough/blueprints/insights.py.
+
+             [Phase 11B] Goals takes one of the two freed slots. Back to seven,
+             which is the count this bar was sized for at the 1024px reveal, and
+             a better use of it: two destinations people visit rather than two
+             single-table pages they rarely did. #}
           <div id="primary-nav">
             <a href="/" class="nav-link">Dashboard</a>
             <a href="/transactions" class="nav-link">Transactions</a>
             <a href="/insights" class="nav-link">Insights</a>
             <a href="/budgets" class="nav-link">Budgets</a>
+            <a href="/goals" class="nav-link">Goals</a>
             <a href="/investments" class="nav-link">Investments</a>
             <a href="/chat" class="nav-link nav-link--accent">Ask Dough</a>
           </div>
@@ -831,6 +837,7 @@
     <div class="mm-body">
       <p class="mm-title">More</p>
       <a href="/investments" class="mm-link">Investments</a>
+      <a href="/goals" class="mm-link">Goals</a>
       <a href="/insights" class="mm-link">Insights</a>
       <a href="/anomalies" class="mm-link">Anomaly review</a>
       <a href="/recurring" class="mm-link">Recurring</a>
@@ -1156,7 +1163,7 @@
   }
 
   var _navPaths = ['/', '/upload', '/transactions', '/insights', '/anomalies',
-                   '/recurring', '/budgets', '/rules', '/investments',
+                   '/recurring', '/budgets', '/goals', '/rules', '/investments',
                    '/connections', '/sync-history', '/chat'];
 
   function _isSpaLink(href) {
