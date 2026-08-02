@@ -112,6 +112,27 @@ def _recategorize():
     Re-deriving is O(transactions) in Python, which is affordable here: this
     runs on an explicit rule edit, not on a page view, and the alternative is
     a query that is subtly wrong on the two cases that matter most.
+
+    ## What this costs: manual category assignments do not survive
+
+    The invariant is that a category is a pure function of the description and
+    the current rule set. `Transaction.category` carries no provenance, so a
+    category a person set by hand — through `/update_category`,
+    `/update_categories_bulk`, `PUT /transactions/<id>` or the v1 bulk endpoint
+    — is indistinguishable from one a rule derived, and this rewrites it like
+    any other. Adding an unrelated rule can therefore silently undo hand
+    categorisation elsewhere in the ledger, reported only as a count in the
+    flash message.
+
+    That is the intended behaviour today and not an oversight: fixing a
+    miscategorised row by hand is not durable, and fixing the rule is. It is
+    still the thing people are surprised by.
+
+    TODO (rule engine, future enhancement): preserve manual assignments across
+    re-derivation, or warn before a bulk rewrite. The blocker is schema rather
+    than logic — with no `category_source` column there is nothing to decide
+    from. `docs/rule-engine.md` holds the worked example and the three options,
+    and is the specification for that work.
     """
     engine = rules_service.as_engine()
     changed = 0

@@ -206,6 +206,13 @@ You can customize how transactions are automatically categorized:
    - Keyword to match in transaction descriptions
 3. Remove existing rules as needed
 
+Every rule edit recalculates the category on **every** transaction in the
+household, so a rule fixes the past as well as the future. The cost is that a
+category you set by hand on the Transactions page is not protected from it —
+nothing in the schema tells the two apart, so the next rule edit can overwrite
+it. `docs/rule-engine.md` explains why, with the worked example, and holds the
+TODO for preserving manual overrides.
+
 ## Households and invitations
 
 A **household** is the unit of isolation: everyone in one sees the same

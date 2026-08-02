@@ -184,23 +184,51 @@ Verify rather than assume:
 railway ssh "python -c \"import sqlite3;c=sqlite3.connect('/data/checkbook.db');print(c.execute('select count(*) from transactions').fetchone())\""
 ```
 
-## Migrations are manual
+## Migrations run before the deploy, not inside the app
 
 `ProductionConfig` assigns `AUTO_UPGRADE_DB = False` as a class attribute, so
 under `APP_ENV=production` the environment variable is read and then discarded.
 Setting `AUTO_UPGRADE_DB=1` looks like it enables boot-time migrations and does
-nothing whatsoever.
+nothing whatsoever. **That has not changed and should not** — two workers racing
+the same migration is the hazard `config.py` documents, and a process about to
+answer requests should not mutate a schema other processes are serving.
 
-That is the intended design — two workers racing the same migration is the
-hazard `config.py` documents — but it means a schema change needs the chain run
-deliberately, over SSH:
+The chain runs as a Railway pre-deploy command instead, declared in
+[`railway.toml`](../railway.toml):
 
-```bash
-railway ssh "cd /app && FLASK_APP=app:create_app flask db upgrade"
+```toml
+[deploy]
+preDeployCommand = ["flask db upgrade"]
 ```
 
-The uploaded database is already stamped at the head revision
-(`20260730_07_identity`), so nothing is needed today.
+Railway runs it in its own container, once, with this service's environment and
+volume attached, and the new deployment receives traffic only if it exits zero.
+So a failed migration is a failed deploy with the previous version still
+serving — which is the right outcome, because a migration that cannot apply is a
+release that should not go out. No `FLASK_APP` is needed: Flask's discovery finds
+`create_app` in `app.py` at the image's working directory.
+
+Running it by hand over SSH still works and is the way to migrate without
+deploying:
+
+```bash
+railway ssh --service dough "cd /app && flask db upgrade"
+```
+
+### Why this exists
+
+On 2026-08-02, `/rules` and `/goals` returned 500 for every request on
+production. The code was fine. Phase 11A and 11B shipped
+`20260802_08_category_rules` and `20260802_09_goals`, the application deployed,
+and the migration chain did not run — production sat at `20260730_07_identity`,
+so `category_rules`, `goals` and `goal_contributions` did not exist. The two
+pages that select from those tables were the only two that failed, which is why
+the dashboard looked healthy throughout.
+
+The deploy step was documented, in this section, and was simply not performed. A
+step that depends on somebody remembering it is a step that eventually does not
+happen, and the failure stays invisible until a user opens the one page that
+needs the new table.
 
 ## 7. Re-register the Plaid redirect URIs
 
