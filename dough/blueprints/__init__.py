@@ -29,11 +29,17 @@ has no way to use.
 """
 
 from dough.blueprints import (budgets, chat, core, health, insights,
-                              investments, log, rules, transactions)
+                              investments, legal, log, rules, transactions)
 
 #: Registered in every configuration.
+#:
+#: `legal` is unconditional, including when `AUTH_ENABLED` is off. The privacy
+#: policy and the terms are the two pages most often read by somebody who has
+#: not signed in and is deciding whether to — putting them behind the auth
+#: condition would hide them from exactly their audience, and Plaid's production
+#: review fetches the privacy URL anonymously.
 ALWAYS = (core.bp, transactions.bp, insights.bp, budgets.bp, rules.bp, log.bp,
-          chat.bp, investments.bp, health.bp)
+          chat.bp, investments.bp, health.bp, legal.bp)
 
 
 def register(app):

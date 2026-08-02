@@ -166,6 +166,37 @@ def test_production_warns_about_configuration_it_will_still_run(monkeypatch):
     assert 'PUBLIC_BASE_URL' in notes
 
 
+def test_production_warns_when_the_legal_pages_are_unconfigured(monkeypatch):
+    """The only warning here whose symptom is visible to the public.
+
+    Unset renders a literal `[OPERATING ENTITY - set LEGAL_ENTITY]` marker on a
+    live `/privacy`, which is worse than a log line nobody reads — so it is
+    worth pinning that the log line at least exists.
+
+    A warning and not a `validate` failure: an internal or demo deployment with
+    no outside users is a real state, and refusing to boot over it is how
+    operators learn to set override variables.
+    """
+    _production_ready(monkeypatch)
+    for name in ('LEGAL_ENTITY', 'LEGAL_CONTACT_EMAIL', 'LEGAL_JURISDICTION'):
+        monkeypatch.setattr(ProductionConfig, name, '', raising=False)
+
+    assert get_config('production') is ProductionConfig
+
+    notes = ' '.join(ProductionConfig.warnings())
+    assert 'LEGAL_ENTITY' in notes
+    assert 'placeholder' in notes
+
+
+def test_production_warns_when_nothing_is_watching_for_errors(monkeypatch):
+    """An unset DSN means a 500 is reported nowhere at all."""
+    _production_ready(monkeypatch)
+    monkeypatch.setattr(ProductionConfig, 'SENTRY_DSN', '', raising=False)
+
+    notes = ' '.join(ProductionConfig.warnings())
+    assert 'SENTRY_DSN' in notes
+
+
 def test_production_never_generates_a_secret_key_file(monkeypatch, tmp_path):
     """Selecting production must have no filesystem side effects.
 

@@ -1,0 +1,170 @@
+/* ══════════════════════════════════════════════════════════════════════════
+   Legal — the privacy policy and terms of service.  [Phase 10.7]
+   ──────────────────────────────────────────────────────────────────────────
+   Long-form prose, which nothing else in this application is. Every other page
+   is a dashboard, a table or a form; these two are read top to bottom by
+   somebody deciding whether to trust the product with their bank account.
+
+   So the constraints are different from the rest of the CSS:
+
+   * A measure. Text set the full width of a desktop viewport is unreadable at
+     this length, so the column is capped in `ch` — a unit that tracks the font
+     rather than the viewport, which is what keeps the line length right when a
+     reader has bumped their default size.
+   * Real vertical rhythm between sections, because the structure IS the
+     navigation here. There is no table of contents; the headings are it.
+   * Nothing interactive. No cards, no hover states, no motion.
+
+   Same token discipline as landing.css: every colour is a design-system token
+   or a color-mix of one, so all 16 themes work and a reader who chose Midnight
+   three months ago gets Midnight here. There are no literal colours in this
+   file.
+   ══════════════════════════════════════════════════════════════════════════ */
+
+.legal {
+  /* ~68 characters. The long-standing readability range is 45–75; the top of
+     it, because this is dense reference prose that people scan as much as
+     read, and a narrower measure makes a policy feel even longer than it is. */
+  --legal-measure: 68ch;
+
+  max-width: var(--legal-measure);
+  margin: 0 auto;
+  padding: 2.5rem 1.25rem 5rem;
+  color: var(--fg);
+  /* Generous for body copy: this is the one place in the app where somebody
+     reads several hundred words in a row. */
+  line-height: 1.7;
+}
+
+/* ── The head ─────────────────────────────────────────────────────────── */
+
+.legal__head {
+  padding-bottom: 1.75rem;
+  margin-bottom: 2.5rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.legal__head h1 {
+  font-size: clamp(1.9rem, 5vw, 2.6rem);
+  line-height: 1.15;
+  margin: 0 0 .5rem;
+}
+
+.legal__meta {
+  margin: 0 0 1.25rem;
+  font-size: .875rem;
+  /* Present but recessive: the date matters after an incident and never
+     before one. */
+  color: color-mix(in oklab, var(--fg) 58%, transparent);
+}
+
+.legal__lede {
+  margin: 0;
+  font-size: 1.075rem;
+  color: color-mix(in oklab, var(--fg) 82%, transparent);
+}
+
+/* ── Sections ─────────────────────────────────────────────────────────── */
+
+.legal section { margin-bottom: 2.75rem; }
+
+.legal h2 {
+  font-size: 1.3rem;
+  line-height: 1.25;
+  /* Bound to the text below it rather than floating between two blocks: the
+     asymmetry is what makes the structure legible while scrolling fast. */
+  margin: 0 0 .85rem;
+}
+
+.legal h3 {
+  font-size: 1.02rem;
+  margin: 1.6rem 0 .5rem;
+  color: color-mix(in oklab, var(--fg) 88%, transparent);
+}
+
+.legal p { margin: 0 0 1rem; }
+.legal p:last-child { margin-bottom: 0; }
+
+.legal ul {
+  margin: 0 0 1rem;
+  padding-left: 1.35rem;
+}
+
+.legal li { margin-bottom: .55rem; }
+.legal li:last-child { margin-bottom: 0; }
+
+.legal strong { color: var(--fg); font-weight: 650; }
+
+.legal code {
+  font-size: .9em;
+  padding: .1em .35em;
+  border-radius: .3em;
+  background: color-mix(in oklab, var(--fg) 8%, transparent);
+}
+
+.legal a {
+  color: var(--accent-ink);
+  text-underline-offset: .2em;
+}
+
+/* ── Callouts ─────────────────────────────────────────────────────────── */
+/* The two sections that exist because the product has an LLM in it and a bank
+   connection behind it: "not advice" and "the model can be wrong". They are
+   the clauses most likely to matter and the most likely to be skimmed past, so
+   they get a rule and a panel rather than being one more <h2> in the run. */
+
+.legal__callout {
+  padding: 1.4rem 1.5rem;
+  border-radius: .8rem;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent-on);
+  background: color-mix(in oklab, var(--panel) 92%, var(--fg) 3%);
+}
+
+.legal__callout h2 { margin-top: 0; }
+
+/* ── Foot ─────────────────────────────────────────────────────────────── */
+
+.legal__foot {
+  margin-top: 3rem;
+  padding-top: 1.5rem;
+  border-top: 1px solid var(--border);
+  font-size: .9rem;
+  color: color-mix(in oklab, var(--fg) 65%, transparent);
+}
+
+.legal__foot p { margin: 0 0 .4rem; }
+
+/* ── The stripped nav ─────────────────────────────────────────────────── */
+
+.legal-nav {
+  border-bottom: 1px solid var(--border);
+  background: var(--panel);
+}
+
+.legal-nav__inner {
+  max-width: var(--legal-measure, 68ch);
+  margin: 0 auto;
+  padding: .85rem 1.25rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.legal-nav__links {
+  display: flex;
+  gap: 1.1rem;
+  font-size: .9rem;
+}
+
+.legal-nav__links a { color: color-mix(in oklab, var(--fg) 72%, transparent); }
+.legal-nav__links a:hover { color: var(--fg); }
+
+/* ── Phone ────────────────────────────────────────────────────────────── */
+
+@media (max-width: 40rem) {
+  .legal { padding: 1.75rem 1.1rem 3.5rem; }
+  .legal section { margin-bottom: 2.25rem; }
+  .legal__callout { padding: 1.15rem 1.15rem; }
+}

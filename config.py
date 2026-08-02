@@ -314,6 +314,32 @@ class BaseConfig:
     REQUIRE_EMAIL_VERIFICATION = _bool('REQUIRE_EMAIL_VERIFICATION', False)
     PUBLIC_BASE_URL = os.environ.get('PUBLIC_BASE_URL', '').rstrip('/')
 
+    # --- Error monitoring  [Phase 10.7] -------------------------------------
+    # Empty means off, which is the state of every development machine and the
+    # test suite. See dough/monitoring.py for what is scrubbed before an event
+    # leaves the process -- the answer is "local variables and request bodies
+    # wholesale", because a stack frame here can hold somebody's bank data.
+    SENTRY_DSN = os.environ.get('SENTRY_DSN', '')
+    # Performance tracing, off by default. It samples request timings, not
+    # payloads, but it is a second stream of data leaving the process and
+    # should be a deliberate choice rather than a default.
+    SENTRY_TRACES_SAMPLE_RATE = float(
+        os.environ.get('SENTRY_TRACES_SAMPLE_RATE', 0) or 0)
+    # Tags each event with the deployed commit, so an error can be traced to a
+    # version. Railway exposes the commit as RAILWAY_GIT_COMMIT_SHA.
+    RELEASE = (os.environ.get('RELEASE')
+               or os.environ.get('RAILWAY_GIT_COMMIT_SHA', ''))
+
+    # --- Legal pages  [Phase 10.7] ------------------------------------------
+    # Who is promising what, to whom, under which law. Read by /privacy and
+    # /terms, and left EMPTY by default on purpose: an unset value renders as a
+    # visible `[...]` marker rather than as a plausible-looking default. There
+    # is no safe default for the name of the entity accepting liability, and a
+    # guess is worse than a blank because a blank gets noticed.
+    LEGAL_ENTITY = os.environ.get('LEGAL_ENTITY', '')
+    LEGAL_CONTACT_EMAIL = os.environ.get('LEGAL_CONTACT_EMAIL', '')
+    LEGAL_JURISDICTION = os.environ.get('LEGAL_JURISDICTION', '')
+
     # Session lifetimes, seconds.  [Phase 6]
     SESSION_IDLE_SECONDS = _int('SESSION_IDLE_SECONDS', 12 * 3600)
     SESSION_ABSOLUTE_SECONDS = _int('SESSION_ABSOLUTE_SECONDS', 7 * 86400)
@@ -544,6 +570,31 @@ class ProductionConfig(BaseConfig):
                 'PUBLIC_BASE_URL is unset: links in outbound mail are built '
                 'from the incoming request\'s Host header, which is '
                 'client-controlled. Set it to this deployment\'s canonical URL.')
+        # A warning rather than a refusal, on the same principle as the rest of
+        # this list -- but the loudest one here, because it is the only entry
+        # whose symptom is visible to the public. An unset value renders a
+        # literal `[OPERATING ENTITY - set LEGAL_ENTITY]` on a live /privacy
+        # page, which is worse than an operator seeing a log line.
+        #
+        # Not in `validate`, because an internal or demo deployment with no
+        # outside users is a real state and should not be unable to boot over
+        # it. `docs/runbooks/launch-checklist.md` is what makes this a gate on
+        # opening registration.
+        missing_legal = [name for name, value in (
+            ('LEGAL_ENTITY', cls.LEGAL_ENTITY),
+            ('LEGAL_CONTACT_EMAIL', cls.LEGAL_CONTACT_EMAIL),
+            ('LEGAL_JURISDICTION', cls.LEGAL_JURISDICTION)) if not value]
+        if missing_legal:
+            notes.append(
+                f'{", ".join(missing_legal)} unset: /privacy and /terms are '
+                'serving visible placeholder markers to the public. Set these '
+                'before anyone outside your household can reach this '
+                'deployment. See docs/runbooks/launch-checklist.md.')
+        if not cls.SENTRY_DSN:
+            notes.append(
+                'SENTRY_DSN is unset: unhandled exceptions are written to this '
+                'process\'s logs and reported nowhere. You will learn about a '
+                '500 when a user tells you.')
         return notes
 
 

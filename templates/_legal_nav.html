@@ -1,0 +1,21 @@
+{# Minimal chrome for the two legal pages.  [Phase 10.7]
+
+   base.html's nav is seven links that all need a session. These pages are read
+   most often by somebody deciding whether to sign up at all, so that nav would
+   be seven bounces to /login. This is the brand, a way back, and nothing else.
+
+   Same override landing.html makes, for the same reason. #}
+<nav class="legal-nav">
+  <div class="legal-nav__inner">
+    <a href="{{ url_for('core.dashboard') }}" class="nav-brand">
+      <span class="dough-avatar dough-avatar-sm" aria-hidden="true">
+        <span data-dough="greeting" data-dough-size="36" data-dough-tight></span>
+      </span>
+      Dough
+    </a>
+    <span class="legal-nav__links">
+      <a href="{{ url_for('legal.privacy') }}">Privacy</a>
+      <a href="{{ url_for('legal.terms') }}">Terms</a>
+    </span>
+  </div>
+</nav>

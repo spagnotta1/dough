@@ -29,6 +29,17 @@ Copy them somewhere that is not this disk.
 
 ## Taking a backup (routine)
 
+**Since Phase 10.6 this happens by itself.** The serving process runs a backup
+thread (`dough/services/backup.py`): one snapshot a minute after startup, then
+every `BACKUP_INTERVAL_HOURS` (default 24), keeping `BACKUP_KEEP` (default 7),
+written beside the database file — `/data/backups` in production. Watch it with
+`railway logs | grep dough.backup`; a failure logs `Backup failed` and the loop
+retries at the next interval rather than dying.
+
+That changes what this runbook is for. The routine case is covered; what is
+below is the recovery, and the manual command remains the right thing to run
+before anything risky:
+
 ```
 python tools/backup_db.py                      # -> backups/checkbook-<stamp>.db
 python tools/backup_db.py --label pre-upgrade  # before anything risky
@@ -47,6 +58,24 @@ A backup that was never verified is a hope, not a backup:
 ```
 python tools/backup_db.py --verify-only backups/checkbook-<stamp>.db
 ```
+
+### What the test suite checks on every commit
+
+The drill below is the human procedure and still has to be run by hand,
+because most of what it proves involves real key files and a real deployment.
+Two links in the chain are now machine-checked, in `tests/test_backup.py`:
+
+- `test_a_backup_restores_after_the_database_is_destroyed` overwrites the live
+  file with zeroes, copies the snapshot back, and asserts the rows are there.
+  It corrupts rather than deletes, because that is the failure that actually
+  happens.
+- `test_a_restored_database_still_runs_the_application` boots a real app
+  against the restored file and requires `/health/ready` to answer 200 — a
+  database can pass `integrity_check` and still be at a schema revision the
+  code cannot serve.
+
+Neither replaces the drill. They mean a regression in the restore *mechanism*
+fails a test rather than waiting for the next incident.
 
 ## The recovery procedure
 

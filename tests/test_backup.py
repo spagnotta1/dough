@@ -286,6 +286,92 @@ def test_the_scheduler_declines_a_database_with_no_file(tmp_path):
         'an in-memory database must not get a backup thread')
 
 
+# ---------------------------------------------------------------------------
+# Restore — the half a backup exists for
+# ---------------------------------------------------------------------------
+
+def test_a_backup_restores_after_the_database_is_destroyed(tmp_path):
+    """The whole point, end to end.
+
+    Everything above tests that a snapshot is *written* correctly. This is the
+    only test that exercises what the snapshots are for, and it is deliberately
+    brutal about the middle step: the source file is overwritten with garbage
+    rather than politely deleted, because a corrupt database is the failure that
+    actually happens and a missing one is the failure that is easy to test.
+
+    `docs/runbooks/disaster-recovery.md` is the human procedure. This is the
+    part of it a machine can run on every commit.
+    """
+    source = _make_db(tmp_path / 'checkbook.db', rows=7)
+    snapshot = backup(source, str(tmp_path / 'backups'))
+
+    with open(source, 'r+b') as handle:
+        handle.seek(0)
+        handle.write(b'\x00' * 4096)
+
+    # Restore is a copy of the verified snapshot over the live path -- which is
+    # what the runbook's step 5 does, and is worth pinning as *sufficient*: no
+    # replay, no migration, no manual repair.
+    import shutil
+    shutil.copy(snapshot, source)
+
+    assert verify(source) == [], 'the restored database must pass integrity_check'
+    conn = sqlite3.connect(f'file:{source}?mode=ro', uri=True)
+    try:
+        assert conn.execute('SELECT COUNT(*) FROM t').fetchone()[0] == 7
+        assert conn.execute('SELECT v FROM t ORDER BY id').fetchall()[0][0] == 'row-0'
+    finally:
+        conn.close()
+
+
+def test_a_restored_database_still_runs_the_application(tmp_path):
+    """A file that passes integrity_check is not yet a working installation.
+
+    The distinction the disaster-recovery drill exists to catch: a restored
+    database can be structurally perfect and still fail to serve, because the
+    schema is at a revision the code no longer matches. Booting an application
+    against the restored file and answering a request is what proves the restore
+    is usable rather than merely readable.
+    """
+    from finance_sync import scheduler as scheduler_module
+
+    from app import create_app
+    from models import db
+
+    live = tmp_path / 'live.db'
+    scheduler_module._scheduler = None
+    application = create_app(test_config={
+        'TESTING': True,
+        'SQLALCHEMY_DATABASE_URI': f'sqlite:///{live}',
+        'SYNC_AUTO_ENABLED': False,
+    })
+    with application.app_context():
+        db.create_all()
+        db.session.remove()
+        # Windows will not unlink a file the engine still has open, and the
+        # simulated loss below is an unlink. Disposing here also makes the test
+        # closer to the real thing: a restore happens with the application
+        # stopped, not with a live connection pool pointing at the old file.
+        db.engine.dispose()
+
+    snapshot = backup(str(live), str(tmp_path / 'backups'))
+    os.remove(live)
+
+    import shutil
+    shutil.copy(snapshot, live)
+
+    scheduler_module._scheduler = None
+    restored = create_app(test_config={
+        'TESTING': True,
+        'SQLALCHEMY_DATABASE_URI': f'sqlite:///{live}',
+        'SYNC_AUTO_ENABLED': False,
+    })
+    response = restored.test_client().get('/health/ready')
+    scheduler_module._scheduler = None
+
+    assert response.status_code == 200, response.get_data(as_text=True)
+
+
 def test_backups_are_off_under_test_and_on_by_default(app):
     """The switch, from both ends.
 

@@ -110,7 +110,14 @@ SERVICE_FUNCTIONS = {
     # container image that the next deploy erases, which is a failure nothing
     # reports until a restore.
     'backup': ('backup', 'verify', 'prune', 'backup_target', 'describe',
-               'init_backup_scheduler', 'get_backup_scheduler', 'install'),
+               'contents', 'init_backup_scheduler', 'get_backup_scheduler',
+               'install'),
+    # Phase 10.7. The erasure and portability half of the privacy policy.
+    # `deletion_preview` is public and not an internal detail on purpose: the
+    # confirmation page is rendered from it, so what somebody is warned about is
+    # produced by the same code that does the removing.
+    'account_lifecycle': ('export_account', 'delete_account',
+                          'deletion_preview'),
 }
 
 # The closure names Phase 3 removed from app.py. Any of these reappearing as a

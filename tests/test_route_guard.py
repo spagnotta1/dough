@@ -76,10 +76,19 @@ PASSWORD = 'hunter2boat'
 # session-lifetime check still runs for a request that has a session --
 # `_require_login` was changed in the same phase so that `@public` cannot be a
 # way to skip it. See dough/blueprints/core.py.
+#: `legal.privacy` and `legal.terms` are public deliberately and not
+#: incidentally. They are read most often by somebody who has *not* signed in
+#: and is deciding whether to hand this application a bank connection, and
+#: Plaid's production review fetches the privacy URL anonymously. A policy
+#: behind a login is a policy nobody can check before agreeing to it.
+#:
+#: They are also the safest possible public routes: two templates, no query, no
+#: database access, and no request input reaches either one.
 PUBLIC_ENDPOINTS = {'api_v1_auth.login', 'auth.forgot_password', 'auth.join',
                     'auth.login', 'auth.register', 'auth.reset_password',
                     'auth.setup', 'auth.verify_email', 'core.dashboard',
-                    'health.live', 'health.ready', 'static'}
+                    'health.live', 'health.ready', 'legal.privacy',
+                    'legal.terms', 'static'}
 
 # Sample values for URL converters, so every rule can actually be requested.
 # Keyed on the werkzeug converter class name lowercased with 'converter'
@@ -213,6 +222,11 @@ def test_public_endpoint_set_is_minimal(guard_app):
     two: the health probes. Phase 10 added one: `api_v1_auth.login`. Phase 10.5
     added five, which is the largest single expansion this set has had and the
     reason it is worth restating what the marker does and does not mean.
+    Phase 10.7 added the two this docstring predicted: `legal.privacy` and
+    `legal.terms`. They are the least dangerous entries here -- each renders one
+    template, reads no request input and touches no database -- and they have to
+    be public to do their job, since both are read by somebody deciding whether
+    to sign up and Plaid's review fetches the privacy URL anonymously.
 
     `@public` suppresses the *login redirect*. It suppresses nothing else. It
     does not disable tenancy (an anonymous request binds no household, so a
@@ -229,7 +243,8 @@ def test_public_endpoint_set_is_minimal(guard_app):
                                  'auth.join', 'auth.login', 'auth.register',
                                  'auth.reset_password', 'auth.setup',
                                  'auth.verify_email', 'core.dashboard',
-                                 'health.live', 'health.ready', 'static'}
+                                 'health.live', 'health.ready', 'legal.privacy',
+                                 'legal.terms', 'static'}
     actual = {r.endpoint for r in guard_app.url_map.iter_rules()} & PUBLIC_ENDPOINTS
     assert actual == reachable_without_session
 

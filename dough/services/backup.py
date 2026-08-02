@@ -195,16 +195,27 @@ def backup(db_path: str, backup_dir: str, *, label: str | None = None) -> str:
     return dest_path
 
 
-def describe(dest_path: str) -> str:
-    """One line about a written snapshot, for a log or a terminal."""
-    size_mb = os.path.getsize(dest_path) / (1024 * 1024)
-    conn = sqlite3.connect(f'file:{dest_path}?mode=ro', uri=True)
+def contents(path: str) -> tuple[float, int, int]:
+    """`(size_mb, tables, rows)` for a written snapshot."""
+    size_mb = os.path.getsize(path) / (1024 * 1024)
+    conn = sqlite3.connect(f'file:{path}?mode=ro', uri=True)
     try:
         counts = _row_counts(conn)
     finally:
         conn.close()
-    return (f'{dest_path} ({size_mb:.2f} MB, {len(counts)} tables, '
-            f'{sum(counts.values())} rows)')
+    return size_mb, len(counts), sum(counts.values())
+
+
+def describe(dest_path: str) -> str:
+    """One line about a written snapshot, for a log or a terminal.
+
+    Used by the scheduler's log. The CLI formats its own two lines instead,
+    because `docs/runbooks/disaster-recovery.md` quotes them as the output an
+    operator must see -- a runbook read under pressure should not be the place
+    somebody discovers that a message was reworded.
+    """
+    size_mb, tables, rows = contents(dest_path)
+    return f'{dest_path} ({size_mb:.2f} MB, {tables} tables, {rows} rows)'
 
 
 # ---------------------------------------------------------------------------

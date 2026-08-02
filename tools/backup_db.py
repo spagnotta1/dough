@@ -39,7 +39,7 @@ REPO_ROOT = os.path.abspath(os.path.dirname(os.path.dirname(__file__)))
 sys.path.insert(0, REPO_ROOT)
 
 from dough.services.backup import (  # noqa: E402  (after the path insert)
-    BackupError, backup, describe, prune, verify)
+    BackupError, backup, contents, prune, verify)
 
 DEFAULT_DB = os.path.join(REPO_ROOT, 'checkbook.db')
 DEFAULT_BACKUP_DIR = os.path.join(REPO_ROOT, 'backups')
@@ -79,9 +79,12 @@ def main(argv: list[str] | None = None) -> int:
         print(f'  FAIL  {exc}', file=sys.stderr)
         return 1
 
+    # Wording pinned by docs/runbooks/disaster-recovery.md, which quotes it as
+    # what the operator must see. Changing it is changing a runbook.
+    size_mb, tables, rows = contents(dest_path)
     print(f'Backed up {args.db}')
-    print(f'       -> {describe(dest_path)}')
-    print('   verified: integrity_check ok, row counts match source')
+    print(f'       -> {dest_path}  ({size_mb:.2f} MB)')
+    print(f'   verified: integrity_check ok, {tables} tables, {rows} rows')
 
     stem = os.path.splitext(os.path.basename(args.db))[0]
     for name in prune(args.dir, stem, args.keep):
