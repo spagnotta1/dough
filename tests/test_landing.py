@@ -268,6 +268,145 @@ def test_the_landing_page_offers_registration_only_when_it_is_open(tmp_path):
 
 
 # ---------------------------------------------------------------------------
+# The product preview
+# ---------------------------------------------------------------------------
+
+def test_the_product_preview_says_its_figures_are_invented(client):
+    """A mock of the dashboard good enough to sell the product is good enough
+    to be mistaken for somebody's actual ledger.
+
+    The landing branch binds no household, so there is nothing real on this
+    path to leak -- that is asserted above. This is the other half: a visitor
+    looking at $184,320 has to be able to tell it is a sample.
+    """
+    _signed_out(_account(client))
+    body = client.get('/').get_data(as_text=True)
+
+    assert 'lp-preview' in body, 'the product preview is gone from the hero'
+    assert 'Sample data' in body, (
+        'the dashboard preview no longer labels itself; invented figures on a '
+        'finance landing page have to say that they are invented')
+
+
+def test_the_preview_is_one_sentence_to_a_screen_reader(client):
+    """Forty invented numbers read aloud in sequence is not a preview.
+
+    role="img" collapses the whole mock to its label, which is the same thing a
+    screenshot would have given -- and the reason the mock may be built from
+    live markup without costing anything at the assistive-technology layer.
+    """
+    _signed_out(_account(client))
+    body = client.get('/').get_data(as_text=True)
+
+    preview = re.search(r'<div class="lp-preview"[^>]*>', body)
+    assert preview, 'the preview element changed shape; update this test'
+    assert 'role="img"' in preview.group(0)
+    assert 'aria-label=' in preview.group(0)
+
+
+def test_the_preview_holds_no_form_controls_or_links(client):
+    """It is a picture. Anything focusable inside it is a tab stop that leads
+    nowhere, and role="img" would hide it from a screen reader while leaving it
+    reachable by keyboard."""
+    _signed_out(_account(client))
+    body = client.get('/').get_data(as_text=True)
+
+    start = body.index('<div class="lp-preview"')
+    end = body.index('<!-- ── Trust', start)
+    preview = body[start:end]
+
+    for tag in ('<a ', '<button', '<input', '<select', '<textarea', 'tabindex'):
+        assert tag not in preview, f'the preview contains a focusable {tag!r}'
+
+
+# ---------------------------------------------------------------------------
+# Social proof is configuration, because it is the one claim nobody can check
+# ---------------------------------------------------------------------------
+
+def test_social_proof_renders_nothing_until_it_is_configured(client):
+    """The default install has no users to be trusted by.
+
+    Every other claim on this page -- read-only connections, encryption at
+    rest, household isolation -- is checkable by reading the repository, which
+    is the rule templates/privacy.html is maintained under. "$18M+ in tracked
+    assets" is not, and a visitor cannot tell an invented one from a real one.
+    So it ships empty, exactly as MARKETING_TESTIMONIALS already did.
+    """
+    _signed_out(_account(client))
+    body = client.get('/').get_data(as_text=True)
+
+    assert 'As seen in' not in body
+    assert 'lp-proof' not in body
+    assert 'lp-press' not in body
+
+
+def test_configured_social_proof_reaches_the_page(tmp_path):
+    """Anti-vacuity for the test above: the section is empty because it is
+    unset, not because it stopped working."""
+    scheduler_module._scheduler = None
+    application = create_app(test_config={
+        'TESTING': True, 'AUTH_ENABLED': True,
+        'SQLALCHEMY_DATABASE_URI': f"sqlite:///{tmp_path / 'proof.db'}",
+        'SYNC_SYNCHRONOUS': True, 'SYNC_AUTO_ENABLED': False,
+        'MARKETING_STATS': [{'value': '1,200', 'label': 'households'}],
+        'MARKETING_PRESS': [{'name': 'The Example Post', 'url': 'https://example.test'}],
+        'MARKETING_TESTIMONIALS': [{'quote': 'It found a subscription I forgot.',
+                                    'name': 'A. Tester'}],
+    })
+    with application.app_context():
+        client = application.test_client()
+        _signed_out(_account(client))
+        body = client.get('/').get_data(as_text=True)
+
+        assert '1,200' in body and 'households' in body
+        assert 'The Example Post' in body and 'As seen in' in body
+        assert 'It found a subscription I forgot.' in body
+    scheduler_module._scheduler = None
+
+
+# ---------------------------------------------------------------------------
+# The sections a visitor looks for before handing over a bank login
+# ---------------------------------------------------------------------------
+
+def test_the_page_answers_the_questions_asked_before_connecting_a_bank(client):
+    """These six are what the FAQ exists for, and "can it move my money" is the
+    one whose absence costs the most signups."""
+    _signed_out(_account(client))
+    body = client.get('/').get_data(as_text=True)
+
+    for question in ('How does Dough connect to my bank?',
+                     'Can Dough move my money?',
+                     'Is my information secure?',
+                     'Which banks are supported?',
+                     'Can I disconnect an account?',
+                     'Does Dough sell my data?'):
+        assert question in body, f'the FAQ no longer answers {question!r}'
+
+    # The two links the same visitor goes looking for next.
+    assert '/privacy' in body and '/terms' in body
+
+
+def test_the_headings_form_a_single_ordered_outline(client):
+    """One h1, and no level skipped.
+
+    A screen-reader user navigates a marketing page by heading, and this page
+    is long enough that the outline *is* the navigation. It also went wrong the
+    obvious way once: the detail sections used h3 with no h2 above them, so
+    two-thirds of the page hung off nothing.
+    """
+    _signed_out(_account(client))
+    body = client.get('/').get_data(as_text=True)
+
+    levels = [int(n) for n in re.findall(r'<h([1-6])[\s>]', body)]
+
+    assert levels.count(1) == 1, f'expected exactly one h1, found {levels.count(1)}'
+    assert levels[0] == 1, f'the page opens on an h{levels[0]}, not an h1'
+    for previous, current in zip(levels, levels[1:]):
+        assert current <= previous + 1, (
+            f'heading level jumps from h{previous} to h{current}')
+
+
+# ---------------------------------------------------------------------------
 # Design system
 # ---------------------------------------------------------------------------
 
