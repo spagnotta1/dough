@@ -1193,6 +1193,10 @@
   </button>
 </div>
 
+{#- netWorthMix ships as [label, value] pairs, not a dict: `tojson` sorts
+    object keys alphabetically, and the donut colours its arcs by position,
+    so a dict would hand the chart a different order from the legend rows
+    above and the two would disagree. -#}
 <script id="invData" type="application/json">
 {{ {
   'history': wealth.history,
@@ -1202,7 +1206,7 @@
   'projection': wealth.projection,
   'dividends': wealth.dividends,
   'positions': wealth.positions,
-  'netWorthMix': portfolio_by_class,
+  'netWorthMix': portfolio_by_class.items()|list,
   'holdings': wealth.holdings
 }|tojson }}
 </script>

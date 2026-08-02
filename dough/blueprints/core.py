@@ -98,7 +98,13 @@ def dashboard():
             # `/register` explains itself there. Passing the flag lets the page
             # lead with "Sign in" instead, which is the action that works.
             registration_open=current_app.config.get('ALLOW_REGISTRATION', False),
-            testimonials=current_app.config.get('MARKETING_TESTIMONIALS', []))
+            # Social proof, and the only copy on the page that cannot be
+            # checked against this repository. All three are empty by default
+            # and their section renders nothing -- see the MARKETING_* block in
+            # config.py.
+            testimonials=current_app.config.get('MARKETING_TESTIMONIALS', []),
+            stats=current_app.config.get('MARKETING_STATS', []),
+            press=current_app.config.get('MARKETING_PRESS', []))
 
     start_date_str = request.args.get('start_date') or session.get('start_date')
     end_date_str = request.args.get('end_date') or session.get('end_date')

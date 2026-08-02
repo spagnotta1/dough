@@ -1,6 +1,7 @@
 {% extends "base.html" %}
+{% from '_dough.html' import dough, dough_avatar %}
 
-{# The public front door.  [Phase 10.5]
+{# The public front door.  [Phase 10.5, rebuilt Phase 10.8]
 
    Extends base.html rather than standing alone the way login.html does, and the
    difference is the theme engine. auth.css pins the Light palette because those
@@ -12,9 +13,29 @@
    What it does override is the chrome. Every link in base.html's nav needs a
    session, so a stranger would get seven links that bounce to /login and a
    profile menu offering to sign them out of a session they do not have.
+
+   ── Two rules this page is maintained under ───────────────────────────────
+
+   1. THE PREVIEW IS INVENTED, AND SAYS SO. `.lp-preview` is a mock of the
+      dashboard built from markup, not a screenshot and not a render of
+      anybody's ledger. The landing branch of core.dashboard binds no household
+      (tests/test_landing.py::test_the_landing_page_binds_no_household), so
+      there is no real data on this path to leak — but a mock that looks this
+      much like the product has to be labelled, which is what the "Sample data"
+      chip is for. It carries role="img": a screen reader gets one sentence
+      instead of forty invented figures.
+
+   2. EVERY CLAIM IS CHECKABLE, AND UNVERIFIABLE ONES ARE CONFIGURATION.
+      The security and FAQ copy is sourced from templates/privacy.html, which
+      is maintained against the repository itself. Anything that depends on how
+      many people use this instance — user counts, assets tracked, press
+      mentions, testimonials — comes from MARKETING_* config and renders
+      nothing when unset, which is the default. Invented social proof on a page
+      that asks for a bank connection is worse than none, and unlike the rest
+      of the page nobody can check it by reading the code.
 #}
 
-{% block title %}Dough — your AI-powered financial companion{% endblock %}
+{% block title %}Dough — your money, explained{% endblock %}
 
 {% block chrome_top %}
 <nav>
@@ -23,17 +44,26 @@
       <div class="nav-left">
         <div class="nav-brand-box">
           <a href="{{ url_for('core.dashboard') }}" class="nav-brand">
-            <span class="dough-avatar dough-avatar-sm" aria-hidden="true">
-              <span data-dough="greeting" data-dough-size="36" data-dough-tight></span>
-            </span>
+            {{ dough_avatar('wave', 'sm') }}
             Dough
           </a>
         </div>
       </div>
-      <div class="nav-right" style="display:flex;align-items:center;gap:.5rem;">
+
+      {# Anchor links, so a visitor who wants the security section can get to it
+         without scrolling past everything above it. Dropped below 52rem rather
+         than folded into a menu: three in-page anchors do not earn a
+         disclosure, and the sections are all reachable by scrolling. #}
+      <div class="lp-nav__links">
+        <a href="#product">Product</a>
+        <a href="#security">Security</a>
+        <a href="#faq">FAQ</a>
+      </div>
+
+      <div class="lp-nav__actions">
         <a class="lp-btn lp-btn--quiet" href="{{ url_for('auth.login') }}">Sign in</a>
         {% if registration_open %}
-          <a class="lp-btn lp-btn--primary" href="{{ url_for('auth.register') }}">Create account</a>
+          <a class="lp-btn lp-btn--primary lp-btn--sm" href="{{ url_for('auth.register') }}">Create account</a>
         {% endif %}
       </div>
     </div>
@@ -43,7 +73,7 @@
 
 {# The bottom tab bar is dropped entirely rather than replaced. On a phone it
    would be a persistent bar of five destinations a signed-out visitor cannot
-   open, permanently covering the bottom of the page they can. #}
+   open, permanently covering the page they can. #}
 {% block chrome_bottom %}{% endblock %}
 
 {% block content %}
@@ -53,67 +83,386 @@
 
   <!-- ── Hero ─────────────────────────────────────────────────────────── -->
   <section class="lp-hero">
-    <div class="lp__inner lp-hero__grid">
-      <div>
-        <span class="lp-eyebrow">Meet Dough</span>
+    <div class="lp__inner">
+      <div class="lp-hero__copy">
+        <span class="lp-eyebrow">
+          {{ dough_avatar('wave', 'xs') }}
+          Meet Dough
+        </span>
         <h1>Your money, <span class="lp-accent">explained</span>.</h1>
         <p class="lp-hero__lede">
-          Dough connects your accounts, sorts every transaction, watches your
-          budgets and reviews your portfolio — then tells you what actually
-          changed, in plain language. No spreadsheets, no jargon, no shame.
+          Connect your accounts. Dough sorts every transaction, watches your
+          budgets, tracks your investments — and tells you what changed, in
+          plain English.
         </p>
+
         <div class="lp-cta-row">
           {% if registration_open %}
-            <a class="lp-btn lp-btn--primary" href="{{ url_for('auth.register') }}">Create your account</a>
-            <a class="lp-btn lp-btn--ghost" href="{{ url_for('auth.login') }}">Sign in</a>
+            <a class="lp-btn lp-btn--primary lp-btn--lg" href="{{ url_for('auth.register') }}">Create your account</a>
+            <a class="lp-btn lp-btn--ghost lp-btn--lg" href="{{ url_for('auth.login') }}">Sign in</a>
           {% else %}
             {# Registration closed: "Sign in" becomes the primary action, because
                it is the one that works. The secondary link still goes to
                /register, which explains what to do instead -- see the `closed`
                branch of register.html. #}
-            <a class="lp-btn lp-btn--primary" href="{{ url_for('auth.login') }}">Sign in</a>
-            <a class="lp-btn lp-btn--ghost" href="{{ url_for('auth.register') }}">Need an account?</a>
+            <a class="lp-btn lp-btn--primary lp-btn--lg" href="{{ url_for('auth.login') }}">Sign in</a>
+            <a class="lp-btn lp-btn--ghost lp-btn--lg" href="{{ url_for('auth.register') }}">Need an account?</a>
           {% endif %}
-          <a class="lp-btn lp-btn--quiet" href="#features">Learn more ↓</a>
         </div>
 
         <ul class="lp-trust">
           <li>
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
             Bank credentials never stored
           </li>
           <li>
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
-            Access tokens encrypted at rest
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+            Read-only connections
           </li>
           <li>
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10.5 12 3l9 7.5"/><path d="M5 9.5V21h14V9.5"/></svg>
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 10.5 12 3l9 7.5"/><path d="M5 9.5V21h14V9.5"/></svg>
             One household sees one household's data
           </li>
         </ul>
       </div>
 
-      <div class="lp-hero__art">
-        <span data-dough="greeting" data-dough-size="240"></span>
+      {# The product, before the pitch. A mascot tells a visitor what the brand
+         feels like; only this tells them what they would be signing up for. #}
+      <div class="lp-preview" role="img"
+           aria-label="A preview of the Dough dashboard, using invented sample
+                       figures: net worth, spending against budget, a category
+                       breakdown, a written insight from Dough, and a feed of
+                       recent transactions.">
+        <div class="lp-preview__chrome">
+          <span class="lp-preview__dots" aria-hidden="true"><i></i><i></i><i></i></span>
+          <span class="lp-preview__title">Dough · Dashboard</span>
+          <span class="lp-preview__tag">Sample data</span>
+        </div>
+
+        <div class="lp-preview__body">
+          <div class="lp-stats">
+            <div class="lp-stat">
+              <span class="lp-stat__label">Net worth</span>
+              <span class="lp-stat__value">$184,320</span>
+              <span class="lp-stat__delta lp-stat__delta--up">▲ 2.4% this month</span>
+            </div>
+            <div class="lp-stat">
+              <span class="lp-stat__label">Spending · July</span>
+              <span class="lp-stat__value">$3,841</span>
+              <span class="lp-stat__delta lp-stat__delta--warn">78% of budget</span>
+            </div>
+            <div class="lp-stat">
+              <span class="lp-stat__label">Cash</span>
+              <span class="lp-stat__value">$12,905</span>
+              <span class="lp-stat__delta">4 accounts</span>
+            </div>
+            <div class="lp-stat">
+              <span class="lp-stat__label">Investments</span>
+              <span class="lp-stat__value">$171,415</span>
+              <span class="lp-stat__delta lp-stat__delta--up">▲ 6.2% YTD</span>
+            </div>
+          </div>
+
+          <div class="lp-preview__grid">
+            <div class="lp-preview__col">
+              <div class="lp-panel">
+                <div class="lp-panel__head">
+                  <span class="lp-panel__title">Net worth</span>
+                  <span class="lp-panel__meta">12 months</span>
+                </div>
+                {# currentColor throughout: the line follows the accent the
+                   theme engine set, with no colour named here. #}
+                <svg class="lp-spark" viewBox="0 0 300 84" preserveAspectRatio="none" aria-hidden="true" focusable="false">
+                  <path class="lp-spark__area"
+                        d="M0 66 L25 61 L50 64 L75 54 L100 57 L125 46 L150 48 L175 38 L200 33 L225 36 L250 24 L275 19 L300 12 L300 84 L0 84 Z"/>
+                  <path class="lp-spark__line" fill="none"
+                        d="M0 66 L25 61 L50 64 L75 54 L100 57 L125 46 L150 48 L175 38 L200 33 L225 36 L250 24 L275 19 L300 12"/>
+                </svg>
+              </div>
+
+              <div class="lp-panel">
+                <div class="lp-panel__head">
+                  <span class="lp-panel__title">Spending by month</span>
+                  <span class="lp-panel__meta">Feb – Jul</span>
+                </div>
+                <div class="lp-bars" aria-hidden="true">
+                  <i style="--lp-bar:62%"></i>
+                  <i style="--lp-bar:71%"></i>
+                  <i style="--lp-bar:58%"></i>
+                  <i style="--lp-bar:79%"></i>
+                  <i style="--lp-bar:63%"></i>
+                  <i class="lp-bars__now" style="--lp-bar:92%"></i>
+                </div>
+              </div>
+
+              <div class="lp-panel">
+                <div class="lp-panel__head">
+                  <span class="lp-panel__title">Budgets</span>
+                  <span class="lp-panel__meta">4 days left</span>
+                </div>
+                <ul class="lp-meters">
+                  <li>
+                    <span class="lp-meters__name">Housing</span>
+                    <span class="lp-meter"><i style="--lp-bar:97%"></i></span>
+                    <span class="lp-meters__num">$1,450 / $1,500</span>
+                  </li>
+                  <li>
+                    <span class="lp-meters__name">Groceries</span>
+                    <span class="lp-meter"><i style="--lp-bar:87%"></i></span>
+                    <span class="lp-meters__num">$612 / $700</span>
+                  </li>
+                  <li>
+                    <span class="lp-meters__name">Dining</span>
+                    <span class="lp-meter lp-meter--over"><i style="--lp-bar:100%"></i></span>
+                    <span class="lp-meters__num">$486 / $350</span>
+                  </li>
+                  <li>
+                    <span class="lp-meters__name">Transport</span>
+                    <span class="lp-meter"><i style="--lp-bar:71%"></i></span>
+                    <span class="lp-meters__num">$214 / $300</span>
+                  </li>
+                </ul>
+              </div>
+            </div>
+
+            <div class="lp-preview__col">
+              <div class="lp-panel lp-panel--insight">
+                <div class="lp-insight__head">
+                  {{ dough_avatar('thinking', 'xs') }}
+                  <span class="lp-panel__title">Dough's insight</span>
+                </div>
+                <p>
+                  Dining is running 39% over budget with four days left — mostly
+                  eleven takeout orders in the last fortnight. Everything else is
+                  on pace, and July still closes ahead of June.
+                </p>
+              </div>
+
+              <div class="lp-panel">
+                <div class="lp-panel__head">
+                  <span class="lp-panel__title">Recent activity</span>
+                  <span class="lp-panel__meta">Synced 6m ago</span>
+                </div>
+                <ul class="lp-feed">
+                  <li>
+                    <span class="lp-feed__dot" aria-hidden="true"></span>
+                    <span class="lp-feed__who">Trader Joe's<em>Groceries · Today</em></span>
+                    <span class="lp-feed__amt">−$86.14</span>
+                  </li>
+                  <li>
+                    <span class="lp-feed__dot" aria-hidden="true"></span>
+                    <span class="lp-feed__who">Northwind Co · Payroll<em>Income · Jul 28</em></span>
+                    <span class="lp-feed__amt lp-feed__amt--in">+$3,410.00</span>
+                  </li>
+                  <li>
+                    <span class="lp-feed__dot" aria-hidden="true"></span>
+                    <span class="lp-feed__who">City Power &amp; Light<em>Utilities · Jul 27</em></span>
+                    <span class="lp-feed__amt">−$268.40</span>
+                  </li>
+                  <li>
+                    <span class="lp-feed__dot" aria-hidden="true"></span>
+                    <span class="lp-feed__who">Streamline Audio<em>Subscriptions · Jul 26</em></span>
+                    <span class="lp-feed__amt">−$11.99</span>
+                  </li>
+                  <li>
+                    <span class="lp-feed__dot" aria-hidden="true"></span>
+                    <span class="lp-feed__who">Harbour Fuel<em>Transport · Jul 25</em></span>
+                    <span class="lp-feed__amt">−$52.30</span>
+                  </li>
+                </ul>
+              </div>
+
+              <div class="lp-panel">
+                <div class="lp-panel__head">
+                  <span class="lp-panel__title">Where it went</span>
+                  <span class="lp-panel__meta">July</span>
+                </div>
+                <ul class="lp-legend">
+                  <li><span class="lp-legend__swatch lp-legend__swatch--1" aria-hidden="true"></span>Housing<b>38%</b></li>
+                  <li><span class="lp-legend__swatch lp-legend__swatch--2" aria-hidden="true"></span>Groceries<b>16%</b></li>
+                  <li><span class="lp-legend__swatch lp-legend__swatch--3" aria-hidden="true"></span>Dining<b>13%</b></li>
+                  <li><span class="lp-legend__swatch lp-legend__swatch--4" aria-hidden="true"></span>Everything else<b>33%</b></li>
+                </ul>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── Trust, immediately below the hero ────────────────────────────── -->
+  <section class="lp-alt" aria-labelledby="lp-trust-head">
+    <div class="lp__inner">
+      <div class="lp-head">
+        <h2 id="lp-trust-head">Built to be trusted with the real thing</h2>
+        <p>
+          Dough asks for a connection to your bank. Here is exactly what it does
+          with it — every line below is stated the same way in the
+          <a href="{{ url_for('legal.privacy') }}">privacy policy</a>.
+        </p>
+      </div>
+
+      <div class="lp-grid">
+        <article class="lp-card lp-card--trust">
+          <div class="lp-card__icon">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+          </div>
+          <h3>Bank credentials never stored</h3>
+          <p>You sign in on Plaid's own interface. Dough never sees, receives or
+             stores your banking username or password.</p>
+        </article>
+
+        <article class="lp-card lp-card--trust">
+          <div class="lp-card__icon">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/></svg>
+          </div>
+          <h3>Read-only connections</h3>
+          <p>The access token Dough holds permits reading balances and history.
+             There is no code path in this product that moves money.</p>
+        </article>
+
+        <article class="lp-card lp-card--trust">
+          <div class="lp-card__icon">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2 4 5v6c0 5.5 3.8 9.4 8 11 4.2-1.6 8-5.5 8-11V5z"/><path d="m9 12 2 2 4-4"/></svg>
+          </div>
+          <h3>Encrypted at rest</h3>
+          <p>Institution tokens are encrypted with an authenticated cipher, so a
+             copy of the database is not a usable credential without the key.</p>
+        </article>
+
+        <article class="lp-card lp-card--trust">
+          <div class="lp-card__icon">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 10.5 12 3l9 7.5"/><path d="M5 9.5V21h14V9.5"/><path d="M10 21v-6h4v6"/></svg>
+          </div>
+          <h3>Households stay separate</h3>
+          <p>Isolation is enforced at the query layer, not page by page — so a
+             new screen cannot forget to apply it.</p>
+        </article>
+
+        <article class="lp-card lp-card--trust">
+          <div class="lp-card__icon">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12"/><path d="m8 11 4 4 4-4"/><path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg>
+          </div>
+          <h3>Your data belongs to you</h3>
+          <p>Export everything as JSON, or delete your account outright, from
+             your own settings page. No email required to get it back.</p>
+        </article>
+
+        <article class="lp-card lp-card--trust">
+          <div class="lp-card__icon">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 6 6 18"/><path d="m6 6 12 12"/><circle cx="12" cy="12" r="10"/></svg>
+          </div>
+          <h3>Never sold, never advertised against</h3>
+          <p>No advertising trackers, no sale of personal information, no
+             marketing email. The product is the product.</p>
+        </article>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── The AI, demonstrated rather than described ───────────────────── -->
+  <section id="product" aria-labelledby="lp-ask-head">
+    <div class="lp__inner">
+      <div class="lp-head">
+        <span class="lp-kicker">Ask Dough</span>
+        <h2 id="lp-ask-head">A balance tells you what. Dough tells you why.</h2>
+        <p>
+          Ask in your own words and get an answer grounded in your own figures,
+          not general advice. These are illustrations, written against the
+          sample data above.
+        </p>
+      </div>
+
+      <div class="lp-ask">
+        <article class="lp-ask__item">
+          <p class="lp-ask__q">Why did I spend $620 more this month?</p>
+          <div class="lp-ask__a">
+            {{ dough_avatar('thinking', 'sm') }}
+            <div>
+              <p>Three categories account for almost all of it.</p>
+              <ul class="lp-ask__lines">
+                <li><span>Dining</span><b class="lp-up">+$245</b><em>11 more takeout orders than June</em></li>
+                <li><span>Utilities</span><b class="lp-up">+$92</b><em>higher summer electricity</em></li>
+                <li><span>Groceries</span><b class="lp-up">+$84</b><em>two extra shops, prices flat</em></li>
+              </ul>
+              <p class="lp-ask__foot">The rest is spread thinly across seven
+                 categories. Overall spending is up 8% — income covered it, so
+                 savings still grew, just by less.</p>
+            </div>
+          </div>
+        </article>
+
+        <article class="lp-ask__item">
+          <p class="lp-ask__q">Can I afford a $2,400 trip in October?</p>
+          <div class="lp-ask__a">
+            {{ dough_avatar('thinking', 'sm') }}
+            <div>
+              <p>Yes, and without touching investments.</p>
+              <ul class="lp-ask__lines">
+                <li><span>Average monthly surplus</span><b>$1,180</b><em>trailing six months</em></li>
+                <li><span>Set aside by October</span><b class="lp-up">$3,540</b><em>three more months at that rate</em></li>
+                <li><span>Committed before then</span><b class="lp-down">−$900</b><em>insurance renewal in September</em></li>
+              </ul>
+              <p class="lp-ask__foot">That leaves roughly $240 of headroom.
+                 Tight but real — and it does not assume you change anything.</p>
+            </div>
+          </div>
+        </article>
+
+        <article class="lp-ask__item">
+          <p class="lp-ask__q">What am I actually subscribed to?</p>
+          <div class="lp-ask__a">
+            {{ dough_avatar('searching', 'sm') }}
+            <div>
+              <p>Fourteen recurring charges, $312 a month. Three are worth a look.</p>
+              <ul class="lp-ask__lines">
+                <li><span>Streamline Audio</span><b class="lp-up">+$4.00</b><em>rose in May, no notice sent</em></li>
+                <li><span>Northline Fitness</span><b>$59.00</b><em>no visit charged since March</em></li>
+                <li><span>Two cloud storage plans</span><b>$21.98</b><em>overlapping, same household</em></li>
+              </ul>
+              <p class="lp-ask__foot">Dough found these by watching the ledger
+                 for repeats. Nothing here was typed in by hand.</p>
+            </div>
+          </div>
+        </article>
+
+        <article class="lp-ask__item">
+          <p class="lp-ask__q">How is the portfolio doing, honestly?</p>
+          <div class="lp-ask__a">
+            {{ dough_avatar('reviewing', 'sm') }}
+            <div>
+              <p>Up 6.2% this year, and more concentrated than it was.</p>
+              <ul class="lp-ask__lines">
+                <li><span>Largest position</span><b class="lp-warn">34%</b><em>was 26% in January</em></li>
+                <li><span>Cash drag</span><b>7%</b><em>uninvested across two brokerages</em></li>
+                <li><span>Contributions</span><b class="lp-up">$1,050/mo</b><em>steady all year</em></li>
+              </ul>
+              <p class="lp-ask__foot">Not advice, and Dough says so — it is your
+                 own numbers, read back to you clearly enough to act on.</p>
+            </div>
+          </div>
+        </article>
       </div>
     </div>
   </section>
 
   <!-- ── Features ─────────────────────────────────────────────────────── -->
-  <section id="features">
+  <section id="features" class="lp-alt" aria-labelledby="lp-features-head">
     <div class="lp__inner">
       <div class="lp-head">
-        <h2>Everything in one place, finally</h2>
+        <span class="lp-kicker">Everything in one place</span>
+        <h2 id="lp-features-head">Five apps' worth of work, and the one that reads them together</h2>
         <p>
-          Five things that usually live in five different apps — and the one
-          that reads all of them together.
+          Accounts, transactions, budgets, investments and the people you share
+          money with — under a single roof, and a single account.
         </p>
       </div>
 
       <div class="lp-grid">
         <article class="lp-card">
           <div class="lp-card__icon">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><circle cx="4" cy="6" r="1"/><circle cx="4" cy="12" r="1"/><circle cx="4" cy="18" r="1"/></svg>
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><circle cx="4" cy="6" r="1"/><circle cx="4" cy="12" r="1"/><circle cx="4" cy="18" r="1"/></svg>
           </div>
           <h3>Transaction management</h3>
           <p>
@@ -125,7 +474,7 @@
 
         <article class="lp-card">
           <div class="lp-card__icon">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="7" width="14" height="10" rx="2"/><path d="M6 7V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2h-2"/></svg>
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="7" width="14" height="10" rx="2"/><path d="M6 7V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2h-2"/></svg>
           </div>
           <h3>Account aggregation</h3>
           <p>
@@ -137,7 +486,7 @@
 
         <article class="lp-card">
           <div class="lp-card__icon">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 17l6-6 4 4 7-7"/><polyline points="14 8 20 8 20 14"/></svg>
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 17l6-6 4 4 7-7"/><polyline points="14 8 20 8 20 14"/></svg>
           </div>
           <h3>Investment tracking</h3>
           <p>
@@ -149,7 +498,7 @@
 
         <article class="lp-card">
           <div class="lp-card__icon">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
           </div>
           <h3>AI financial assistant</h3>
           <p>
@@ -161,7 +510,7 @@
 
         <article class="lp-card">
           <div class="lp-card__icon">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
           </div>
           <h3>Household collaboration</h3>
           <p>
@@ -173,7 +522,7 @@
 
         <article class="lp-card">
           <div class="lp-card__icon">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21.21 15.89A10 10 0 1 1 8 2.83"/><path d="M22 12A10 10 0 0 0 12 2v10z"/></svg>
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21.21 15.89A10 10 0 1 1 8 2.83"/><path d="M22 12A10 10 0 0 0 12 2v10z"/></svg>
           </div>
           <h3>Budget intelligence</h3>
           <p>
@@ -181,15 +530,49 @@
             drifting over before the month ends, not after.
           </p>
         </article>
+
+        <article class="lp-card">
+          <div class="lp-card__icon">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17 2v4"/><path d="M7 2v4"/><rect x="3" y="6" width="18" height="16" rx="2"/><path d="M3 12h18"/></svg>
+          </div>
+          <h3>Subscription detection</h3>
+          <p>
+            Recurring charges found by watching the ledger rather than by asking
+            you to list them — including the ones that quietly went up.
+          </p>
+        </article>
+
+        <article class="lp-card">
+          <div class="lp-card__icon">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.3 3.6 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.6a2 2 0 0 0-3.4 0z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>
+          </div>
+          <h3>Unusual charge review</h3>
+          <p>
+            Amounts that do not look like your normal pattern get surfaced for a
+            second look, before they become a statement you scroll past.
+          </p>
+        </article>
+
+        <article class="lp-card">
+          <div class="lp-card__icon">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 3v18h18"/><path d="m7 14 4-4 3 3 5-6"/></svg>
+          </div>
+          <h3>Net-worth history</h3>
+          <p>
+            One line that goes back as far as your data does, cash and holdings
+            together — so progress is something you can see rather than sense.
+          </p>
+        </article>
       </div>
     </div>
   </section>
 
   <!-- ── Detail: insight ──────────────────────────────────────────────── -->
-  <section class="lp-alt">
+  <section aria-labelledby="lp-changed-head">
     <div class="lp__inner lp-split">
       <div>
-        <h3>It tells you what changed, not just what happened</h3>
+        <span class="lp-kicker">Understanding</span>
+        <h2 id="lp-changed-head">It tells you what changed, not just what happened</h2>
         <p>
           A list of transactions is a record. Dough reads the record and reports
           the story: the subscription that quietly went up, the category running
@@ -198,34 +581,35 @@
         </p>
         <ul>
           <li>
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>
             Cash-flow forecast with a runway in months
           </li>
           <li>
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>
             Recurring bills detected, not typed in
           </li>
           <li>
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>
             Unusual charges surfaced for review
           </li>
           <li>
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>
             A net-worth line that goes back as far as your data does
           </li>
         </ul>
       </div>
       <div class="lp-split__art">
-        <span data-dough="thinking" data-dough-size="200"></span>
+        {{ dough('thinking', size=180, alt='Dough, thinking something over') }}
       </div>
     </div>
   </section>
 
   <!-- ── Detail: tone ─────────────────────────────────────────────────── -->
-  <section>
+  <section class="lp-alt" aria-labelledby="lp-tone-head">
     <div class="lp__inner lp-split lp-split--flip">
       <div>
-        <h3>Encouraging, never preachy</h3>
+        <span class="lp-kicker">Tone</span>
+        <h2 id="lp-tone-head">Encouraging, never preachy</h2>
         <p>
           Going over budget is a fact to work with, not a failing. Dough is
           warm without being cute, direct without being alarming, and he will
@@ -234,54 +618,269 @@
         </p>
         <ul>
           <li>
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>
             One voice across chat, dashboard and portfolio review
           </li>
           <li>
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>
             Sixteen themes, and it remembers which one is yours
           </li>
           <li>
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>
             Works on the phone as well as it does on the desk
           </li>
         </ul>
       </div>
       <div class="lp-split__art">
-        <span data-dough="celebrating" data-dough-size="200"></span>
+        {{ dough('celebrate', size=180, alt='Dough, pleased with the month') }}
       </div>
     </div>
   </section>
 
-  {# Renders nothing when MARKETING_TESTIMONIALS is empty, which is the default.
-     Placeholder testimonials on a finance landing page are worse than none --
-     see the config entry. #}
-  {% if testimonials %}
-  <section class="lp-alt">
+  <!-- ── Security, in its own right ───────────────────────────────────── -->
+  <section id="security" aria-labelledby="lp-security-head">
     <div class="lp__inner">
-      <div class="lp-head"><h2>What people say</h2></div>
-      <div class="lp-grid">
-        {% for t in testimonials %}
-        <article class="lp-card">
-          <p>“{{ t.quote }}”</p>
-          <h3>{{ t.name }}</h3>
-        </article>
-        {% endfor %}
+      <div class="lp-head">
+        <span class="lp-kicker">Security</span>
+        <h2 id="lp-security-head">What happens when you connect an account</h2>
+        <p>
+          Three steps, and the credential never passes through Dough in any of
+          them.
+        </p>
+      </div>
+
+      <ol class="lp-steps">
+        <li>
+          <span class="lp-steps__n" aria-hidden="true">1</span>
+          <h3>You authenticate with your bank</h3>
+          <p>
+            The sign-in happens on Plaid's interface, against your institution.
+            Dough is not in the middle of it and never receives what you typed.
+          </p>
+        </li>
+        <li>
+          <span class="lp-steps__n" aria-hidden="true">2</span>
+          <h3>Dough receives a read-only token</h3>
+          <p>
+            What comes back permits reading balances, holdings and history —
+            nothing else. It is encrypted at rest with an authenticated cipher.
+          </p>
+        </li>
+        <li>
+          <span class="lp-steps__n" aria-hidden="true">3</span>
+          <h3>You can revoke it in one click</h3>
+          <p>
+            Disconnecting an institution deletes the stored token. Deleting your
+            account removes your details, sessions, API tokens and connections.
+          </p>
+        </li>
+      </ol>
+
+      <div class="lp-sec-grid">
+        <div class="lp-sec">
+          <h3>Passwords</h3>
+          <p>Stored only as a <code>scrypt</code> hash. Changing yours
+             invalidates every existing session and API token at once.</p>
+        </div>
+        <div class="lp-sec">
+          <h3>Sessions</h3>
+          <p>Signed, expiring, and cleared past their absolute lifetime — a
+             stale browser is treated as a stranger, not as you.</p>
+        </div>
+        <div class="lp-sec">
+          <h3>Isolation</h3>
+          <p>Household scoping is applied in the query layer with an ORM
+             backstop, so a query that forgets it raises instead of leaking.</p>
+        </div>
+        <div class="lp-sec">
+          <h3>Logging</h3>
+          <p>Passwords, tokens, account numbers, prompts and completions are
+             excluded at the formatter, not per call site.</p>
+        </div>
+        <div class="lp-sec">
+          <h3>Audit trail</h3>
+          <p>Sign-in, sign-out, invitations, token issue and revocation are
+             recorded append-only, and record events rather than balances.</p>
+        </div>
+        <div class="lp-sec">
+          <h3>What we don't claim</h3>
+          <p>No system is perfectly secure, and Dough does not pretend
+             otherwise. The <a href="{{ url_for('legal.privacy') }}">policy</a>
+             says the same thing in the same words.</p>
+        </div>
       </div>
     </div>
   </section>
+
+  {# ── Social proof ───────────────────────────────────────────────────────
+     Everything here is unverifiable from the outside, so all of it is
+     configuration and all of it defaults to empty. A landing page that asks
+     for a bank connection cannot carry an invented "$18M tracked" or a
+     TechCrunch logo nobody wrote — see MARKETING_STATS in config.py. #}
+  {% if stats or press or testimonials %}
+  <section class="lp-alt" aria-labelledby="lp-proof-head">
+    <div class="lp__inner">
+      <div class="lp-head">
+        <h2 id="lp-proof-head">People are already using it</h2>
+      </div>
+
+      {% if stats %}
+      <dl class="lp-proof">
+        {% for stat in stats %}
+        <div>
+          <dt>{{ stat.value }}</dt>
+          <dd>{{ stat.label }}</dd>
+        </div>
+        {% endfor %}
+      </dl>
+      {% endif %}
+
+      {% if testimonials %}
+      <div class="lp-grid">
+        {% for t in testimonials %}
+        <article class="lp-card lp-quote">
+          <p>“{{ t.quote }}”</p>
+          <footer>
+            {{ dough_avatar('idle', 'xs') }}
+            <span>{{ t.name }}</span>
+          </footer>
+        </article>
+        {% endfor %}
+      </div>
+      {% endif %}
+
+      {% if press %}
+      <div class="lp-press">
+        <span class="lp-press__label">As seen in</span>
+        <ul>
+          {% for item in press %}
+          <li>
+            {% if item.url %}<a href="{{ item.url }}" rel="noopener noreferrer" target="_blank">{{ item.name }}</a>
+            {% else %}{{ item.name }}{% endif %}
+          </li>
+          {% endfor %}
+        </ul>
+      </div>
+      {% endif %}
+    </div>
+  </section>
   {% endif %}
+
+  <!-- ── FAQ ──────────────────────────────────────────────────────────── -->
+  <section id="faq" aria-labelledby="lp-faq-head">
+    <div class="lp__inner lp__inner--narrow">
+      <div class="lp-head">
+        <span class="lp-kicker">Questions</span>
+        <h2 id="lp-faq-head">The things people ask before connecting a bank</h2>
+      </div>
+
+      <div class="lp-faq">
+        <details class="lp-faq__item">
+          <summary>How does Dough connect to my bank?</summary>
+          <div class="lp-faq__body">
+            <p>
+              Through Plaid. You authenticate on Plaid's own interface, against
+              your institution, and Dough receives an access token in return —
+              never your banking username or password. Dough uses that token to
+              read account names and types, balances, and transaction history.
+            </p>
+          </div>
+        </details>
+
+        <details class="lp-faq__item">
+          <summary>Can Dough move my money?</summary>
+          <div class="lp-faq__body">
+            <p>
+              No. The connection is read-only and there is no payment,
+              transfer or trading code path in the product at all. Dough can
+              tell you a bill is due; it cannot pay it.
+            </p>
+          </div>
+        </details>
+
+        <details class="lp-faq__item">
+          <summary>Is my information secure?</summary>
+          <div class="lp-faq__body">
+            <p>
+              Passwords are stored as a <code>scrypt</code> hash. Institution
+              tokens are encrypted at rest with an authenticated cipher, so a
+              copy of the database yields nothing usable without the separate
+              key. Sessions expire, and changing your password invalidates every
+              session and API token you have.
+            </p>
+            <p>
+              No system is perfectly secure, and Dough does not claim otherwise.
+              The <a href="{{ url_for('legal.privacy') }}">privacy policy</a>
+              spells out the rest.
+            </p>
+          </div>
+        </details>
+
+        <details class="lp-faq__item">
+          <summary>Which banks are supported?</summary>
+          <div class="lp-faq__body">
+            <p>
+              Whichever ones Plaid supports — thousands of banks, credit unions
+              and brokerages across the US, Canada and Europe. Anything it does
+              not reach, you can import from a CSV statement, and the same
+              categorisation and budgeting applies to it.
+            </p>
+          </div>
+        </details>
+
+        <details class="lp-faq__item">
+          <summary>Can I disconnect an account?</summary>
+          <div class="lp-faq__body">
+            <p>
+              At any time, from your connections page. Disconnecting deletes the
+              stored access token. You can also export everything Dough holds
+              as a JSON file, or delete your account outright, from settings.
+            </p>
+          </div>
+        </details>
+
+        <details class="lp-faq__item">
+          <summary>Does Dough sell my data?</summary>
+          <div class="lp-faq__body">
+            <p>
+              No. There are no advertising trackers, no sale of personal
+              information, and no sharing with third parties for their own
+              marketing. When you use an AI feature, a summary of the relevant
+              figures is sent to Anthropic to answer that question; your prompts
+              and its replies are not written to logs or the audit trail.
+            </p>
+          </div>
+        </details>
+
+        <details class="lp-faq__item">
+          <summary>Who else can see my figures?</summary>
+          <div class="lp-faq__body">
+            <p>
+              Only the people you invite into your household. That is what a
+              household is for, and it is also the boundary — no household can
+              read another's data, which is enforced at the database query layer
+              rather than page by page.
+            </p>
+          </div>
+        </details>
+      </div>
+    </div>
+  </section>
 
   <!-- ── Closing CTA ──────────────────────────────────────────────────── -->
   <section class="lp-close">
     <div class="lp__inner">
       <div class="lp-close__panel">
+        <div class="lp-close__art">
+          {{ dough('wave', size=132, alt='Dough, waving') }}
+        </div>
         <div class="lp-head">
-          <h2>Ready when you are</h2>
+          <h2>Take control of your finances</h2>
           <p>
             {% if registration_open %}
-              Create an account and connect one thing. Dough will have something
-              to say about it before you have finished linking the second.
+              Understand your money, not just your balance. Connect one account
+              and Dough will have something to say about it before you have
+              finished linking the second.
             {% else %}
               This instance is invitation-only. If somebody has sent you a link,
               it will sign you straight into their household.
@@ -290,28 +889,38 @@
         </div>
         <div class="lp-cta-row">
           {% if registration_open %}
-            <a class="lp-btn lp-btn--primary" href="{{ url_for('auth.register') }}">Create your account</a>
-            <a class="lp-btn lp-btn--ghost" href="{{ url_for('auth.login') }}">Sign in</a>
+            <a class="lp-btn lp-btn--primary lp-btn--lg" href="{{ url_for('auth.register') }}">Create your free account</a>
+            <a class="lp-btn lp-btn--ghost lp-btn--lg" href="#product">Learn more</a>
           {% else %}
-            <a class="lp-btn lp-btn--primary" href="{{ url_for('auth.login') }}">Sign in</a>
+            <a class="lp-btn lp-btn--primary lp-btn--lg" href="{{ url_for('auth.login') }}">Sign in</a>
+            <a class="lp-btn lp-btn--ghost lp-btn--lg" href="#product">Learn more</a>
           {% endif %}
         </div>
+        <p class="lp-close__note">
+          Free to create. Read-only connections. Delete everything in one click.
+        </p>
       </div>
     </div>
   </section>
 
   <footer class="lp-foot">
     <div class="lp-foot__inner">
-      <span>Dough — your AI-powered financial companion.</span>
-      <span>
-        <a class="lp-btn lp-btn--quiet" href="{{ url_for('auth.login') }}">Sign in</a>
-        <a class="lp-btn lp-btn--quiet" href="{{ url_for('auth.forgot_password') }}">Reset password</a>
+      <div class="lp-foot__brand">
+        {{ dough_avatar('idle', 'sm') }}
+        <span>Dough — your AI-powered financial companion.</span>
+      </div>
+      <nav class="lp-foot__links" aria-label="Footer">
+        <a href="#product">Product</a>
+        <a href="#security">Security</a>
+        <a href="#faq">FAQ</a>
+        <a href="{{ url_for('auth.login') }}">Sign in</a>
+        <a href="{{ url_for('auth.forgot_password') }}">Reset password</a>
         {# The two links a visitor looks for before handing over a bank login.
            On the landing page rather than only in the app, because that is
            where the decision to sign up is made. #}
-        <a class="lp-btn lp-btn--quiet" href="{{ url_for('legal.privacy') }}">Privacy</a>
-        <a class="lp-btn lp-btn--quiet" href="{{ url_for('legal.terms') }}">Terms</a>
-      </span>
+        <a href="{{ url_for('legal.privacy') }}">Privacy</a>
+        <a href="{{ url_for('legal.terms') }}">Terms</a>
+      </nav>
     </div>
   </footer>
 

@@ -429,9 +429,22 @@ class BaseConfig:
     ALLOW_GENERATED_ENCRYPTION_KEY = True
 
     # --- Marketing ----------------------------------------------------------
-    # Renders nothing when empty -- placeholder testimonials on a finance
-    # landing page are worse than no testimonials.  [consumed from Phase 8]
+    # Everything here is social proof, which is the one category of claim on the
+    # landing page that cannot be checked by reading this repository. The
+    # security and product copy is sourced from templates/privacy.html and is
+    # true of the code; "trusted by thousands" is true of an install or it is
+    # not, and nobody visiting can tell the difference. So all three default to
+    # empty and their sections render nothing -- a fabricated number on a page
+    # that is asking for a bank connection costs more trust than it buys.
+    #
+    #   MARKETING_TESTIMONIALS  [{'quote': ..., 'name': ...}]
+    #   MARKETING_STATS         [{'value': '$18M+', 'label': 'in tracked assets'}]
+    #   MARKETING_PRESS         [{'name': 'TechCrunch', 'url': ...}]   url optional
+    #
+    # [consumed from Phase 8; stats and press added in 10.8]
     MARKETING_TESTIMONIALS = []
+    MARKETING_STATS = []
+    MARKETING_PRESS = []
 
     @classmethod
     def validate(cls):
