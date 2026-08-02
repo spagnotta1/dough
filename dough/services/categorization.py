@@ -1,48 +1,64 @@
-"""Access to the shared `CategoryRules` engine.
+"""Access to the current household's `CategoryRules` engine.
 
-`create_app()` used to build one `CategoryRules()` and close over it, which is
-why the Rules page and the CSV importer could reach it and nothing else could.
-This module holds it instead, behind a lazy accessor.
+## What this module used to be, and why it changed
 
-**Lifetime.** The instance is now one per *process* rather than one per Flask
-app. In production those are the same thing — one `create_app()` per worker —
-and the rules have always been backed by a single `category_rules.json` at the
-repo root, so the persisted state was already process-wide. The only observable
-change is that a second `create_app()` in one process reuses the first
-instance's in-memory dict instead of re-reading the file. `reset_category_rules`
-exists for the case where a test needs the old behaviour back.
+It held **one `CategoryRules` per process**, backed by a single
+`category_rules.json` at the repo root. That was a faithful extraction of what
+`create_app()` used to close over, and its docstring said so plainly: "the rules
+have always been backed by a single `category_rules.json`, so the persisted
+state was already process-wide."
 
-**What must not change.** `finance_sync/repository.py` builds its *own* fresh
-`CategoryRules()` for every sync, deliberately, so that a rule edited in the
-Rules page is picked up by the next sync without a restart. It must not be
-switched to this accessor — doing so would pin a sync's categorization to
-whatever was loaded at boot, silently, and the symptom (a newly added rule not
-applying to synced transactions but applying to CSV imports) is very hard to
-attribute. There is a test for this; see Phase 3.5 in the plan.
+Process-wide was the bug. With households, one rule set for the whole
+installation means the second family to sign in reads the first family's rules —
+their gym, their student-loan servicer, their subscriptions — and any edit they
+make rewrites them. Phase 11A.1 moved the rules into `models.CategoryRule`, one
+tenant-scoped row per (category, keyword), with
+`dough/services/rules_service.py` owning the reads and writes.
 
-Allowed:   `rules`, stdlib
-Must not:  app, models, Flask anything, anthropic
+So there is **no cache here any more**, and that is deliberate. A cached engine
+is a cached *household*, and the one thing this module must not do is hand one
+household's rules to another. `rules_service.as_engine()` issues one indexed
+query against a table holding at most a few hundred rows per household; caching
+it would trade a real isolation guarantee for a saving nobody measured.
+
+`reset_category_rules()` is kept as a no-op rather than removed. Its callers'
+intent — "forget any cached rules" — is now satisfied by there being no cache,
+and deleting the name would fail those callers for a reason unrelated to what
+they are testing.
+
+## What must not change
+
+`finance_sync/repository.py` builds its rules per sync rather than holding one,
+so a rule edited in the Rules page applies to the next sync without a restart.
+That is still true and still important. It now resolves them per sync inside the
+household's scope, which additionally means a sync categorises with *that
+household's* rules rather than whichever set was loaded at boot.
+
+Allowed:   `rules`, sibling services, models, stdlib
+Must not:  app, render_template/url_for/redirect/flash/jsonify, anthropic,
+           blueprints or route decorators, `request`, `session`
 """
 
-from rules import CategoryRules
-
-_rules = None
+from dough.services.rules_service import as_engine
 
 
 def get_category_rules():
-    """Return the process-wide `CategoryRules`, constructing it on first use.
+    """The current household's rules, as a `CategoryRules` engine.
 
-    Lazy rather than built at import: constructing it reads
-    `category_rules.json` off disk, and an import-time file read would happen
-    before `create_app()` had a chance to fail for a better reason.
+    Requires a tenant scope, and raising without one is the point: a call from
+    outside a household is a call that cannot know whose rules it wants.
     """
-    global _rules
-    if _rules is None:
-        _rules = CategoryRules()
-    return _rules
+    return as_engine()
 
 
 def reset_category_rules():
-    """Drop the cached instance so the next call re-reads the rules file."""
-    global _rules
-    _rules = None
+    """Kept for callers that expect a cache to clear. There is no cache now.
+
+    See the module docstring. A no-op rather than a removal, so that a caller
+    expressing "start from clean rules" keeps working while testing what it
+    meant to test.
+    """
+    return None
+
+
+__all__ = ['get_category_rules', 'reset_category_rules']

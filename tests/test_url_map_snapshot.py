@@ -141,6 +141,10 @@ EXPECTED_RULES = {
     # Added in Phase 8, deliberately and recorded here rather than silently:
     # these are the two URLs a supervisor and a load balancer call, and they are
     # public by design (a health check behind a login is not a health check).
+    # [Phase 11A] The consolidated Insights hub. Added, not moved: /anomalies
+    # and /recurring below are still served and still linked, they simply no
+    # longer each hold a slot in the primary nav.
+    ("/insights", ("GET",)),
     ("/health/live", ("GET",)),
     ("/health/ready", ("GET",)),
     ("/household", ("GET",)),

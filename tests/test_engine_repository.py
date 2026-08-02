@@ -83,11 +83,32 @@ def test_second_sync_creates_no_duplicates(app):
 
 
 def test_synced_transactions_are_categorized_by_rules(app):
+    """A sync must categorise through the household's rules.
+
+    [Phase 11A.1] The rule is now created by the test. It used to rely on
+    whatever happened to be in `category_rules.json` — a file at the repo root
+    shared by the whole installation *and* by the test suite, so this passed
+    because the developer's personal rules were visible from here. That is the
+    pollution SEC-0025 describes, and a test that depends on it is asserting
+    something about the developer's finances rather than about the sync.
+
+    `ACME PAYROLL DIRECT DEP` is emitted deterministically by the sandbox for
+    every checking account, so the rule below is guaranteed a match.
+    """
+    from dough.services import rules_service
+
+    rules_service.add_rule("Income", "ACME PAYROLL")
+
     _connect("plaid")
     _engine().sync_all()
+
     categorized = Transaction.query.filter(Transaction.source == "sync",
                                            Transaction.category != "Uncategorized").count()
     assert categorized > 0, "category rules did not run on synced transactions"
+    assert Transaction.query.filter(
+        Transaction.description.like("ACME PAYROLL%"),
+        Transaction.category == "Income").count() > 0, (
+        "the household's own rule did not apply to synced transactions")
 
 
 def test_net_worth_uses_synced_balances(app):

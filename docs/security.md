@@ -974,6 +974,101 @@ that a redactor exists.
 
 ---
 
+### SEC-0025 — Category rules were global to the installation, not per household
+
+- **Severity:** High
+- **Status:** Fixed — Phase 11A.1, 2026-08-02
+- **Found by:** the account holder, who created a second account and was shown
+  the first account's rules.
+
+**What was wrong.** Category rules lived in `category_rules.json` — one file at
+the repo root, read and written by every household in the installation.
+`rules.py`, `dough/services/categorization.py` and `dough/blueprints/rules.py`
+contained no mention of a household between them:
+
+```
+grep -rn "household|tenant" rules.py categorization.py blueprints/rules.py
+  -> no matches
+```
+
+So this was **not** a leak through a missing query filter, and none of Phase 5's
+tenancy machinery could have caught it: there was no query to scope. The rules
+were never tenanted, and the second household to sign in saw the first
+household's rule set because only one set existed. Any edit they made — adding a
+keyword, reordering, deleting a category — rewrote the other household's rules.
+
+**Why this is a disclosure and not just untidy state.** A rule set names the
+merchants somebody actually pays. The file this was found in contained
+`/planet fitness|gym membership/`, `/DEPT EDUCATION STUDENT LN|IU BURSAR|IU
+ePay|NBSIU/` and `CLAUDE AI SUBSCRIPTION` — which tell a stranger where the
+account holder exercises, who services their student loan, and what they
+subscribe to. That is the same class of information as the generated prose in
+SEC-0003, and it was reachable by simply registering.
+
+`dough/services/categorization.py` additionally cached one `CategoryRules`
+instance **per process**, so even a correct per-household file would have been
+served across households by whichever request warmed the cache first.
+
+**The same file was writable by the test suite.** `BrowserTestCategory` was
+found sitting in the developer's real `category_rules.json` alongside genuine
+rules — the browser suite had been writing into it. A shared mutable file with
+no scope does not distinguish a test from a tenant.
+
+**It is also committed to the repository**, which makes the disclosure a
+*shipping* one rather than only a runtime one. `git ls-files` tracks
+`category_rules.json`, so every deployment image is built containing the
+developer's personal rules, and every account on a fresh deploy sees them before
+touching anything. On a container platform with an ephemeral filesystem — which
+`docs/deploy-railway.md` describes — this has a second consequence: a rule a user
+adds or deletes is written to a container-local file and is **lost on the next
+restart or redeploy**, so rule editing appears not to work at all. Both symptoms
+were reported together, and they are the same root cause.
+
+The file must remain in the tree until every environment has run
+`20260802_08_category_rules`, because that migration reads it to backfill. It
+should be deleted and git-ignored once the last environment is migrated;
+`rules.DEFAULT_RULES` is the seed thereafter.
+
+**Fix.** `models.CategoryRule`, one tenant-scoped row per (category, keyword),
+carrying `household_id` NOT NULL with a foreign key, a standalone index, and
+`UNIQUE(household_id, category, keyword)` — leading with the household so two
+families may both categorise `STARBUCKS` as `Coffee`.
+
+- `rules.py` keeps the matching logic and became framework-free and stateless;
+  it holds no storage and cannot reach the wrong household's rules.
+- `dough/services/rules_service.py` owns reads and writes, all through
+  `CategoryRule.query` (`TenantScopedQuery`), so the ORM backstop covers them
+  exactly as it covers transactions.
+- `dough/services/categorization.py` **has no cache any longer**, deliberately:
+  a cached engine is a cached household.
+- `finance_sync/repository.py` resolves rules per call rather than at
+  construction, so a sync categorises with the household's own rules.
+- A household with no rules is seeded with `rules.DEFAULT_RULES` on first read —
+  five generic categories naming no recognisable merchant.
+
+**Migration.** `20260802_08_category_rules` creates the table and backfills the
+existing file to the *owner's* household only; every other household starts from
+the defaults. Verified against a copy before the real database: no table lost or
+changed a row, `tools/verify_tenancy.py` reports all 145 invariants holding
+(the tool gained nine checks for the new table), and all 1,200 transactions
+categorise identically to the JSON engine.
+
+**Tests.** `tests/test_rules_tenancy.py` — two households with different rules,
+asserting neither can see or overwrite the other's, plus the unique-index
+composite and per-household categorisation.
+`tests/test_services.py::test_the_rules_accessor_reads_the_current_household`
+asserts the same property through the public accessor.
+
+**Three tests were rewritten**, which is normally the wrong move and is called
+out here because of it. `test_get_category_rules_is_cached_and_resettable`,
+`test_sync_repository_builds_its_own_category_rules` and
+`test_sync_repository_instance_is_not_the_cached_engine` asserted the
+process-wide cache and the shared-file import — the arrangement that *was* the
+vulnerability. Their intent (a sync must not pin categorization to boot-time
+rules) is preserved and now asserted behaviourally rather than by reading an
+import.
+
+
 ## Secrets
 
 What this deployment needs, why, and what happens without it. The table is
@@ -1049,6 +1144,7 @@ and it is recorded as OPS-0025 below rather than implied by its absence.
 | SEC-0022 | ~~Password recovery could distinguish a registered address from an unregistered one~~ — identical wording, shape and elapsed time, and the rate limiter refuses into the same response rather than becoming the oracle itself | Medium | **Closed, Phase 10.5** |
 | SEC-0023 | A password-reset link is a bearer credential with no second factor, and leaking one is worse than leaking a session because using it locks the real owner out. Bounded by hash-at-rest, a one-hour expiry, single use spent on *load*, retirement on re-request and on address change, and full credential invalidation on redemption — but an attacker with live mailbox access takes the account, which is the accepted floor of email-based recovery | Medium | — |
 | SEC-0024 | ~~The log redactor's pattern cannot recognise a reset token, a verification token or a Fernet key — they are high-entropy strings that look like nothing in particular, so "the redactor will catch it" was false for every credential this phase added~~ — closed by call-site discipline (console mail bypasses `logging` entirely; reprs, SMTP errors, config validation and cipher errors all omit values) and swept by `tests/test_secret_hygiene.py` | Medium | **Closed, Phase 10.5** |
+| SEC-0025 | ~~Category rules were stored in one `category_rules.json` shared by the whole installation, with no household anywhere in the rules path — so a second account read, and could overwrite, the first account's rules, which name the merchants that household pays~~ — moved to the tenant-scoped `category_rules` table; the process-wide rules cache was removed rather than fixed | High | **Closed, Phase 11A.1** |
 | OPS-0025 | `ENCRYPTION_KEY` has no in-place rotation: the stored `auth_blob` values are encrypted under one key and nothing re-encrypts them, so rotating the key means every household re-links every institution. Acceptable while the key is generated once and backed up; a real gap the first time one has to be rotated under suspicion of compromise, which is exactly when re-linking everything is least welcome | Medium | — |
 | OPS-0015 | `init_scheduler(app)` ignores its argument on every call after the first — the module-level singleton keeps its original app. Latent in production (one app per process) and wrong under test. Reported before Phase 8; deferred to Phase 9, which owns background execution | Medium | 9 |
 | OPS-0016 | `SyncScheduler._busy` is one process-wide mutex, so one household's manual Refresh is refused with 409 while another household's sync is running. Invisible today with one household; a correctness-of-experience bug the moment there are two | Medium | 9 |

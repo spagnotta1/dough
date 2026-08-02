@@ -9,6 +9,7 @@ from flask import (Blueprint, current_app, flash, jsonify, redirect,
 from dough.ai import persona
 from dough.ai.errors import AIConfigurationError, AIError
 from dough.ai.service import current_ai
+from dough.services import rules_service
 from dough.services.categorization import get_category_rules
 
 from models import Transaction, db
@@ -17,44 +18,117 @@ bp = Blueprint('rules', __name__)
 
 @bp.route('/rules', methods=['GET', 'POST'])
 def index():
+    """The Rules page. Every write goes through `rules_service`, per household.
+
+    ## Two bugs this route used to have  [Phase 11A.1]
+
+    **"Delete category" did nothing and said it worked.** The button posts
+    `action=remove` with a category and no keyword, so this called
+    `remove_rule(category, None)`. That tested `None in [...]`, matched nothing,
+    and returned silently — after which the route flashed "Rule removed"
+    unconditionally. There is a `remove_category` action now, and every branch
+    reports what actually happened rather than what was attempted.
+
+    **Deleting a keyword uncategorised too much.** The recategorise query
+    matched `description ILIKE %keyword%`, which is wrong for a `/regex/` rule
+    (it looked for the literal string `/amazon|amzn/` in descriptions and found
+    nothing) and too broad for a plain one — it reset rows that a *different*
+    surviving rule still claims. Both paths now re-derive the category from the
+    remaining rules, which is the only answer that stays correct.
+    """
     if request.method == 'POST':
         action = request.form.get('action')
+        category = (request.form.get('category') or '').strip()
+        keyword = (request.form.get('keyword') or '').strip()
+
         if action == 'add':
-            category = request.form.get('category')
-            keyword = request.form.get('keyword')
-            get_category_rules().add_rule(category, keyword)
-            for transaction in Transaction.query.filter(Transaction.description.ilike(f'%{keyword}%')).all():
-                transaction.category = category
-            try:
-                db.session.commit()
-                flash('Rule saved — I went back and recategorised your existing '
-                      'transactions to match.', 'success')
-            except Exception as e:
-                db.session.rollback()
-                flash(f'Error updating transactions: {str(e)}', 'error')
+            if not category or not keyword:
+                flash('A rule needs both a category and a keyword.', 'error')
+            elif rules_service.add_rule(category, keyword) is None:
+                flash(f'"{keyword}" is already a {category} rule.', 'info')
+            else:
+                changed = _recategorize()
+                flash(f'Rule saved — I recategorised {changed} '
+                      f'transaction{"" if changed == 1 else "s"} to match.',
+                      'success')
+
         elif action == 'remove':
-            category = request.form.get('category')
-            keyword = request.form.get('keyword')
-            get_category_rules().remove_rule(category, keyword)
-            for transaction in Transaction.query.filter(
-                Transaction.description.ilike(f'%{keyword}%'),
-                Transaction.category == category
-            ).all():
-                transaction.category = 'Uncategorized'
-            try:
-                db.session.commit()
-                flash('Rule removed — I recategorised the transactions it was '
-                      'affecting.', 'success')
-            except Exception as e:
-                db.session.rollback()
-                flash(f'Error updating transactions: {str(e)}', 'error')
+            if rules_service.remove_rule(category, keyword):
+                changed = _recategorize()
+                flash(f'Removed "{keyword}" — I recategorised {changed} '
+                      f'transaction{"" if changed == 1 else "s"}.', 'success')
+            else:
+                flash('That rule was already gone.', 'info')
+
+        elif action == 'remove_category':
+            removed = rules_service.remove_category(category)
+            if removed:
+                changed = _recategorize()
+                flash(f'Deleted {category} and its {removed} '
+                      f'keyword{"" if removed == 1 else "s"} — I recategorised '
+                      f'{changed} transaction{"" if changed == 1 else "s"}.',
+                      'success')
+            else:
+                flash(f'There is no {category} rule to delete.', 'info')
+
+        elif action == 'rename_category':
+            new_name = (request.form.get('new_category') or '').strip()
+            moved = rules_service.rename_category(category, new_name)
+            if moved:
+                _recategorize()
+                flash(f'Renamed {category} to {new_name}.', 'success')
+            else:
+                flash('Nothing to rename.', 'info')
+
         return redirect(url_for('rules.index'))
-    rule_stats = {cat: Transaction.query.filter(Transaction.category == cat).count()
-                  for cat in get_category_rules().get_all_rules()}
-    uncategorized_count = Transaction.query.filter_by(category='Uncategorized').count()
-    return render_template('rules.html', rules=get_category_rules().get_all_rules(),
+
+    rules = rules_service.all_rules()
+    rule_stats = {category: Transaction.query.filter(
+        Transaction.category == category).count() for category in rules}
+    uncategorized_count = Transaction.query.filter_by(
+        category='Uncategorized').count()
+    return render_template('rules.html', rules=rules,
                            rule_stats=rule_stats,
                            uncategorized_count=uncategorized_count)
+
+
+def _recategorize():
+    """Re-derive every transaction's category from the current rules.
+
+    Returns how many rows changed, which is what the flash message reports.
+
+    Whole-ledger rather than "the rows this keyword matched", and that is the
+    fix rather than laziness. A keyword-shaped query cannot answer the question
+    correctly in either direction:
+
+    - It cannot match a `/regex/` rule at all — `ILIKE '%/amazon|amzn/%'` looks
+      for those literal slashes in the description and finds nothing, so
+      removing a pattern rule left every transaction it had categorised sitting
+      under a rule that no longer exists.
+    - It is too broad for a plain keyword, because a row matching the removed
+      rule may still be claimed by a *surviving* one. Blanking it to
+      `Uncategorized` threw away a correct categorisation.
+
+    Re-deriving is O(transactions) in Python, which is affordable here: this
+    runs on an explicit rule edit, not on a page view, and the alternative is
+    a query that is subtly wrong on the two cases that matter most.
+    """
+    engine = rules_service.as_engine()
+    changed = 0
+    for transaction in Transaction.query.all():
+        category = engine.get_category(transaction.description)
+        if transaction.category != category:
+            transaction.category = category
+            changed += 1
+    if changed:
+        try:
+            db.session.commit()
+        except Exception as exc:                       # pragma: no cover
+            db.session.rollback()
+            current_app.logger.error('recategorise failed: %s', exc)
+            flash('I could not update your transactions.', 'error')
+            return 0
+    return changed
 
 @bp.route('/rules/test', methods=['POST'])
 def test():
@@ -81,15 +155,17 @@ def test():
 
 @bp.route('/rules/reorder', methods=['POST'])
 def reorder():
-    new_order = (request.json or {}).get('order', [])
-    rules_engine = get_category_rules()
-    all_rules = rules_engine.get_all_rules()
-    reordered = {cat: all_rules[cat] for cat in new_order if cat in all_rules}
-    for cat in all_rules:
-        if cat not in reordered:
-            reordered[cat] = all_rules[cat]
-    rules_engine.rules = reordered
-    rules_engine._save_rules(reordered)
+    """Drag-to-reorder. Priority is `CategoryRule.position`, lower wins.
+
+    The reordering itself moved into `rules_service` in Phase 11A.1: this used
+    to rebuild the dict here and then call `rules_engine._save_rules()`, which
+    wrote the shared JSON file — a private method, from a route, persisting one
+    household's priority order for every household in the installation.
+    """
+    order = (request.json or {}).get('order', [])
+    if not isinstance(order, list):
+        return jsonify({'success': False, 'error': 'order must be a list'}), 400
+    rules_service.reorder([str(name) for name in order])
     return jsonify({'success': True})
 
 @bp.route('/rules/ai-suggest', methods=['POST'])
@@ -179,30 +255,29 @@ def ai_apply():
     if not category or not keyword:
         return jsonify({'error': 'Missing category or keyword'}), 400
 
-    # Add rule at the TOP of the priority list so it beats all existing rules.
-    get_category_rules().add_rule_first(category, keyword)
+    # Add at the TOP of the priority order so an accepted suggestion beats the
+    # rules that were miscategorising those transactions. Persisted through the
+    # service: this used to call `add_rule_first` on the engine, which now edits
+    # an in-memory copy and would have been discarded at the end of the request.
+    if rules_service.add_rule(category, keyword, first=True) is None:
+        return jsonify({'ok': True, 'applied_count': 0,
+                        'message': 'That rule already exists.'})
 
-    is_regex = keyword.startswith('/') and keyword.endswith('/') and len(keyword) > 2
-    count    = 0
+    # Re-derive from the whole rule set rather than matching the keyword here.
+    # The old version applied the new rule directly to every row it matched,
+    # which ignored priority: a transaction claimed by a higher rule was
+    # reassigned anyway, so accepting a broad suggestion silently overwrote
+    # categories the user had already curated. `add_rule(first=True)` puts this
+    # rule at the top, so re-deriving gives it precedence *and* respects the
+    # rest of the order.
+    engine = rules_service.as_engine()
+    count = 0
     try:
-        if is_regex:
-            pattern = keyword[1:-1]
-            # Recategorize ALL matching transactions regardless of current category —
-            # the AI rule takes priority over whatever was assigned before.
-            for t in Transaction.query.all():
-                try:
-                    if re.search(pattern, t.description, re.IGNORECASE):
-                        t.category = category
-                        count += 1
-                except re.error:
-                    pass
-        else:
-            txns = Transaction.query.filter(
-                Transaction.description.ilike(f'%{keyword}%')
-            ).all()
-            for t in txns:
-                t.category = category
-            count = len(txns)
+        for transaction in Transaction.query.all():
+            resolved = engine.get_category(transaction.description)
+            if transaction.category != resolved:
+                transaction.category = resolved
+                count += 1
         db.session.commit()
     except Exception as e:
         db.session.rollback()

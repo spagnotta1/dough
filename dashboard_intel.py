@@ -33,6 +33,8 @@ MATERIAL_SWING_PCT = 25.0     # category change worth surfacing
 MATERIAL_SWING_USD = 75.0     # ...but only if the dollars are real
 INCOME_DROP_PCT = 15.0
 SUBSCRIPTION_HIKE_PCT = 8.0
+STEADY_CASH_FLOW_CV = 0.75    # net-flow variation above which cash flow is erratic
+HEAVY_DEBT_MONTHS = 6.0       # revolving balance worth this much income is heavy
 BILL_HORIZON_DAYS = 14
 FORECAST_DAYS = 45
 
@@ -110,7 +112,8 @@ def _band_phrase(key):
 
 
 def health_score(*, income, outgo, runway_months, budget_map, category_stats,
-                 period_months, prev_outgo=0.0):
+                 period_months, prev_outgo=0.0, cash_flow_stability=None,
+                 debt=None):
     """A single 0–100 read on financial health, plus the factors behind it.
 
     Four inputs, weighted by how much each one actually moves the needle on
@@ -130,6 +133,24 @@ def health_score(*, income, outgo, runway_months, budget_map, category_stats,
 
     The factors are returned alongside the score so the UI can explain the
     number instead of asking the user to trust it.
+
+    ## The two optional dimensions [Phase 11]
+
+    ``cash_flow_stability`` and ``debt`` are additions, and both default to
+    ``None`` meaning *not measured* — in which case no factor is emitted, no
+    weight is assigned, and the returned score is bit-for-bit what it was
+    before. That default is what lets `dough/services/health.py` compute a
+    richer score for the copilot without moving the number on the dashboard,
+    which still calls this with four arguments.
+
+    They are `None`-by-default rather than zero-by-default for the reason the
+    rest of this module is careful about: a household with no credit accounts
+    connected has *unknown* debt, not no debt, and scoring the unknown as
+    perfect would hand a strong rating to the one household most likely to be
+    in trouble.
+
+    ``cash_flow_stability`` is a 0–1 coefficient of variation of monthly net
+    flow (lower is steadier). ``debt`` is ``{'balance', 'monthly_income'}``.
     """
     factors = []
 
@@ -196,6 +217,47 @@ def health_score(*, income, outgo, runway_months, budget_map, category_stats,
                     'score': round(trend_pts), 'status': trend_status,
                     'detail': trend_detail,
                     'value': None if trend is None else round(trend, 1)})
+
+    # ── Cash-flow stability (optional) ──────────────────────────────────
+    # A household earning the same amount every month and one whose income
+    # swings by half can share a savings rate and be in very different
+    # positions. Measured as the coefficient of variation of monthly net flow.
+    if cash_flow_stability is not None:
+        # 0.0 (identical every month) earns full marks; STEADY_CASH_FLOW_CV and
+        # above earns none.
+        stability_pts = _clamp(100.0 - cash_flow_stability / STEADY_CASH_FLOW_CV * 100.0)
+        stability_status = ('good' if cash_flow_stability <= STEADY_CASH_FLOW_CV / 2
+                            else 'ok' if cash_flow_stability <= STEADY_CASH_FLOW_CV
+                            else 'poor')
+        factors.append({
+            'key': 'stability', 'label': 'Cash flow stability', 'weight': 10,
+            'score': round(stability_pts), 'status': stability_status,
+            'detail': ('Month-to-month cash flow varies by '
+                       f'{cash_flow_stability * 100:.0f}% of its average'),
+            'value': round(cash_flow_stability, 2)})
+
+    # ── Debt burden (optional) ──────────────────────────────────────────
+    if debt is not None:
+        balance = float(debt.get('balance') or 0.0)
+        monthly_income = float(debt.get('monthly_income') or 0.0)
+        if monthly_income > 0:
+            ratio = balance / monthly_income
+            debt_pts = _clamp(100.0 - ratio / HEAVY_DEBT_MONTHS * 100.0)
+            debt_status = ('good' if ratio <= HEAVY_DEBT_MONTHS / 3
+                           else 'ok' if ratio <= HEAVY_DEBT_MONTHS else 'poor')
+            debt_detail = (f'{_money(balance)} owed, about {ratio:.1f} months of income'
+                           if balance else 'No revolving balance')
+        else:
+            # A balance with no income to service it cannot be expressed as a
+            # ratio. Scored neutrally and labelled, rather than scored as zero.
+            ratio = None
+            debt_pts, debt_status = 50.0, 'unknown'
+            debt_detail = f'{_money(balance)} owed, no income recorded to compare'
+        factors.append({
+            'key': 'debt', 'label': 'Debt burden', 'weight': 10,
+            'score': round(debt_pts), 'status': debt_status,
+            'detail': debt_detail,
+            'value': None if ratio is None else round(ratio, 1)})
 
     total_weight = sum(f['weight'] for f in factors) or 1
     score = round(sum(f['score'] * f['weight'] for f in factors) / total_weight)

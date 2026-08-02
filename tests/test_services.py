@@ -118,6 +118,67 @@ SERVICE_FUNCTIONS = {
     # produced by the same code that does the removing.
     'account_lifecycle': ('export_account', 'delete_account',
                           'deletion_preview'),
+    # ---------------------------------------------------------------------
+    # Phase 11. The analytics layer the copilot reasons over.
+    # ---------------------------------------------------------------------
+    # The aggregation primitives. Every other module in this block reads its
+    # numbers from here rather than issuing its own SQL, which is what makes
+    # "does the trend agree with the dashboard?" a question with one answer.
+    # `period_summary` is the hot path -- one GROUP BY, asserted as one query in
+    # tests/test_analytics.py.
+    'analytics': ('resolve_window', 'preceding_window', 'custom_window',
+                  'month_keys_between', 'base_query', 'period_summary',
+                  'category_totals', 'merchant_totals', 'largest_purchases',
+                  'monthly_series', 'monthly_category_series', 'coverage',
+                  'pct_change'),
+    # Feature 2. Two windows in, structured findings out -- deliberately no
+    # prose, so the only thing the model can get wrong is the wording.
+    'periods': ('compare', 'compare_kind', 'compare_ranges'),
+    # Feature 3. A slope across months rather than a delta across two, which is
+    # the difference between a trend and an expensive Tuesday. `unit_cost_trend`
+    # is separate because "prices rose" and "you shopped more" need different
+    # advice and are one indistinguishable number until they are split.
+    'trends': ('category_trends', 'merchant_trends', 'unit_cost_trend'),
+    # Feature 6. Named causes rather than a bare flag -- the ledger's
+    # `anomaly_score` column already answers "is this odd?" and cannot answer
+    # "why?", which is the only part a user can act on. Median-and-MAD
+    # throughout, because household spending has a long right tail and one
+    # annual premium hides every later outlier from a standard deviation.
+    'anomalies': ('detect', 'summary', 'open_flagged', 'large_purchases',
+                  'duplicates', 'category_spikes', 'missing_income',
+                  'bill_increases'),
+    # Feature 4. Gathers the measurable inputs and hands them to
+    # `dashboard_intel.health_score` -- deliberately not a second scorer, so the
+    # dashboard and the copilot cannot show two numbers both called "financial
+    # health". The methodology table lives in this module's docstring.
+    'health': ('score', 'cash_flow_stability', 'debt_burden', 'improvements'),
+    # Feature 7. Parse, then query, then answer over the result -- so the model
+    # chooses the question and never does the arithmetic. `parse` is public
+    # because a caller that disagrees with the reading needs to see it.
+    'finsearch': ('search', 'parse'),
+    # Feature 11. The only module here that decides what is worth saying when
+    # nobody asked, which is why it is a scoring function and a hard cap rather
+    # than a list of rules. An empty result is the common case and is correct.
+    'proactive': ('insights', 'digest'),
+    # Feature 12. Conclusions plus their figures, not the rows behind them.
+    # About a sixth of `finance_context`'s detailed context on a household with
+    # real history, and -- the property that matters -- it does not grow as the
+    # ledger does.
+    'ai_context': ('build', 'estimated_tokens'),
+    # ---------------------------------------------------------------------
+    # Phase 11A.1. Category rules, per household.
+    # ---------------------------------------------------------------------
+    # They used to live in one `category_rules.json` at the repo root, shared by
+    # the whole installation -- so the second household to sign in read the
+    # first's rules, which name the merchants that household actually pays. Not
+    # a leak through a missing filter: the rules were never tenanted.
+    # `remove_category` is new, and its absence was a user-visible bug: the
+    # Rules page's delete button called `remove_rule(category, None)`, matched
+    # nothing, and reported success.
+    'rules_service': ('all_rules', 'as_engine', 'categories', 'seed_defaults',
+                      'add_rule', 'remove_rule', 'remove_category',
+                      'rename_category', 'reorder', 'replace_all',
+                      'rule_counts'),
 }
 
 # The closure names Phase 3 removed from app.py. Any of these reappearing as a
@@ -440,44 +501,117 @@ def test_services_import_without_a_flask_app():
 # The deliberate duplication survives
 # ---------------------------------------------------------------------------
 
-def test_sync_repository_builds_its_own_category_rules():
-    """finance_sync must NOT use the cached accessor.
+# [Phase 11A.1] The three tests below replace three that asserted the *old*
+# arrangement, in which `dough/services/categorization.py` held one
+# `CategoryRules` per process backed by a shared `category_rules.json`.
+#
+# They were:
+#   test_sync_repository_builds_its_own_category_rules   (asserted the import)
+#   test_get_category_rules_is_cached_and_resettable     (asserted the cache)
+#   test_sync_repository_instance_is_not_the_cached_engine
+#
+# Rewriting a passing test to accommodate new code is normally the wrong move,
+# and AGENTS.md says so. This is the exception it names, and the reason is that
+# the invariant those tests protected turned out to be a security bug: a
+# process-wide rule cache over a process-wide rule *file* meant the second
+# household in an installation read and overwrote the first household's rules,
+# which name the merchants that household actually pays.
+#
+# The *intent* of the originals is preserved in full -- the sync must not pin
+# categorization to whatever was loaded at boot -- and each is now the stronger
+# statement of it, asserted behaviourally rather than by reading an import.
 
-    `SyncRepository.__init__` constructs a fresh `CategoryRules()` per sync on
-    purpose, so a rule added in the Rules page applies to the next sync without
-    a restart. Switching it to `get_category_rules()` would pin categorization
-    to whatever was loaded at boot, and the symptom -- a new rule applying to
-    CSV imports but not to synced transactions -- is very hard to attribute.
+def test_sync_repository_does_not_pin_the_rules_it_categorises_with():
+    """A rule edited in the Rules page must reach the very next sync.
+
+    The original reason `SyncRepository` built its own engine, and still true.
+    Asserted by editing a rule and re-categorising rather than by checking which
+    name the module imports, so any implementation that resolves rules per call
+    satisfies it.
     """
-    source = _parse(os.path.join(REPO_ROOT, 'finance_sync', 'repository.py'))
-    imported = [alias.name for node in ast.walk(source)
-                if isinstance(node, ast.ImportFrom)
-                for alias in node.names]
-    assert 'get_category_rules' not in imported, (
-        'finance_sync/repository.py must keep building its own CategoryRules; '
-        'see dough/services/categorization.py for why')
-    assert 'CategoryRules' in imported
+    from dough.services import rules_service
+    from finance_sync.repository import SyncRepository
+
+    import finance_sync.scheduler as scheduler_module
+    from app import create_app
+
+    scheduler_module._scheduler = None
+    application = create_app(test_config={
+        'TESTING': True, 'SQLALCHEMY_DATABASE_URI': 'sqlite://',
+        'SYNC_SYNCHRONOUS': True, 'SYNC_AUTO_ENABLED': False})
+    from dough.tenancy import tenant_scope
+    from models import db
+
+    with application.app_context():
+        with tenant_scope(application.config['DEFAULT_HOUSEHOLD_ID']):
+            repo = SyncRepository()
+            assert repo._categorize('ACME WIDGETS') == 'Uncategorized'
+
+            rules_service.add_rule('Widgets', 'ACME WIDGETS')
+            # Same repository instance, no restart: it must see the new rule.
+            assert repo._categorize('ACME WIDGETS') == 'Widgets'
+        db.session.remove()
+    scheduler_module._scheduler = None
 
 
-def test_get_category_rules_is_cached_and_resettable():
+def test_category_rules_are_not_cached_across_households(app):
+    """The successor to `test_get_category_rules_is_cached_and_resettable`.
+
+    That test asserted `get_category_rules()` returned the *same object* twice.
+    It must now return a fresh engine each time, because a cached engine is a
+    cached household -- see `dough/services/categorization.py`.
+    """
     from dough.services import categorization
 
-    categorization.reset_category_rules()
     first = categorization.get_category_rules()
-    assert categorization.get_category_rules() is first
-
-    categorization.reset_category_rules()
     assert categorization.get_category_rules() is not first
 
 
-def test_sync_repository_instance_is_not_the_cached_engine():
-    """The two categorizers must be genuinely different objects."""
-    from dough.services.categorization import get_category_rules
-    from finance_sync.repository import SyncRepository
+def test_the_rules_accessor_reads_the_current_household(tmp_path):
+    """The bug this whole change exists to close, asserted directly.
 
-    repo = SyncRepository()
-    # _categorize is the bound get_category of the repository's own instance.
-    assert repo._categorize.__self__ is not get_category_rules()
+    Two households, different rules, one process. Before Phase 11A.1 both read
+    the same `category_rules.json` and this could not have passed.
+    """
+    import finance_sync.scheduler as scheduler_module
+    from app import create_app
+
+    scheduler_module._scheduler = None
+    application = create_app(test_config={
+        'TESTING': True,
+        'SQLALCHEMY_DATABASE_URI': f"sqlite:///{tmp_path / 'rules.db'}",
+        'SYNC_SYNCHRONOUS': True, 'SYNC_AUTO_ENABLED': False})
+
+    from dough.services import rules_service
+    from dough.services.categorization import get_category_rules
+    from dough.tenancy import tenant_scope, unscoped
+    from models import Household, db
+
+    with application.app_context():
+        with unscoped():
+            a = Household(name='A', plaid_user_id='rules-a')
+            b = Household(name='B', plaid_user_id='rules-b')
+            db.session.add_all([a, b])
+            db.session.commit()
+            a_id, b_id = a.id, b.id
+
+        with tenant_scope(a_id):
+            rules_service.replace_all({'Gym': ['PLANET FITNESS']})
+        with tenant_scope(b_id):
+            rules_service.replace_all({'Coffee': ['STARBUCKS']})
+
+        with tenant_scope(a_id):
+            engine = get_category_rules()
+            assert engine.get_category('PLANET FITNESS 123') == 'Gym'
+            assert engine.get_category('STARBUCKS 8891') == 'Uncategorized'
+
+        with tenant_scope(b_id):
+            engine = get_category_rules()
+            assert engine.get_category('STARBUCKS 8891') == 'Coffee'
+            assert engine.get_category('PLANET FITNESS 123') == 'Uncategorized'
+
+        db.session.remove()
+    scheduler_module._scheduler = None
 
 
 # ---------------------------------------------------------------------------

@@ -748,12 +748,17 @@
              band of widths — every tablet in portrait — where this row was
              shown and did not fit, and the page scrolled sideways. The touch
              nav covers the same destinations below this width. See the
-             #primary-nav rules in the <style> block above. #}
+             #primary-nav rules in the <style> block above.
+
+             [Phase 11A] Six links now, not seven: "Anomalies" and "Recurring"
+             were narrow one-table pages that each held a permanent slot in a
+             bar that already did not fit, and both are reached from the
+             Insights hub, which is where somebody actually goes looking for
+             them. Neither page was removed — see dough/blueprints/insights.py. #}
           <div id="primary-nav">
             <a href="/" class="nav-link">Dashboard</a>
             <a href="/transactions" class="nav-link">Transactions</a>
-            <a href="/anomalies" class="nav-link">Anomalies</a>
-            <a href="/recurring" class="nav-link">Recurring</a>
+            <a href="/insights" class="nav-link">Insights</a>
             <a href="/budgets" class="nav-link">Budgets</a>
             <a href="/investments" class="nav-link">Investments</a>
             <a href="/chat" class="nav-link nav-link--accent">Ask Dough</a>
@@ -826,7 +831,8 @@
     <div class="mm-body">
       <p class="mm-title">More</p>
       <a href="/investments" class="mm-link">Investments</a>
-      <a href="/anomalies" class="mm-link">Anomalies</a>
+      <a href="/insights" class="mm-link">Insights</a>
+      <a href="/anomalies" class="mm-link">Anomaly review</a>
       <a href="/recurring" class="mm-link">Recurring</a>
       <p class="mm-title mm-title--rule">Account &amp; settings</p>
       <button type="button" onclick="closeMobileMenu(); toggleProfileMenu();" class="mm-link">Settings</button>
@@ -1149,9 +1155,9 @@
     setTimeout(function(){ _spaBar.style.opacity = '0'; _spaBar.style.width = '0'; }, 220);
   }
 
-  var _navPaths = ['/', '/upload', '/transactions', '/anomalies', '/recurring',
-                   '/budgets', '/rules', '/investments', '/connections',
-                   '/sync-history', '/chat'];
+  var _navPaths = ['/', '/upload', '/transactions', '/insights', '/anomalies',
+                   '/recurring', '/budgets', '/rules', '/investments',
+                   '/connections', '/sync-history', '/chat'];
 
   function _isSpaLink(href) {
     if (!href || href.startsWith('#') || href.startsWith('http') ||

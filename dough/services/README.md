@@ -62,7 +62,56 @@ callable from the sync scheduler thread, where there is no request at all.
 | `email.py` | `build_backend`, `current_email`, the three backends | `current_app` in `current_email` only | **[Phase 10.5]** `console` / `memory` / `smtp` behind one `send()`. `ConsoleBackend` writes to **stdout, never `logging`** — the payload is a live credential and `_SECRETISH` cannot recognise it (SEC-0024) |
 | `ratelimit.py` | `policy_for`, `build_backend`, `current_limiter` | `current_app` in `current_limiter` only | **[Phase 10.5]** SEC-0018's seam. `POLICIES` is the whole limit table in one place; four of the eight have call sites, the rest await a shared backend |
 
-The last three are per-application services rather than plain function modules:
+### Phase 11A — the analytics layer
+
+Eight modules, added together because they are one layer: `analytics` holds the
+queries and the other seven read their numbers from it rather than issuing their
+own SQL. That is what makes "does the trend agree with the dashboard?" a
+question with a single answer instead of a diff.
+
+| Module | Contents | Flask context needed | Notes |
+|---|---|---|---|
+| `analytics.py` | `resolve_window`, `preceding_window`, `custom_window`, `lookback_window`, `period_summary`, `category_totals`, `merchant_totals`, `largest_purchases`, `monthly_series`, `monthly_category_series`, `coverage`, `pct_change`, `base_query` | app only | The aggregation primitives. Every rollup is a `GROUP BY`; `period_summary` is **one query**, asserted as one in `tests/test_analytics.py`. Owns the transfer rule in code, which `finance_context` states in prose to the model |
+| `periods.py` | `compare`, `compare_kind`, `compare_ranges` | app only | Feature 2. Structured findings, never prose. A change must clear a percentage **and** a dollar floor — both imported from `dashboard_intel` so the attention centre cannot disagree about what "material" means. `pct: None` for a category with no baseline |
+| `trends.py` | `category_trends`, `merchant_trends`, `unit_cost_trend` | app only | Feature 3. **Theil–Sen, not least squares** — OLS reported one birthday dinner as a rising trend at R²=0.42; see `_describe`. Leading zeros are trimmed so a category first seen last month cannot be fitted through four invented ones |
+| `anomalies.py` | `detect`, `summary`, `open_flagged`, and the five detectors | app only | Feature 6. Median-and-MAD throughout: household spending has a long right tail and one annual premium hides every later outlier from a standard deviation. Falls back to a multiple-of-median when the MAD is zero, which is the *common* case for a fixed-price merchant. Writes nothing |
+| `health.py` | `score`, `cash_flow_stability`, `debt_burden`, `improvements` | app only | Feature 4. Gathers inputs and hands them to `dashboard_intel.health_score` — deliberately **not** a second scorer. The methodology table is in the module docstring, including why investment consistency is not scored |
+| `finsearch.py` | `search`, `parse` | app only | Feature 7. Parse → query → answer, so the model chooses the question and never does the arithmetic. Matches categories against the household's *real* category names, not a fixed taxonomy. `matched: False` is a valid result |
+| `proactive.py` | `insights`, `digest` | app only | Feature 11. The only module that decides what is worth saying unprompted, so it is a scoring function and a hard cap. An empty list is the common case and is correct |
+| `ai_context.py` | `build`, `estimated_tokens` | app only | Feature 12. Conclusions plus their figures, not the rows behind them — ~17% of `finance_context`'s detailed context on 3,300 transactions, and it does not grow with the ledger |
+
+Every function that reads a window takes an optional `anchor`, defaulting to
+today — `category_trends`, `merchant_trends`, `unit_cost_trend`,
+`anomalies.detect`, `health.score`, `proactive.insights`, `ai_context.build`,
+`FinancialCopilot`. That is what lets a test pin the clock through the public
+signature instead of patching one, and it is why none of these files
+monkeypatch `date.today`.
+
+The import graph stays a line: `ai_context` → {`proactive`, `health`, `periods`,
+`trends`, `anomalies`, `budgets`, `networth`} → `analytics` → `models`. Nothing
+imports upward, and `analytics` imports no sibling at all.
+
+**Nothing here talks to a model.** The orchestrator that coordinates these and
+then calls one is `dough/ai/copilot.py`, and it lives there rather than here
+precisely because of the "no LLM client" rule above — `dough/ai/` is the only
+package allowed to reach in both directions. Routes should generally call
+`FinancialCopilot` rather than these modules directly: several of the expensive
+calls are needed by more than one surface, and the orchestrator is what makes
+them run once. `dough/blueprints/insights.py` is the worked example.
+
+The functions that accept an optional precomputed `findings` or `comparison`
+(`proactive.insights`, `anomalies.summary`, `ai_context.build`) exist for that
+coordination. Left as None they compute their own, so a direct caller needs to
+know nothing about it.
+
+**None of these take a household argument**, which is deliberate: there is no
+parameter a caller could pass the wrong value to. Scoping comes from
+`TenantScopedQuery` exactly as it does everywhere else, and
+`test_analytics.py`, `test_finsearch.py` and `test_ai_context.py` each assert it
+behaviourally from two households with different figures.
+
+The last three of the earlier modules are per-application services rather than
+plain function modules:
 each has an `init_app` and lives on `app.extensions`, exactly as `AIService`
 does, so the suite's many `create_app()` calls cannot share one instance's mail,
 counters or budget.

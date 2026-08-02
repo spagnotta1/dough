@@ -1,0 +1,270 @@
+{% extends "base.html" %}
+
+{% block title %}Insights · Dough{% endblock %}
+
+{#
+  Insights — the consolidated view [Phase 11A].
+
+  Reading order is the point of this page. What somebody wants on arriving is
+  "how am I doing?", then "what should I know?", then — rarely, and only when
+  something prompts it — "let me review the flagged charges". The old
+  /anomalies page put the last of those first and had nowhere to put the other
+  two, so the table is a collapsed <details> here and the score leads.
+
+  <details> rather than an Alpine component on purpose: it collapses without
+  JavaScript, is keyboard- and screen-reader-native, and survives the SPA
+  navigation in base.html without needing to be re-hydrated.
+#}
+
+{% block content %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/anomalies.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/insights.css') }}">
+
+<div class="ds-stack ds-stack-6">
+
+  <header class="ds-section__head ds-rise">
+    <div>
+      <h1 class="ds-section__title">Insights</h1>
+      <p class="ds-section__sub">
+        What I noticed in your accounts, and how the picture is holding up.
+      </p>
+    </div>
+  </header>
+
+  {# ── Financial health ────────────────────────────────────────────────── #}
+  <section class="ds-card ds-rise" aria-labelledby="healthHeading">
+    <div class="ds-card__head">
+      <div>
+        <h2 id="healthHeading" class="ds-section__title">Financial health</h2>
+        <p class="ds-section__sub">
+          Weighted from {{ health.factors|selectattr('weight')|list|length }}
+          measured factors over the last six months.
+        </p>
+      </div>
+      <p class="ds-num ins-score ins-score--{{ health.band }}">
+        <span class="ins-score__value">{{ health.score }}</span>
+        <span class="ins-score__label">{{ health.label }}</span>
+      </p>
+    </div>
+
+    <ul class="ins-factors">
+      {% for factor in health.factors if factor.weight %}
+      <li class="ins-factor ins-factor--{{ factor.status }}">
+        <div class="ins-factor__row">
+          <span class="ins-factor__name">{{ factor.label }}</span>
+          <span class="ds-num ins-factor__score">{{ factor.score }}</span>
+        </div>
+        <div class="ds-progress ins-factor__bar" role="img"
+             aria-label="{{ factor.label }}: {{ factor.score }} out of 100">
+          <span class="ds-progress__fill" style="width: {{ factor.score }}%"></span>
+        </div>
+        <p class="ds-meta">{{ factor.detail }}</p>
+      </li>
+      {% endfor %}
+    </ul>
+
+    {% if health.not_measured %}
+    <p class="ds-meta ins-caveat">
+      Not included:
+      {% for missing in health.not_measured %}{{ missing.label|lower }}
+        ({{ missing.reason }}){% if not loop.last %}; {% endif %}{% endfor %}.
+    </p>
+    {% endif %}
+  </section>
+
+  {# ── What I noticed ──────────────────────────────────────────────────── #}
+  <section class="ds-card ds-rise" aria-labelledby="noticedHeading">
+    <div class="ds-card__head">
+      <h2 id="noticedHeading" class="ds-section__title">What I noticed</h2>
+    </div>
+
+    {% if insights %}
+    <ul class="ins-list">
+      {% for insight in insights %}
+      <li class="ins-item ins-item--{{ insight.severity }}">
+        <p class="ins-item__what">{{ insight.summary }}</p>
+        <p class="ds-meta ins-item__amount">
+          {{ insight.amount|money }}
+          {% if insight.evidence.pct is defined and insight.evidence.pct is not none %}
+            · {{ insight.evidence.pct|round|int }}%
+          {% endif %}
+        </p>
+      </li>
+      {% endfor %}
+    </ul>
+    {% else %}
+    <div class="ds-empty">
+      <p class="ds-empty__body">
+        Nothing stands out this month — your spending, income and bills all look
+        like they usually do. That is genuinely good news, not an empty screen.
+      </p>
+    </div>
+    {% endif %}
+  </section>
+
+  {# ── Spending trends ─────────────────────────────────────────────────── #}
+  {% if category_trends %}
+  <section class="ds-card ds-rise" aria-labelledby="trendsHeading">
+    <div class="ds-card__head">
+      <div>
+        <h2 id="trendsHeading" class="ds-section__title">Spending trends</h2>
+        <p class="ds-section__sub">Direction of travel over the last six months.</p>
+      </div>
+    </div>
+
+    <div class="ds-table__wrap">
+      <table class="ds-table"
+             aria-label="Categories with a rising or falling trend over six months">
+        <thead>
+          <tr>
+            <th scope="col">Category</th>
+            <th scope="col">Direction</th>
+            <th scope="col" class="ds-table__num">Per month</th>
+            <th scope="col" class="ds-table__num">Monthly average</th>
+            <th scope="col">Confidence</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for trend in category_trends %}
+          <tr>
+            <td>{{ trend.category }}</td>
+            <td>
+              <span class="ds-chip ins-dir ins-dir--{{ trend.direction }}">
+                {{ trend.direction }}
+              </span>
+            </td>
+            <td class="ds-table__num">
+              {{ '+' if trend.slope_per_month > 0 else '' }}{{ trend.slope_per_month|money }}
+            </td>
+            <td class="ds-table__num">{{ trend.average|money }}</td>
+            <td class="ds-meta">{{ trend.confidence }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <p class="ds-meta ins-caveat">
+      A direction is only reported where at least three months of history support
+      it. Categories that move around without a direction are left out.
+    </p>
+  </section>
+  {% endif %}
+
+  {# ── Unusual activity — collapsed by default ─────────────────────────── #}
+  <section class="ds-card ds-rise" aria-labelledby="unusualHeading"
+           id="unusual-activity">
+    <details class="ins-details" {% if request.args.get('open') == 'unusual' %}open{% endif %}>
+      <summary class="ins-details__summary">
+        <span>
+          <span id="unusualHeading" class="ds-section__title">Unusual activity</span>
+          <span class="ds-meta ins-details__count">
+            {% if detected or open_anomaly_count %}
+              {{ detected|length }} explained
+              {%- if open_anomaly_count %}, {{ open_anomaly_count }} flagged for review{% endif %}
+            {% else %}
+              nothing unusual right now
+            {% endif %}
+          </span>
+        </span>
+        <span class="ins-details__chevron" aria-hidden="true">▾</span>
+      </summary>
+
+      <div class="ins-details__body">
+        {% if detected %}
+        <ul class="ins-list">
+          {% for finding in detected %}
+          <li class="ins-item ins-item--{{ finding.severity }}">
+            <p class="ins-item__what">{{ finding.summary }}</p>
+            <p class="ds-meta ins-item__amount">
+              {{ finding.amount|money }} · {{ finding.date }}
+            </p>
+          </li>
+          {% endfor %}
+        </ul>
+        {% endif %}
+
+        {% if open_anomalies %}
+        <h3 class="ds-section__title ins-subhead">Flagged for review</h3>
+        <div class="ds-table__wrap">
+          <table class="ds-table" aria-label="Transactions flagged as unusual and not yet reviewed">
+            <thead>
+              <tr>
+                <th scope="col">Date</th>
+                <th scope="col">Description</th>
+                <th scope="col" class="ds-table__num">Amount</th>
+                <th scope="col">Category</th>
+                <th scope="col">Action</th>
+              </tr>
+            </thead>
+            <tbody id="anomalyBody">
+              {% for anomaly in open_anomalies %}
+              <tr id="arow-{{ anomaly.id }}">
+                <td class="ds-meta">{{ anomaly.date.strftime('%Y-%m-%d') }}</td>
+                <td>{{ anomaly.description }}</td>
+                <td class="ds-table__num {{ 'anom-amt--pos' if anomaly.amount > 0 else 'anom-amt--neg' }}">
+                  ${{ "{:,.2f}".format(anomaly.amount) }}
+                </td>
+                <td class="ds-meta">{{ anomaly.category }}</td>
+                <td>
+                  <button type="button" onclick="dismissAnomaly({{ anomaly.id }})"
+                          class="ds-btn ds-btn--sm ds-btn--secondary anom-dismiss-btn">
+                    Dismiss
+                  </button>
+                </td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+
+        {% if open_anomaly_count > hub_anomaly_limit %}
+        <p class="ds-meta">
+          Showing {{ hub_anomaly_limit }} of {{ open_anomaly_count }}.
+          <a href="{{ url_for('insights.anomalies') }}">Open the full review table</a>.
+        </p>
+        {% endif %}
+        {% elif not detected %}
+        <div class="ds-empty">
+          <p class="ds-empty__body">
+            Nothing to review. <a href="{{ url_for('insights.anomalies', show_reviewed='1') }}">Show
+            the ones you've already seen</a>.
+          </p>
+        </div>
+        {% endif %}
+      </div>
+    </details>
+  </section>
+
+  {# ── The two pages this hub replaced in the nav ──────────────────────── #}
+  <nav class="ds-card ds-rise ins-more" aria-label="Related views">
+    <a href="{{ url_for('insights.anomalies') }}" class="ins-more__link">
+      <span class="ins-more__title">Anomaly review</span>
+      <span class="ds-meta">The full table, sortable, with the ones you've dismissed.</span>
+    </a>
+    <a href="{{ url_for('insights.recurring') }}" class="ins-more__link">
+      <span class="ins-more__title">Recurring &amp; subscriptions</span>
+      <span class="ds-meta">Every bill and subscription I've detected.</span>
+    </a>
+  </nav>
+
+</div>
+
+<script>
+  // Same contract as anomalies.html: POST the dismissal, drop the row. Kept
+  // here rather than shared because the two pages remove different things —
+  // this one has no pagination to keep consistent.
+  function dismissAnomaly(id) {
+    // The CSRF token is added by the fetch wrapper in base.html; see the
+    // comment there. Setting it here as well would be a second source of truth.
+    fetch('/anomalies/' + id + '/dismiss', { method: 'POST' })
+      .then(function (r) { return r.json(); })
+      .then(function (data) {
+        if (!data.success) { showToast('That could not be dismissed.', 'error'); return; }
+        var row = document.getElementById('arow-' + id);
+        if (row) { row.remove(); }
+        showToast('Dismissed.', 'success');
+      })
+      .catch(function () { showToast('That could not be dismissed.', 'error'); });
+  }
+</script>
+{% endblock %}

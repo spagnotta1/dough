@@ -1,19 +1,93 @@
-"""Derived views of the ledger: anomaly scores and recurring detection.
+"""Derived views of the ledger: the Insights hub, anomaly scores and recurring.
 
-Neither owns any data of its own -- both are opinions about transactions --
-which is why they share a module rather than each getting one."""
+None of these own any data -- all are opinions about transactions -- which is
+why they share a module rather than each getting one.
 
+## The hub [Phase 11A]
 
+`/insights` is the consolidated view. Before it, the nav carried seven
+destinations and two of them ("Anomalies", "Recurring") were narrow, one-table
+pages that a person visits rarely and that cost a permanent slot in a bar which
+already did not fit tablets in portrait -- see the comment above `#primary-nav`
+in `base.html`.
+
+The hub puts the health score, the proactive insights and the spending trends on
+one page, with unusual activity as a **collapsed** `<details>` section beneath
+them. That inverts the old emphasis correctly: the anomaly table was the whole
+page and is in fact the least-read thing on it, while the score and the
+observations were nowhere.
+
+Both original pages are still served and still linked from here. Retiring a
+route would break bookmarks and lose the paginated review workflow, which the
+hub deliberately does not reimplement -- it shows the open items and links to
+the full table rather than growing a second pager.
+
+Every figure on the hub comes from `dough/services/`, so the page and the
+copilot cannot disagree about what the household's finances look like.
+"""
 
 from flask import (Blueprint, flash, jsonify, redirect, render_template,
                    request, url_for)
 
+from dough.ai.copilot import current_copilot
 from dough.tenancy import get_owned
 
 from models import RecurringDismissal, Transaction, db
 from recurring import detect_recurring, normalize_description
 
 bp = Blueprint('insights', __name__)
+
+#: How many open anomalies the collapsed section shows before deferring to the
+#: full table. Twenty is enough to make "review them here" the common path and
+#: few enough that the section stays a section.
+HUB_ANOMALY_LIMIT = 20
+
+
+@bp.route('/insights')
+def hub():
+    """Health, observations, trends, and unusual activity in one page.
+
+    Everything is computed through the services rather than here: the route
+    reads no rows of its own beyond the anomaly list it renders, which is the
+    same rule the rest of `dough/blueprints/` follows.
+    """
+    if not Transaction.query.first():
+        flash("I don't have any transactions yet — upload some and I'll get to work.",
+              'info')
+        return redirect(url_for('transactions.upload'))
+
+    open_anomalies = (Transaction.query
+                      .filter(Transaction.anomaly_score == -1.0,
+                              Transaction.anomaly_reviewed == False)  # noqa: E712
+                      .order_by(Transaction.date.desc())
+                      .limit(HUB_ANOMALY_LIMIT).all())
+
+    # One coordinated pass for the whole page. The route used to call
+    # `detect()`, `summary()`, `insights()`, `health.score()` and
+    # `category_trends()` separately -- and three of those run the detector
+    # internally, so rendering this page cost three full passes over a year of
+    # transactions. `FinancialCopilot.analytics()` computes each expensive
+    # service once and threads the result through the rest.
+    run = current_copilot().analytics()
+
+    return render_template(
+        'insights.html',
+        health=run['health'],
+        insights=run['insights'],
+        category_trends=[t for t in run['trends'][:6]
+                         if t['direction'] in ('rising', 'falling')],
+        detected=run['findings'][:8],
+        anomaly_summary=run['anomaly_summary'],
+        open_anomalies=open_anomalies,
+        open_anomaly_count=_open_anomaly_count(),
+        hub_anomaly_limit=HUB_ANOMALY_LIMIT)
+
+
+def _open_anomaly_count():
+    return (Transaction.query
+            .filter(Transaction.anomaly_score == -1.0,
+                    Transaction.anomaly_reviewed == False)  # noqa: E712
+            .count())
 
 @bp.route('/anomalies/<int:transaction_id>/dismiss', methods=['POST'])
 def dismiss_anomaly(transaction_id):

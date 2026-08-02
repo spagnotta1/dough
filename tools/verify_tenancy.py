@@ -72,10 +72,10 @@ import sys
 #: expectation from the same source as the implementation would make a model
 #: that forgot the mixin verify clean.
 SCOPED_TABLES = (
-    'account_balance', 'budgets', 'chat_messages', 'connected_accounts',
-    'conversations', 'financial_accounts', 'holdings', 'household_invites',
-    'log_entry', 'portfolio_snapshots', 'recurring_dismissals', 'sync_errors',
-    'sync_history', 'transactions',
+    'account_balance', 'budgets', 'category_rules', 'chat_messages',
+    'connected_accounts', 'conversations', 'financial_accounts', 'holdings',
+    'household_invites', 'log_entry', 'portfolio_snapshots',
+    'recurring_dismissals', 'sync_errors', 'sync_history', 'transactions',
 )
 
 #: The one table that carries `household_id` and is allowed to leave it NULL,
@@ -100,7 +100,7 @@ EXPECTED_NULLABLE_HOUSEHOLD = {
 #: 20260727_04, `api_tokens` from 20260730_05, `email_verifications` from
 #: 20260730_07.
 NEW_TABLES = ('households', 'household_invites', 'audit_events', 'api_tokens',
-              'email_verifications')
+              'email_verifications', 'category_rules')
 
 #: The only tables a synchronization run may add rows to. Shorthand for
 #: `--may-grow sync`. Deliberately a short list: a sync that inserted a budget
@@ -121,6 +121,10 @@ EXPECTED_UNIQUE = {
     'connected_accounts': ('household_id', 'institution', 'item_id'),
     'portfolio_snapshots': ('household_id', 'snapshot_date'),
     'recurring_dismissals': ('household_id', 'desc_key'),
+    # [Phase 11A.1] Without household_id leading this, the second household to
+    # add STARBUCKS to Coffee collides with the first, and the failure reads as
+    # a duplicate-rule error rather than the tenancy bug it is.
+    'category_rules': ('household_id', 'category', 'keyword'),
     'transactions': ('household_id', 'account_name', 'date', 'description',
                      'amount'),
 }

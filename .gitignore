@@ -38,3 +38,13 @@ quick-test/
 # Editors / OS
 .claude/
 .DS_Store
+
+# Category rules were stored here -- one file at the repo root, shared by every
+# household in the installation, and committed, so every deployment image
+# shipped the developer's personal rules to every account on it. See SEC-0025.
+#
+# They live in the tenant-scoped `category_rules` table now
+# (migrations/20260802_08_category_rules). The file is kept out of git so it can
+# never be shipped again; it is still read once, by that migration, to backfill
+# an existing installation, so a local copy is harmless and a tracked one is not.
+category_rules.json

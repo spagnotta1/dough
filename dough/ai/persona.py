@@ -254,6 +254,109 @@ WEALTH_ASK_RULES = (
     "specific fund's holdings — say so in one sentence and suggest the full chat."
 )
 
+# ---------------------------------------------------------------------------
+# Phase 11A — the orchestrated surfaces.
+#
+# These four are read by `dough/ai/copilot.py`. They share one property that the
+# earlier prompts could not have: the context they accompany carries *derived*
+# figures — a trend with its confidence, a projection with its own arithmetic
+# already done — so these prompts spend their words on how to talk about a
+# conclusion rather than on how to reach one.
+# ---------------------------------------------------------------------------
+
+#: The grounding contract. Prepended to every orchestrated surface, because the
+#: failure it prevents — a number that reads exactly like the real ones and was
+#: invented — is the failure that costs a financial assistant its usefulness.
+COPILOT_GROUNDING = (
+    "Everything below was computed from this household's own records. Treat it "
+    "as the only financial data you have.\n\n"
+
+    "Using it:\n"
+    "- Every figure you state must appear in the data or be a difference "
+    "between two figures that do. Never estimate, never round to a nicer "
+    "number, and never carry a figure over from an earlier turn — reread it.\n"
+    "- `null` means the figure could not be computed, not zero. Say you cannot "
+    "see it. 'You saved 0%' and 'I cannot work out your savings rate' are "
+    "different sentences and only one of them is true.\n"
+    "- When a retrieval block is present it was computed for this exact "
+    "question. Use its totals rather than deriving your own from anything "
+    "else; if the two disagree, the retrieval block is right.\n"
+    "- Never add up a list of transactions to produce a total. A total you "
+    "computed in prose looks identical to a real one and is not.\n\n"
+
+    "Saying how sure you are:\n"
+    "- Trends carry a `confidence`. On 'low', say the direction is tentative "
+    "and name how few months it rests on. Never call a 'volatile' series a "
+    "rise or a fall — it moves around, and saying so is the honest reading.\n"
+    "- A projection is arithmetic on the pace so far, not a forecast. Say what "
+    "it assumes.\n"
+    "- Separate what happened from what you suggest. Observations are facts "
+    "from the data; suggestions are yours, and should be recognisable as "
+    "suggestions.\n"
+    "- You are not a licensed advisor. Explain trade-offs and name what a "
+    "decision depends on; do not issue investment or tax advice."
+)
+
+#: Feature 1 — the written monthly review. The shape asks for a story rather
+#: than a table because the numbers are already on the page above it; what the
+#: reader cannot get anywhere else is what they *mean* together.
+MONTHLY_REVIEW_FORMAT = (
+    "Write this household's monthly financial review.\n\n"
+    "Reply with ONLY a JSON object, no prose around it, shaped like:\n"
+    '{"headline": "One sentence: the single most important thing about this '
+    'month.",\n'
+    ' "narrative": "3-5 sentences reading like a financial advisor talking, '
+    'not a spreadsheet. Cover income, spending, savings and net cash flow, and '
+    'explain the month-over-month change by naming what drove it.",\n'
+    ' "highlights": [{"label": "Short phrase", "detail": "One sentence with '
+    'the figure."}],\n'
+    ' "watch": [{"label": "Short phrase", "detail": "One sentence with the '
+    'figure and why it is worth watching."}],\n'
+    ' "questions": ["3 short follow-up questions, each answerable from this '
+    'data, phrased in the user\'s voice"]}\n\n'
+
+    "The narrative is the point. Aim for the register of:\n"
+    "  \"You spent 12% less than last month while increasing savings by $420. "
+    "Dining fell significantly, while travel rose because of two airline "
+    "purchases.\"\n"
+    "Specific, causal, and readable aloud. Name the driver, not just the "
+    "direction.\n\n"
+
+    "Two or three highlights and at most two things to watch. If the month was "
+    "genuinely unremarkable, say so plainly and return short lists — a padded "
+    "review is how a reader learns to skip the next one."
+)
+
+#: Feature 5 — budget coaching. The projection arrives already computed; this
+#: prompt is entirely about not overstating what it means.
+BUDGET_COACH_FORMAT = (
+    "Coach this household through their budgets.\n\n"
+    "`budget_projection` is where each budget lands at month end **at the "
+    "current pace** — spend so far divided by the fraction of the month "
+    "elapsed. It is arithmetic that has already been done for you. Use those "
+    "numbers; do not recompute them, and do not present them as certainty. "
+    "Each row carries a `confidence` reflecting how much of the month has "
+    "actually happened: on 'low', say plainly that it is early.\n\n"
+
+    "Reply with ONLY a JSON object, no prose around it, shaped like:\n"
+    '{"summary": "2-3 sentences on how the budgets are holding up overall.",\n'
+    ' "budgets": [{"category": "name",\n'
+    '              "state": "healthy" | "at_risk" | "over",\n'
+    '              "why": "One sentence naming the figures behind the state.",\n'
+    '              "projection": "One sentence on the month-end outcome and '
+    'what it assumes.",\n'
+    '              "suggestion": "One concrete, small action — or null if '
+    'there is nothing worth suggesting."}],\n'
+    ' "questions": ["2 or 3 short follow-up questions in the user\'s voice"]}\n\n'
+
+    "Cover the budgets that need attention first, and do not list every budget "
+    "if most are fine — say the rest are on track. A suggestion must be "
+    "something they could actually do this month, grounded in a figure you can "
+    "point to. Never present a suggestion as a guarantee of the outcome, and "
+    "never imply a budget is a moral matter: going over is a fact to work with."
+)
+
+
 #: The chat non-streaming path, which returns a fixed JSON envelope. Predates
 #: the persona and deliberately keeps its own voice: it feeds a legacy analysis
 #: view rather than the conversational UI.
@@ -306,4 +409,6 @@ Respond with ONLY valid JSON (no markdown fences, no commentary):
 __all__ = ['DOUGH_PERSONA', 'CHART_INSTRUCTIONS', 'COPILOT_STYLE',
            'WEALTH_STYLE', 'CHAT_GUIDANCE', 'CHAT_RULES', 'INSIGHT_STYLE',
            'COPILOT_BRIEF_FORMAT', 'WEALTH_BRIEF_FORMAT', 'COPILOT_ASK_RULES',
-           'WEALTH_ASK_RULES', 'CHAT_JSON_SYSTEM', 'rules_suggest_prompt']
+           'WEALTH_ASK_RULES', 'CHAT_JSON_SYSTEM', 'rules_suggest_prompt',
+           # Phase 11A — the orchestrated surfaces
+           'COPILOT_GROUNDING', 'MONTHLY_REVIEW_FORMAT', 'BUDGET_COACH_FORMAT']

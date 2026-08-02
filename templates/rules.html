@@ -182,13 +182,29 @@
               <a href="{{ url_for('transactions.index', category=category) }}">{{ rule_stats.get(category, 0) }}</a>
             </td>
             <td class="rules-cell--actions">
-              <form method="POST">
+              {# `remove_category`, not `remove`. This posted `action=remove`
+                 with no keyword, so the route called remove_rule(cat, None),
+                 matched nothing, and flashed "Rule removed" anyway — the button
+                 appeared to work and never did. See dough/blueprints/rules.py. #}
+              <form method="POST" class="rules-actions">
                 {{ csrf_field() }}
-                <input type="hidden" name="action" value="remove">
+                <input type="hidden" name="action" value="remove_category">
                 <input type="hidden" name="category" value="{{ category }}">
                 <button type="submit" class="ds-btn ds-btn--sm ds-btn--danger"
-                        onclick="return confirm('Delete the {{ category }} category and all its keywords?')">
+                        onclick="return confirm('Delete the {{ category }} category and all {{ keywords|length }} of its keywords?')">
                   Delete category
+                </button>
+              </form>
+              <form method="POST" class="rules-actions rules-rename"
+                    onsubmit="return this.new_category.value.trim() !== ''">
+                {{ csrf_field() }}
+                <input type="hidden" name="action" value="rename_category">
+                <input type="hidden" name="category" value="{{ category }}">
+                <input type="text" name="new_category" class="ds-input ds-input--sm"
+                       placeholder="Rename to…" aria-label="Rename {{ category }} to"
+                       maxlength="50">
+                <button type="submit" class="ds-btn ds-btn--sm ds-btn--secondary">
+                  Rename
                 </button>
               </form>
             </td>

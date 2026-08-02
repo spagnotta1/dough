@@ -100,6 +100,11 @@ _SCOPED_TABLES = (
     ('sync_errors', 'SyncErrorLog'),
     ('portfolio_snapshots', 'PortfolioSnapshotRow'),
     ('household_invites', 'HouseholdInvite'),
+    # [Phase 11A.1] Rules moved out of a shared JSON file into a tenant-scoped
+    # table. They are the household's own data — a rule set names the merchants
+    # they pay — so an export that omitted them would be incomplete and a
+    # deletion that skipped them would leave that behind.
+    ('category_rules', 'CategoryRule'),
 )
 
 #: Column names never included in an export, matched case-insensitively as a

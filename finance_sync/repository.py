@@ -46,11 +46,20 @@ class SyncRepository:
 
     def __init__(self, categorize: Optional[Callable[[str], str]] = None):
         if categorize is None:
-            # Wire in the app's rules engine so synced transactions are
-            # categorized exactly like CSV imports (fresh instance per sync
-            # picks up rule edits made in the Rules page).
-            from rules import CategoryRules
-            categorize = CategoryRules().get_category
+            # Wire in the household's rules engine so synced transactions are
+            # categorized exactly like CSV imports. Resolved per call rather
+            # than held, for two reasons that now both matter:
+            #
+            #   1. A rule edited in the Rules page applies to the next sync
+            #      without a restart -- the original reason, still true.
+            #   2. [Phase 11A.1] The rules are per household. Capturing an
+            #      engine at construction would pin this repository to whichever
+            #      household happened to be in scope when it was built, and a
+            #      sync would then categorise one family's transactions with
+            #      another family's rules.
+            def categorize(description):
+                from dough.services.rules_service import as_engine
+                return as_engine().get_category(description)
         #: callback mapping a transaction description to a category
         self._categorize = categorize
 

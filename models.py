@@ -594,6 +594,68 @@ class Budget(TenantScopedMixin, db.Model):
             'monthly_limit': float(self.monthly_limit),
         } 
 
+class CategoryRule(TenantScopedMixin, db.Model):
+    """One keyword-or-pattern that assigns a category. [Phase 11A.1]
+
+    ## Why this table exists
+
+    Category rules lived in `category_rules.json` — **one file at the repo
+    root**, read and written by every household in the installation. There was
+    no `household_id` anywhere in `rules.py`, `categorization.py` or the Rules
+    page, so this was not a leak through a missing filter: the rules were never
+    tenanted at all, and the second household to sign in saw the first
+    household's rule set because there was only ever one.
+
+    That is a disclosure of personal financial data, not just untidy state. A
+    rule set names the merchants somebody actually pays — their gym, their
+    student-loan servicer, their subscriptions. `/planet fitness|gym
+    membership/` in one family's rules tells another family where they exercise.
+
+    The same file was also writable by the test suite, which is how
+    `BrowserTestCategory` came to be sitting in a developer's real rules.
+
+    ## Shape
+
+    One row per (category, keyword) pair rather than a JSON blob per household.
+    That is what makes "delete this one keyword" a `DELETE` of one row instead
+    of a read-modify-write of a document, and it lets `position` order the rules
+    without rewriting every one of them when a row moves.
+
+    `position` is per household and ascending — **lower wins**, matching the
+    Rules page's "rules higher in the list win". Ties break on `id`, so two
+    rules written in one request stay in insertion order.
+
+    The unique index leads with `household_id`, for the reason
+    `idx_transaction_unique` does: without it the second household to add
+    `STARBUCKS` to `Coffee` collides with the first, and the failure looks like
+    a duplicate-rule error rather than the tenancy bug it is.
+    """
+
+    __tablename__ = 'category_rules'
+
+    id = db.Column(db.Integer, primary_key=True)
+    category = db.Column(db.String(50), nullable=False)
+    #: A plain substring, or a regex when wrapped in slashes — `/amazon|amzn/`.
+    #: Stored exactly as typed; `rules.py` owns what the slashes mean.
+    keyword = db.Column(db.String(200), nullable=False)
+    position = db.Column(db.Integer, nullable=False, default=0,
+                         server_default='0')
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+
+    __table_args__ = (
+        Index('idx_category_rule_unique', 'household_id', 'category', 'keyword',
+              unique=True),
+        Index('idx_category_rule_order', 'household_id', 'position'),
+    )
+
+    def to_dict(self):
+        return {'id': self.id, 'category': self.category,
+                'keyword': self.keyword, 'position': self.position}
+
+    def __repr__(self):
+        return f'<CategoryRule {self.category}: {self.keyword!r}>'
+
+
 class LogEntry(TenantScopedMixin, db.Model):
     id = db.Column(db.Integer, primary_key=True)
     account_type = db.Column(db.String(50), nullable=False)  # 'checking' or 'savings'
