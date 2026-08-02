@@ -101,6 +101,23 @@ SERVICE_FUNCTIONS = {
     # policies without building an application, which is what makes a loosened
     # limit fail a test rather than surface in a bill.
     'ratelimit': ('policy_for', 'build_backend', 'current_limiter'),
+    # Phase 10.6. Verified snapshots, and the loop that takes them unattended.
+    # `backup`, `verify` and `prune` are the mechanics `tools/backup_db.py` used
+    # to hold; they are module-level functions taking paths, so a test can
+    # snapshot a temporary database without an application. `backup_target` is
+    # the one with a decision in it -- where snapshots go, given a config -- and
+    # is tested directly because getting it wrong writes backups into a
+    # container image that the next deploy erases, which is a failure nothing
+    # reports until a restore.
+    'backup': ('backup', 'verify', 'prune', 'backup_target', 'describe',
+               'contents', 'init_backup_scheduler', 'get_backup_scheduler',
+               'install'),
+    # Phase 10.7. The erasure and portability half of the privacy policy.
+    # `deletion_preview` is public and not an internal detail on purpose: the
+    # confirmation page is rendered from it, so what somebody is warned about is
+    # produced by the same code that does the removing.
+    'account_lifecycle': ('export_account', 'delete_account',
+                          'deletion_preview'),
 }
 
 # The closure names Phase 3 removed from app.py. Any of these reappearing as a
@@ -183,17 +200,30 @@ def test_create_app_is_meaningfully_smaller():
         2,600  after the services came out
         2,900  raised in Phase 6 for six new membership routes
           800  after Phase 7 moved every route to dough/blueprints/
+          810  Phase 10.6, for two lines: an import and `install_backups(app)`
 
-    Raised once and lowered once. The Phase 6 raise was honest -- the growth was
+    Raised twice and lowered once. The Phase 6 raise was honest -- the growth was
     a feature and the *rules* went to a service -- but a threshold that only ever
     goes up stops being a guard, which is why Phase 7 was the next phase. Now
     that no route lives here, app.py should only change when the wiring changes,
-    so the ceiling is tight again on purpose: a route added to this file rather
+    so the ceiling stays tight on purpose: a route added to this file rather
     than to a blueprint will hit it.
+
+    The 10.6 raise is the smallest kind there is and is still worth justifying,
+    because "it was only two lines" is how the Phase 3 number got to 3,161.
+    Backups needed starting from the factory, the file was two lines under the
+    ceiling, and the alternative was to shrink the addition until it fit -- which
+    means writing worse wiring to satisfy a proxy for wiring being large. The
+    scheduler's own reasoning lives in `dough/services/backup.py`; what landed
+    here is a call and an import, which is what this file is *for*.
+
+    Ten lines of headroom rather than the two actually needed, deliberately: a
+    ceiling set to exactly the current size fails on the next honest line and
+    teaches whoever hits it to raise it without reading any of this.
     """
     with open(os.path.join(REPO_ROOT, 'app.py'), encoding='utf-8') as handle:
         total = sum(1 for _ in handle)
-    assert total < 800, (
+    assert total < 810, (
         f'app.py is {total} lines. Since Phase 7 it holds the factory and the '
         'request hooks only -- a route belongs in dough/blueprints/.')
 

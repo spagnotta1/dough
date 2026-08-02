@@ -1,0 +1,235 @@
+{% extends "base.html" %}
+
+{# The privacy policy.  [Phase 10.7]
+
+   Extends base.html for the same reason landing.html does: it has a runtime, so
+   a returning visitor who chose a theme sees it here. The chrome is overridden
+   the same way, because every link in the default nav needs a session and this
+   page is read by people who do not have one — most often before they decide
+   whether to create an account at all.
+
+   EVERY FACTUAL CLAIM BELOW IS CHECKABLE AGAINST THIS REPOSITORY. That is the
+   rule this file is maintained under, and the reason each section names the
+   module it describes. If a change makes one of these sentences untrue, this
+   page is part of that change, not follow-up work:
+
+     Plaid / institution tokens .... finance_sync/, models.py ConnectedAccount
+     encryption at rest ............ finance_sync/crypto.py
+     AI processing ................. dough/ai/, dough/services/finance_context.py
+     audit trail ................... dough/services/audit.py, models.py AuditEvent
+     mail .......................... dough/services/email.py
+     retention / deletion .......... dough/services/account_lifecycle.py
+
+   It has NOT been reviewed by a lawyer. The bracketed placeholders are config
+   values (LEGAL_ENTITY, LEGAL_CONTACT_EMAIL, LEGAL_JURISDICTION) and are left
+   visible on purpose — an invented entity name ships, an obvious gap gets
+   filled. docs/runbooks/launch-checklist.md gates registration on setting them.
+#}
+
+{% block title %}Privacy Policy · Dough{% endblock %}
+
+{% block chrome_top %}{% include '_legal_nav.html' %}{% endblock %}
+{% block chrome_bottom %}{% endblock %}
+
+{% block content %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/legal.css') }}">
+
+<article class="legal">
+  <header class="legal__head">
+    <h1>Privacy Policy</h1>
+    <p class="legal__meta">Last updated {{ last_updated }}</p>
+    <p class="legal__lede">
+      This describes what Dough collects, who it is shared with, and what you can
+      do about it. It is written to match what the software actually does.
+    </p>
+  </header>
+
+  <section>
+    <h2>Who operates this service</h2>
+    <p>
+      Dough is operated by {{ entity }}. For any question about this policy, or
+      to make a request about your data, contact {{ contact }}.
+    </p>
+  </section>
+
+  <section>
+    <h2>What we collect</h2>
+
+    <h3>Information you give us</h3>
+    <ul>
+      <li><strong>Account details</strong> — your username, your email address if
+        you provide one, and a password. Passwords are stored only as a
+        <code>scrypt</code> hash; we never store or transmit the password itself.</li>
+      <li><strong>Financial records you enter or upload</strong> — transactions,
+        account balances, budgets, categorisation rules, investment holdings, and
+        any notes you attach to them, including CSV statements you import.</li>
+      <li><strong>Settings</strong> — your theme, filters, and similar preferences.</li>
+    </ul>
+
+    <h3>Information from your financial institutions</h3>
+    <p>
+      If you connect an account, we receive from that institution — through Plaid
+      — your account names and types, balances, and transaction history including
+      dates, amounts, merchant names and descriptions. We also receive the
+      account holder identity details the institution reports.
+    </p>
+
+    <h3>Information generated automatically</h3>
+    <ul>
+      <li><strong>Session and security records</strong> — a signed session cookie,
+        and an audit trail of security-relevant events (sign-in, sign-out, failed
+        sign-in, password change, invitations, token issue and revocation, rate
+        limits reached). Audit entries record what happened, who did it and when;
+        they are append-only and are not deleted in the normal course of use.</li>
+      <li><strong>Application logs</strong> — request paths, timing and errors.
+        Credentials and message bodies are deliberately excluded from these.</li>
+    </ul>
+
+    <p>
+      We do not use advertising trackers, we do not sell personal information, and
+      we do not share it with third parties for their own marketing.
+    </p>
+  </section>
+
+  <section>
+    <h2>Plaid</h2>
+    <p>
+      Bank and brokerage connections are made through
+      <a href="https://plaid.com/legal/#end-user-privacy-policy" rel="noopener noreferrer" target="_blank">Plaid Inc.</a>
+      When you link an institution, you enter your credentials on Plaid's own
+      interface. <strong>Dough never sees, receives or stores your banking
+      username or password.</strong>
+    </p>
+    <p>
+      What we receive and store is an access token issued by Plaid, which permits
+      reading the account data described above. That token is encrypted at rest
+      with an authenticated cipher (AES-128-CBC with HMAC), so the database file,
+      a backup of it, or a copy obtained by any means does not yield a usable
+      credential without the separate encryption key.
+    </p>
+    <p>
+      Plaid's handling of your information is governed by Plaid's own privacy
+      policy, linked above. Disconnecting an institution in Dough removes the
+      stored token.
+    </p>
+  </section>
+
+  {% if ai_enabled %}
+  <section>
+    <h2>AI processing</h2>
+    <p>
+      Dough's assistant is built on models provided by
+      <a href="https://www.anthropic.com/legal/privacy" rel="noopener noreferrer" target="_blank">Anthropic</a>.
+      When you use a feature that asks the assistant a question — chat, dashboard
+      insights, the investment brief, or rule suggestions —
+      <strong>a summary of your financial data is sent to Anthropic as part of the
+      prompt</strong>. Depending on the feature, that can include transaction
+      descriptions, amounts, dates, categories, balances and holdings.
+    </p>
+    <p>
+      Your prompts and the assistant's replies are not stored in our audit trail
+      or written to our application logs. We record only that a request happened,
+      which feature it came from, which model answered, and how many tokens it
+      used.
+    </p>
+    <p>
+      <strong>Assistant output is generated by a language model and can be wrong.</strong>
+      It is not financial, tax, legal or investment advice. See the
+      <a href="{{ url_for('legal.terms') }}">Terms of Service</a>.
+    </p>
+  </section>
+  {% endif %}
+
+  <section>
+    <h2>Email</h2>
+    <p>
+      If you supply an address, we use it to send account email: address
+      verification, password resets, and confirmation when your address changes.
+      Delivery is handled by Postmark, which receives the recipient address and
+      the message. We do not send marketing email.
+    </p>
+  </section>
+
+  <section>
+    <h2>Households and shared data</h2>
+    <p>
+      Dough organises data into households. Everyone in a household can see that
+      household's financial data — that is what a household is for. If you accept
+      an invitation to join one, the people already in it will be able to see the
+      records you add. An owner can remove a member; removing a member does not
+      remove the household's financial records, which belong to the household
+      rather than to the person who entered them.
+    </p>
+  </section>
+
+  <section>
+    <h2>How long we keep it</h2>
+    <ul>
+      <li><strong>Your account and financial data</strong> — until you delete your
+        account, or until the household is deleted.</li>
+      <li><strong>Backups</strong> — the database is snapshotted on a schedule and
+        a limited number of recent snapshots are retained, so data you delete may
+        persist in a backup for a short period before those snapshots age out.</li>
+      <li><strong>Audit records</strong> — retained for security purposes. These
+        record events, not financial data.</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>Your choices</h2>
+    <ul>
+      <li><strong>Export</strong> — you can download everything we hold for your
+        account as a JSON file, from
+        {% if accounts_enabled %}<a href="{{ url_for('settings.index') }}">your settings</a>{% else %}your settings{% endif %}.</li>
+      <li><strong>Deletion</strong> — you can delete your account from the same
+        page. This removes your personal details, your sessions and API tokens,
+        and your institution connections. Where you are the last member of a
+        household, the household's financial records are deleted with it.</li>
+      <li><strong>Correction</strong> — you can edit or remove individual records
+        at any time in the application.</li>
+      <li><strong>Disconnecting an institution</strong> — you can remove a
+        connection at any time, which deletes the stored access token.</li>
+    </ul>
+    <p>
+      Depending on where you live you may have additional rights over your
+      personal data, including rights of access, correction, deletion and
+      portability. Contact {{ contact }} to make a request.
+    </p>
+  </section>
+
+  <section>
+    <h2>Security</h2>
+    <p>
+      Passwords are hashed, institution tokens and password-reset tokens are
+      encrypted or hashed at rest, sessions expire, and changing your password
+      invalidates every existing session and API token. Access to one household's
+      data from another is blocked at the database query layer rather than
+      per-page.
+    </p>
+    <p>
+      No system is perfectly secure, and we do not claim otherwise.
+    </p>
+  </section>
+
+  <section>
+    <h2>Children</h2>
+    <p>
+      Dough is not intended for use by anyone under 18, and we do not knowingly
+      collect information from children.
+    </p>
+  </section>
+
+  <section>
+    <h2>Changes</h2>
+    <p>
+      If this policy changes materially we will update the date at the top and,
+      where we have your address and the change is significant, tell you by email.
+    </p>
+  </section>
+
+  <footer class="legal__foot">
+    <p>Questions about any of this: {{ contact }}.</p>
+    <p><a href="{{ url_for('legal.terms') }}">Terms of Service</a></p>
+  </footer>
+</article>
+{% endblock %}

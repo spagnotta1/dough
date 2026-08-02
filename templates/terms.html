@@ -1,0 +1,187 @@
+{% extends "base.html" %}
+
+{# The terms of service.  [Phase 10.7]
+
+   Same construction as privacy.html and the same rule: nothing here describes a
+   capability this application does not have. The disclaimers that matter most
+   are the two the product's own features create — that the assistant's output
+   is model-generated and can be wrong, and that connected balances come from
+   third parties and can be stale or incomplete.
+
+   NOT REVIEWED BY A LAWYER. The liability and warranty sections are written in
+   the ordinary shape such clauses take, and are exactly the sections that need
+   counsel before this is relied on. Bracketed values are configuration; see
+   dough/blueprints/legal.py and docs/runbooks/launch-checklist.md.
+#}
+
+{% block title %}Terms of Service · Dough{% endblock %}
+
+{% block chrome_top %}{% include '_legal_nav.html' %}{% endblock %}
+{% block chrome_bottom %}{% endblock %}
+
+{% block content %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/legal.css') }}">
+
+<article class="legal">
+  <header class="legal__head">
+    <h1>Terms of Service</h1>
+    <p class="legal__meta">Last updated {{ last_updated }}</p>
+    <p class="legal__lede">
+      These are the terms you agree to by using Dough. The short version: it is a
+      tool for looking at your own money, it is not advice, and you should not
+      rely on it for anything you cannot check.
+    </p>
+  </header>
+
+  <section>
+    <h2>1. Agreement</h2>
+    <p>
+      By creating an account or using Dough, you agree to these terms. If you do
+      not agree, do not use the service. Dough is operated by {{ entity }}.
+    </p>
+  </section>
+
+  <section class="legal__callout">
+    <h2>2. Dough is not financial advice</h2>
+    <p>
+      <strong>Dough is an informational tool, not a financial adviser, broker,
+      tax adviser or accountant.</strong> Nothing in the application — including
+      anything written by the assistant, any insight, budget, category, forecast,
+      anomaly flag or investment summary — is financial, investment, tax, legal
+      or accounting advice, and none of it is a recommendation to buy, sell or
+      hold anything.
+    </p>
+    <p>
+      Decisions about your money are yours. Consult a qualified professional
+      before acting on anything you see here.
+    </p>
+  </section>
+
+  <section class="legal__callout">
+    <h2>3. The assistant is a language model and can be wrong</h2>
+    <p>
+      Dough's assistant is built on a third-party large language model. Output of
+      this kind can be <strong>incorrect, incomplete, out of date, or confidently
+      wrong</strong>, including about arithmetic and about your own figures. It
+      may misread a transaction, miscategorise spending, or state a number that
+      does not match your records.
+    </p>
+    <p>
+      Check anything that matters against your own statements. Do not treat the
+      assistant's output as a source of truth about your finances.
+    </p>
+    <p>
+      Availability of assistant features is not guaranteed, and use of them is
+      subject to usage limits which may change.
+    </p>
+  </section>
+
+  <section>
+    <h2>4. Account data comes from third parties</h2>
+    <p>
+      Balances, transactions and holdings imported from a connected institution
+      are supplied by that institution through Plaid. They may be delayed,
+      incomplete, duplicated, or wrong, and connections can break without notice.
+      <strong>Your institution's own records are authoritative, not ours.</strong>
+      Reconcile against your statements.
+    </p>
+  </section>
+
+  <section>
+    <h2>5. Your responsibilities</h2>
+    <ul>
+      <li>Keep your password confidential and do not share your account.</li>
+      <li>Tell us promptly at {{ contact }} if you believe your account has been
+        accessed by someone else.</li>
+      <li>Use Dough only for your own financial data, or data you are authorised
+        to access.</li>
+      <li>Do not attempt to breach or circumvent the service's security or access
+        controls, disrupt it for other users, or use it to break the law.</li>
+      <li>Do not attempt to evade usage limits, or use automated means to consume
+        resources beyond what the interface and documented API allow.</li>
+      <li>Understand that anyone in your household can see that household's data.
+        Invite only people you intend to share your finances with.</li>
+      <li>You are responsible for the accuracy of anything you enter yourself.</li>
+    </ul>
+    <p>
+      We may suspend or terminate an account that breaches these terms.
+    </p>
+  </section>
+
+  <section>
+    <h2>6. Service availability</h2>
+    <p>
+      Dough is provided on an "as available" basis. <strong>We do not guarantee
+      uptime</strong>, and the service may be unavailable for maintenance,
+      third-party failures, or reasons outside our control. Features may change
+      or be withdrawn.
+    </p>
+    <p>
+      We take regular backups, but you should not treat Dough as the only copy of
+      any financial record that matters to you. You can export your data at any
+      time from your settings.
+    </p>
+  </section>
+
+  <section>
+    <h2>7. Your data and your account</h2>
+    <p>
+      You keep ownership of the data you put into Dough. You grant us only the
+      permission needed to operate the service for you — to store it, process it,
+      display it back to you, and send it to the third parties described in the
+      <a href="{{ url_for('legal.privacy') }}">Privacy Policy</a>.
+    </p>
+    <p>
+      You can export your data or delete your account at any time from your
+      settings. Deletion is described in the Privacy Policy and is not reversible.
+    </p>
+  </section>
+
+  <section>
+    <h2>8. Disclaimer of warranties</h2>
+    <p>
+      To the fullest extent permitted by law, Dough is provided <strong>"as is"
+      and "as available", without warranties of any kind</strong>, express or
+      implied, including any implied warranty of merchantability, fitness for a
+      particular purpose, accuracy, or non-infringement. We do not warrant that
+      the service will be uninterrupted, error-free, or that any figure it
+      displays is accurate or complete.
+    </p>
+  </section>
+
+  <section>
+    <h2>9. Limitation of liability</h2>
+    <p>
+      To the fullest extent permitted by law, {{ entity }} will not be liable for
+      any indirect, incidental, special, consequential or punitive damages, or for
+      any loss of profits, revenue, data or goodwill, arising out of or relating
+      to your use of Dough — <strong>including any financial decision made in
+      reliance on it</strong>.
+    </p>
+    <p>
+      Nothing in these terms excludes liability that cannot lawfully be excluded.
+    </p>
+  </section>
+
+  <section>
+    <h2>10. Changes to these terms</h2>
+    <p>
+      We may update these terms. The date at the top will change, and where the
+      change is material and we have your address, we will tell you by email.
+      Continuing to use Dough after a change means you accept the updated terms.
+    </p>
+  </section>
+
+  <section>
+    <h2>11. Governing law</h2>
+    <p>
+      These terms are governed by the laws of {{ jurisdiction }}.
+    </p>
+  </section>
+
+  <footer class="legal__foot">
+    <p>Questions: {{ contact }}.</p>
+    <p><a href="{{ url_for('legal.privacy') }}">Privacy Policy</a></p>
+  </footer>
+</article>
+{% endblock %}

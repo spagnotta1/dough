@@ -70,6 +70,18 @@ pillow==12.3.0
 # it.
 gunicorn==26.0.0
 
+# --- Error monitoring ---
+# Optional at runtime: `dough/monitoring.py` no-ops when SENTRY_DSN is unset and
+# warns (rather than failing to boot) when the DSN is set and this is missing.
+# Pinned here anyway so the deployment that *does* set a DSN gets a version the
+# suite has run against.
+#
+# Everything this sends is filtered by `before_send`, which removes stack-frame
+# local variables and request bodies wholesale rather than by key name -- a
+# frame in this application can hold a decrypted institution token or a
+# household's transactions, and no name filter catches that reliably.
+sentry-sdk==2.44.0
+
 # --- Tests ---
 # 9.x is a major bump; the suite (921 tests, browser included) was run against
 # it before this pin moved.

@@ -162,10 +162,18 @@ class ApiError(Exception):
     code = ErrorCode.INTERNAL_ERROR
     message = 'Something went wrong.'
 
-    def __init__(self, message=None, *, details=None, code=None, status=None):
+    def __init__(self, message=None, *, details=None, code=None, status=None,
+                 headers=None):
         super().__init__(message or self.message)
         self.user_message = message or self.message
         self.details = details
+        #: Response headers this refusal must carry. Exists for `Retry-After` on
+        #: a 429, which is not decoration: a refusal that does not say when to
+        #: come back produces clients that poll, which is more load than the
+        #: limit was imposed to prevent. Kept general rather than special-casing
+        #: 429 in the handler, because `WWW-Authenticate` on a 401 is the same
+        #: shape of requirement and would otherwise need this written twice.
+        self.headers = headers or {}
         if code:
             self.code = code
         if status:
@@ -275,7 +283,11 @@ def install(app):
                                   'status': error.status})
         body, status = error.to_response()
         from flask import jsonify
-        return jsonify(body), status
+        response = jsonify(body)
+        response.status_code = status
+        for header, value in error.headers.items():
+            response.headers[header] = value
+        return response
 
     @app.errorhandler(HTTPException)
     def _http_exception(error):

@@ -29,6 +29,10 @@ from .conftest import assert_no_horizontal_overflow, wait_for_layout
 SKIP = {
     '/export':         'streams a CSV attachment, so there is no document to measure',
     '/clear_filters':  'a redirect that resets filter state, not a destination',
+    # Phase 10.7. Same reason as /export and found the same way -- by this sweep
+    # failing on it, which is the sweep working: a route added without thinking
+    # about whether it is a page gets asked to prove it is one.
+    '/settings/export': 'sends a JSON attachment, so there is no document to measure',
     # These two render fine, but not for somebody who is signed in: /setup
     # redirects to /login once an owner exists, and /login redirects to the
     # dashboard. tests/test_auth_journey.py covers both signed out.

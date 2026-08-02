@@ -299,5 +299,38 @@
   </section>
   {% endif %}
 
+  {# ── Your data ───────────────────────────────────────────────────────────
+     Last on the page, and the two controls together rather than apart. They
+     are the privacy policy's "your choices" section made real, and export sits
+     immediately above delete because taking a copy is the thing somebody
+     should do first and will not think of afterwards. #}
+  <section class="ds-card ds-rise" style="--ds-delay:240ms">
+    <h2 class="ds-section__title" style="font-size:1.05rem">Your data</h2>
+    <p class="ds-meta" style="margin-top:.35rem">
+      Download everything Dough holds for your household as a single JSON file —
+      transactions, budgets, accounts, holdings and settings. Passwords and
+      institution credentials are not included.
+    </p>
+    <a class="ds-btn ds-btn--secondary" href="{{ url_for('settings.export_data') }}"
+       style="margin-top: var(--sp-3)">Download my data</a>
+
+    <hr style="margin: var(--sp-5) 0; border:0; border-top:1px solid var(--border)">
+
+    <h3 style="font-size:.95rem;margin:0">Delete your account</h3>
+    <p class="ds-meta" style="margin-top:.35rem">
+      Permanent, and not reversible. The next page shows exactly what would be
+      removed before anything happens.
+    </p>
+    <a class="ds-btn ds-btn--danger" href="{{ url_for('settings.delete_account_confirm') }}"
+       style="margin-top: var(--sp-3)">Delete my account…</a>
+  </section>
+
+  {# The two pages every account page should be one click from. #}
+  <p class="ds-meta" style="text-align:center;margin-top:var(--sp-5)">
+    <a href="{{ url_for('legal.privacy') }}">Privacy Policy</a>
+    &nbsp;·&nbsp;
+    <a href="{{ url_for('legal.terms') }}">Terms of Service</a>
+  </p>
+
 </div>
 {% endblock %}

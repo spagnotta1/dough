@@ -283,6 +283,22 @@ class BaseConfig:
     # thread (used by the test suite for determinism).
     SYNC_SYNCHRONOUS = False
 
+    # --- Backups  [Phase 10.6] ----------------------------------------------
+    # On by default, which is the opposite of SYNC_AUTO_ENABLED's history and
+    # deliberately so. An unattended sync that nobody wanted makes network calls
+    # to somebody's bank; an unattended backup writes a file next to a file. The
+    # failure modes are not symmetric, and the one this defaults toward is the
+    # one where a deployment nobody configured still has yesterday's data.
+    BACKUP_AUTO_ENABLED = _bool('BACKUP_AUTO_ENABLED', True)
+    BACKUP_INTERVAL_HOURS = float(os.environ.get('BACKUP_INTERVAL_HOURS', 24))
+    # A week of dailies. The bound that matters is disk: these are whole copies
+    # of the database, so N snapshots is N times its size.
+    BACKUP_KEEP = _int('BACKUP_KEEP', 7)
+    # Empty means "beside the database file", which is what puts snapshots on
+    # the mounted volume in production rather than inside the replaceable image.
+    # See `dough.services.backup.backup_target`.
+    BACKUP_DIR = os.environ.get('BACKUP_DIR', '')
+
     # --- Session cookie -----------------------------------------------------
     # Assigned, never setdefault'd: Flask ships these keys already present, so
     # setdefault is a silent no-op. See docs/security.md SEC-0001.
@@ -297,6 +313,32 @@ class BaseConfig:
     ALLOW_REGISTRATION = _bool('ALLOW_REGISTRATION', False)
     REQUIRE_EMAIL_VERIFICATION = _bool('REQUIRE_EMAIL_VERIFICATION', False)
     PUBLIC_BASE_URL = os.environ.get('PUBLIC_BASE_URL', '').rstrip('/')
+
+    # --- Error monitoring  [Phase 10.7] -------------------------------------
+    # Empty means off, which is the state of every development machine and the
+    # test suite. See dough/monitoring.py for what is scrubbed before an event
+    # leaves the process -- the answer is "local variables and request bodies
+    # wholesale", because a stack frame here can hold somebody's bank data.
+    SENTRY_DSN = os.environ.get('SENTRY_DSN', '')
+    # Performance tracing, off by default. It samples request timings, not
+    # payloads, but it is a second stream of data leaving the process and
+    # should be a deliberate choice rather than a default.
+    SENTRY_TRACES_SAMPLE_RATE = float(
+        os.environ.get('SENTRY_TRACES_SAMPLE_RATE', 0) or 0)
+    # Tags each event with the deployed commit, so an error can be traced to a
+    # version. Railway exposes the commit as RAILWAY_GIT_COMMIT_SHA.
+    RELEASE = (os.environ.get('RELEASE')
+               or os.environ.get('RAILWAY_GIT_COMMIT_SHA', ''))
+
+    # --- Legal pages  [Phase 10.7] ------------------------------------------
+    # Who is promising what, to whom, under which law. Read by /privacy and
+    # /terms, and left EMPTY by default on purpose: an unset value renders as a
+    # visible `[...]` marker rather than as a plausible-looking default. There
+    # is no safe default for the name of the entity accepting liability, and a
+    # guess is worse than a blank because a blank gets noticed.
+    LEGAL_ENTITY = os.environ.get('LEGAL_ENTITY', '')
+    LEGAL_CONTACT_EMAIL = os.environ.get('LEGAL_CONTACT_EMAIL', '')
+    LEGAL_JURISDICTION = os.environ.get('LEGAL_JURISDICTION', '')
 
     # Session lifetimes, seconds.  [Phase 6]
     SESSION_IDLE_SECONDS = _int('SESSION_IDLE_SECONDS', 12 * 3600)
@@ -429,6 +471,10 @@ class TestingConfig(BaseConfig):
     AUTO_UPGRADE_DB = False
     SYNC_AUTO_ENABLED = False
     SYNC_SYNCHRONOUS = True
+    # No backup thread under test. The suite's database is `sqlite://` or a
+    # tmp_path file, so `backup_target` would decline anyway -- this says so at
+    # the level of intent rather than relying on that.
+    BACKUP_AUTO_ENABLED = False
     # Captures every outbound message in a list instead of printing or sending
     # it, so a test can assert a reset mail went to the right address without a
     # network or a monkeypatch. See dough/services/email.py::MemoryBackend.
@@ -524,6 +570,31 @@ class ProductionConfig(BaseConfig):
                 'PUBLIC_BASE_URL is unset: links in outbound mail are built '
                 'from the incoming request\'s Host header, which is '
                 'client-controlled. Set it to this deployment\'s canonical URL.')
+        # A warning rather than a refusal, on the same principle as the rest of
+        # this list -- but the loudest one here, because it is the only entry
+        # whose symptom is visible to the public. An unset value renders a
+        # literal `[OPERATING ENTITY - set LEGAL_ENTITY]` on a live /privacy
+        # page, which is worse than an operator seeing a log line.
+        #
+        # Not in `validate`, because an internal or demo deployment with no
+        # outside users is a real state and should not be unable to boot over
+        # it. `docs/runbooks/launch-checklist.md` is what makes this a gate on
+        # opening registration.
+        missing_legal = [name for name, value in (
+            ('LEGAL_ENTITY', cls.LEGAL_ENTITY),
+            ('LEGAL_CONTACT_EMAIL', cls.LEGAL_CONTACT_EMAIL),
+            ('LEGAL_JURISDICTION', cls.LEGAL_JURISDICTION)) if not value]
+        if missing_legal:
+            notes.append(
+                f'{", ".join(missing_legal)} unset: /privacy and /terms are '
+                'serving visible placeholder markers to the public. Set these '
+                'before anyone outside your household can reach this '
+                'deployment. See docs/runbooks/launch-checklist.md.')
+        if not cls.SENTRY_DSN:
+            notes.append(
+                'SENTRY_DSN is unset: unhandled exceptions are written to this '
+                'process\'s logs and reported nowhere. You will learn about a '
+                '500 when a user tells you.')
         return notes
 
 

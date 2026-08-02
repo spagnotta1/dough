@@ -42,12 +42,14 @@ from dough.ai.service import AIService
 import dough.api as api
 from dough.blueprints import register as register_blueprints
 from dough.logging import configure_logging, current_trace_id
+from dough import monitoring
 # Imported here rather than left to whichever blueprint happens to need it
 # first: importing this module is what installs the before_flush hook that makes
 # audit rows append-only, and a guarantee that depends on import order is not a
 # guarantee. `create_app` puts it on `app.extensions` so the dependency is a
 # fact about the application rather than a comment about an unused import.
 from dough.services import audit
+from dough.services.backup import install as install_backups
 from dough.services.cache import household_scope
 from dough.services.email import EmailService
 from dough.services.ratelimit import Limiter
@@ -175,6 +177,10 @@ def create_app(test_config=None, config_name=None):
     # registration order -- installed after the auth guard, the 401 a rejected
     # request receives would have no trace id to quote back.  [Phase 8]
     configure_logging(app)
+    # Immediately after logging and before anything that can fail: an error
+    # reporter installed later would miss exactly the startup errors that are
+    # hardest to diagnose remotely. No-op unless SENTRY_DSN is set.  [10.7]
+    monitoring.init_app(app)
     # The append-only guard was installed by importing the module above; this
     # records that the application depends on it having happened.  [Phase 8]
     app.extensions['dough_audit'] = audit
@@ -701,6 +707,7 @@ def create_app(test_config=None, config_name=None):
         init_scheduler(app, interval_hours=app.config.get('SYNC_INTERVAL_HOURS', 12),
                        autostart=False)
 
+    install_backups(app)   # verified database snapshots on a schedule [10.6]
     return app
 
 def _ensure_dev_cert(base_dir):

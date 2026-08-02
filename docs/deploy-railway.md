@@ -398,8 +398,52 @@ link itself appears in neither — it is a bearer credential and is deliberately
 kept out of the log stream, so a log that looks uninformative is the intended
 result rather than a gap.
 
+## Backups
+
+**Snapshots are taken automatically.** `dough/services/backup.py` runs a daemon
+thread in the serving process: one snapshot a minute after startup, then every
+`BACKUP_INTERVAL_HOURS` (default 24), keeping `BACKUP_KEEP` (default 7). Each one
+is verified — `PRAGMA integrity_check` plus per-table row counts against the
+source — and a snapshot that fails either check is deleted rather than kept,
+because a corrupt file that looks like a backup is the one you would plan around.
+
+They are written **beside the database**, so on this deployment that is
+`/data/backups` and not a directory inside the image. That distinction is the
+whole point: a backup in the image is erased by the next deploy, and nothing
+reports it until a restore.
+
+| Variable | Default | Notes |
+|---|---|---|
+| `BACKUP_AUTO_ENABLED` | `1` | Off under `TESTING`. Separate from `SYNC_AUTO_ENABLED` on purpose — turning off bank polling must not turn off backups. |
+| `BACKUP_INTERVAL_HOURS` | `24` | |
+| `BACKUP_KEEP` | `7` | Whole copies of the database, so N snapshots is N times its size. |
+| `BACKUP_DIR` | *(beside the database)* | Set only to override. |
+
+Watch them with `railway logs | grep dough.backup`. A success logs `Backup ok`
+with the size, table count and row count; a failure logs `Backup failed` with
+the reason and the loop retries at the next interval rather than dying.
+
+Take one by hand, any time:
+
+```bash
+python tools/backup_db.py --label pre-migration
+```
+
+### What this still does not cover
+
+- **Losing the volume.** These snapshots sit on the same disk as the database,
+  so they protect against corruption, a bad migration and an accidental delete —
+  not against the disk going. Copying them off-host is still manual:
+  `railway volume files --volume dough-volume download`. **This is the next piece
+  of work, and until it is done a single Railway volume is the only copy of every
+  household's financial history.**
+- **`.sync_encryption_key`.** It is not in the database, and every stored
+  institution credential is unreadable without it. A restore without it starts
+  cleanly and cannot sync. See docs/runbooks/disaster-recovery.md.
+
 ## Known gaps
 
-- **Back up the volume.** Nothing here replicates `checkbook.db`.
-  `tools/backup_db.py` exists; run it on a schedule and pull the output off with
-  `railway volume files --volume dough-volume download`.
+- **Off-site copies**, above.
+- **Two workers would take two sets of snapshots** into one directory and prune
+  each other's — the same single-process constraint as the sync scheduler
+  (OPS-0012), and it breaks in the same way for the same reason.

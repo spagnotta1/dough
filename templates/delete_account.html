@@ -1,0 +1,140 @@
+{% extends "base.html" %}
+
+{# The account deletion confirmation.  [Phase 10.7]
+
+   Its own page rather than a modal on /settings, and the reason is what this
+   page has to communicate rather than how dangerous it is. Two very different
+   things happen behind one button:
+
+     * you are the last member  -> the household and every financial record in
+                                   it are destroyed
+     * somebody else remains    -> your login goes and the ledger stays
+
+   A dialog cannot make that distinction legible, and getting it wrong is the
+   difference between closing your own account and deleting somebody else's
+   records. So the page renders whichever case actually applies, with counts
+   from `deletion_preview` -- the same function the deletion itself calls, so
+   the warning cannot drift from the act.
+
+   The mascot is deliberately `concerned` and deliberately still present. This
+   is the one destructive page in the application, and stripping the brand from
+   it would make it look like an error state rather than a decision. #}
+
+{% block title %}Delete your account · Dough{% endblock %}
+
+{% block content %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/legal.css') }}">
+
+<article class="legal">
+  <header class="legal__head">
+    <span data-dough="concerned" data-dough-size="72"></span>
+    <h1>Delete your account</h1>
+    <p class="legal__lede">
+      This cannot be undone. Read what will happen, then confirm below.
+    </p>
+  </header>
+
+  {% if preview.blocked_reason %}
+    <section class="legal__callout">
+      <h2>This can't be done yet</h2>
+      <p>{{ preview.blocked_reason }}</p>
+      <p><a href="{{ url_for('household.index') }}">Manage household members</a></p>
+    </section>
+  {% else %}
+
+    {% if preview.last_member %}
+      <section class="legal__callout">
+        <h2>Everything goes</h2>
+        <p>
+          You are the only person in this household, so there is nobody left to
+          own its records. Deleting your account deletes them all:
+        </p>
+        {% if preview.counts %}
+          <ul>
+            {% for name, count in preview.counts.items() %}
+              <li><strong>{{ count }}</strong> {{ name.replace('_', ' ') }}</li>
+            {% endfor %}
+          </ul>
+        {% else %}
+          <p>There is no financial data stored yet.</p>
+        {% endif %}
+        <p>
+          Your login, your API tokens and any connected institutions go with it.
+        </p>
+      </section>
+    {% else %}
+      <section class="legal__callout">
+        <h2>Your login goes; the household stays</h2>
+        <p>
+          {{ preview.other_members | join(', ') }}
+          {% if preview.other_members | length == 1 %}is{% else %}are{% endif %}
+          still in this household, so its financial records stay with them —
+          transactions, budgets and connections belong to the household rather
+          than to one member.
+        </p>
+        <p>
+          What is removed is your account: your username, your email address,
+          your password, your sessions and your API tokens.
+        </p>
+      </section>
+    {% endif %}
+
+    <section>
+      <h2>Take a copy first</h2>
+      <p>
+        Once this is done there is nothing to export.
+        <a href="{{ url_for('settings.export_data') }}">Download your data</a>
+        before you continue.
+      </p>
+    </section>
+
+    <section>
+      <h2>What we keep</h2>
+      <p>
+        A security record that this deletion happened — the date, and that it was
+        you — is kept and cannot be removed. It holds no financial data. Recent
+        backups may also contain your data until they age out. Both are described
+        in the <a href="{{ url_for('legal.privacy') }}">Privacy Policy</a>.
+      </p>
+    </section>
+
+    <section>
+      <h2>Confirm</h2>
+      <form method="POST" action="{{ url_for('settings.delete_account') }}">
+        {{ csrf_field() }}
+
+        <div class="ds-field">
+          <label for="password">Your password</label>
+          <input class="ds-input" type="password" id="password" name="password"
+                 autocomplete="current-password" required>
+        </div>
+
+        <div class="ds-field">
+          <label for="confirm_username">
+            Type <strong>{{ user.username }}</strong> to confirm
+          </label>
+          {# No autocomplete, and no placeholder repeating the value: the point
+             of this control is that it cannot be satisfied without reading the
+             sentence above it. A browser filling it in would remove the only
+             thing it contributes. #}
+          <input class="ds-input" type="text" id="confirm_username"
+                 name="confirm_username" autocomplete="off"
+                 autocapitalize="none" spellcheck="false" required>
+        </div>
+
+        {# `--danger` is a text treatment rather than a filled red button, and
+           that is the existing design-system choice rather than an oversight
+           here: the destructive action is not made the most attractive thing on
+           the page. Cancel is `--secondary`, so the visually heavier control is
+           the safe one. #}
+        <button type="submit" class="ds-btn ds-btn--danger">
+          Delete my account permanently
+        </button>
+        <a class="ds-btn ds-btn--secondary" href="{{ url_for('settings.index') }}">
+          Cancel
+        </a>
+      </form>
+    </section>
+  {% endif %}
+</article>
+{% endblock %}

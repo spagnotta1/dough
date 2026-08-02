@@ -1051,6 +1051,26 @@ EVENT_AI_REQUESTED         = 'ai.requested'
 
 EVENT_ACCOUNT_BALANCE_SET  = 'account.balance.set'
 
+#: Phase 10.7. A person exercising the erasure right in the privacy policy.
+#:
+#: The one audit event that deliberately outlives everything it describes. The
+#: user row is gone, the household may be gone, and every scoped row with it —
+#: this is the only remaining record that any of it ever existed, which is what
+#: makes it the answer to "what happened to this account". It is also why the
+#: append-only guarantee matters here more than anywhere else: an event that
+#: could be deleted would leave a deletion that nothing recorded.
+#:
+#: Its metadata names the username and the row counts removed. That is personal
+#: data surviving a deletion request, disclosed in `templates/privacy.html`
+#: rather than quietly retained, and justified by the same security interest
+#: that justifies the audit trail existing at all.
+EVENT_ACCOUNT_DELETED      = 'account.deleted'
+#: A full data export was produced. Recorded because an export is a complete
+#: copy of a household's finances leaving the system in one file — the single
+#: highest-value action a compromised session could take that is not a password
+#: change, and it should not be the one action that leaves no trace.
+EVENT_ACCOUNT_EXPORTED     = 'account.exported'
+
 #: Every event type the service will accept.
 AUDIT_EVENT_TYPES = frozenset({
     EVENT_LOGIN_SUCCEEDED, EVENT_LOGIN_FAILED, EVENT_LOGIN_THROTTLED,
@@ -1066,6 +1086,7 @@ AUDIT_EVENT_TYPES = frozenset({
     EVENT_PASSWORD_RESET_REQUESTED, EVENT_PASSWORD_RESET_COMPLETED,
     EVENT_EMAIL_VERIFICATION_SENT, EVENT_EMAIL_VERIFIED,
     EVENT_SESSIONS_REVOKED, EVENT_RATE_LIMITED,
+    EVENT_ACCOUNT_DELETED, EVENT_ACCOUNT_EXPORTED,
 })
 
 

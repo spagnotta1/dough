@@ -306,6 +306,11 @@
       <span>
         <a class="lp-btn lp-btn--quiet" href="{{ url_for('auth.login') }}">Sign in</a>
         <a class="lp-btn lp-btn--quiet" href="{{ url_for('auth.forgot_password') }}">Reset password</a>
+        {# The two links a visitor looks for before handing over a bank login.
+           On the landing page rather than only in the app, because that is
+           where the decision to sign up is made. #}
+        <a class="lp-btn lp-btn--quiet" href="{{ url_for('legal.privacy') }}">Privacy</a>
+        <a class="lp-btn lp-btn--quiet" href="{{ url_for('legal.terms') }}">Terms</a>
       </span>
     </div>
   </footer>

@@ -601,6 +601,52 @@ process's time, not an outsider spending them.
 The second is Phase 16 (AI governance) in the roadmap, and the two should
 probably land together since they need the same counter.
 
+**Update — Phase 10.6: the remaining four policies are wired.**
+
+- **Status:** Narrowed. `ai`, `ai_daily`, `api` and `api_write` now enforce.
+- **What changed, and it is not the backend.** `MemoryBackend` is still per
+  process and still resets on restart; everything the paragraph above says
+  about it remains true. What changed is what it is being compared against.
+  That judgement weighed an imperfect ceiling against a proper one and
+  reasonably chose to wait for the proper one. Opening `ALLOW_REGISTRATION`
+  replaced the alternative: the live comparison is now an imperfect ceiling
+  against **no** ceiling, on a surface a stranger can reach that spends real
+  money per request. A limit a restart clears still refuses the sixty-first
+  call within an hour. No limit refuses none.
+- **Where.** `ai` and `ai_daily` in `AIService._require_budget`, so `generate`
+  and `stream` are the entire surface and a route added later inherits the
+  ceiling instead of having to remember it — the same default-deny argument
+  `dough/api/guard.py` makes about scope. `api` and `api_write` in that guard's
+  `enforce_rate_limit`, one `before_request` over every resource.
+- **A cache hit costs nothing.** `cached()` calls its producer only on a miss,
+  so the budget is spent where the provider call is. The ceiling is on spending
+  money, and a cached answer did not.
+- **The refusal is its own error type.** `AIBudgetExceeded`, deliberately not
+  `AIRateLimited`. The two look alike and mean opposite things: the provider
+  throttling us is a capacity problem affecting every household, and this is one
+  household meeting a limit we set. Folding them together would hide the cost
+  control in exactly the logs somebody reads when the bill is wrong.
+
+**What is still open after 10.6.**
+
+1. **The backend, unchanged.** A restart clears every counter and a second
+   worker doubles every allowance. `RATELIMIT_BACKEND=redis` is named and
+   raises rather than falling back. This is SEC-0010 and it stays open.
+2. **Session traffic to `/api/v1` is not limited by `api`/`api_write`.** Both
+   policies declare `per='token'` and a session request has no token; keying
+   them on the user instead would make the policy table say one thing while the
+   code counted another, which is the drift `Policy.per` exists to prevent. The
+   narrower half of the exposure: a session belongs to somebody who logged in,
+   is bounded by the session lifetime, and the expensive surface behind it is
+   metered per household regardless of how the caller authenticated. Pinned by
+   `tests/test_ratelimit_enforcement.py` so it stays a decision rather than
+   becoming a discovery.
+3. **The numbers are guesses.** 60 model calls per household per hour and 300
+   per day were chosen against what a household plausibly uses, with no usage
+   data behind them. They are declared in one table and asserted as a set
+   (`tests/test_ratelimit.py`), so retuning them is a visible change — but the
+   first real signal about whether they are right will be a user hitting one.
+
 ---
 
 ### SEC-0019 — No credential could be invalidated by a change to the account
@@ -996,7 +1042,7 @@ and it is recorded as OPS-0025 below rather than implied by its absence.
 | SEC-0014 | ~~`APP_DEBUG` defaulted on in `app.py`'s `__main__`, so a `0.0.0.0` bind could expose Werkzeug's debugger (RCE) on the LAN~~ | High | **Closed, Phase 8** |
 | BUG-0016 | ~~A `Date` column compared against a `datetime` excluded the first day of every filtered window — transaction lists, CSV exports, and the 1st of every month from every budget's spend~~ | Medium | **Closed, Phase 10** |
 | SEC-0017 | An API token is a bearer credential with no second factor: whoever holds it acts as its user until it expires or is revoked. Bounded by hash-at-rest, individual revocation, scopes, continuous re-resolution of the user, and audit on issue/revoke/reject — but an exfiltrated token is working access until somebody notices | Medium | — |
-| SEC-0018 | `/api/v1` has no rate limit beyond the shared login throttle. **Narrowed, Phase 10.5:** the abstraction exists (`dough/services/ratelimit.py`), the policies are declared in one reviewable table, and the four routes this phase added — registration, both halves of password reset, and verification re-send — are enforced by it. **The `api`, `api_write`, `ai` and `ai_daily` policies are declared and deliberately *not* wired**, because the only backend is in-memory: an AI budget a restart clears and a second worker doubles is the appearance of a cost control rather than one, on the surface where the cost is real money. `RATELIMIT_BACKEND=redis` is named and raises rather than falling back, and `tests/test_ratelimit.py::test_the_declared_policies_match_their_call_sites` pins which policies are in which state so the distinction cannot blur | Low | **Narrowed, Phase 10.5** |
+| SEC-0018 | `/api/v1` has no rate limit beyond the shared login throttle. **Narrowed, Phase 10.5:** the abstraction exists (`dough/services/ratelimit.py`) and the policies are declared in one reviewable table, with the four authentication routes enforced by it. **Narrowed again, Phase 10.6:** the remaining four — `ai`, `ai_daily`, `api`, `api_write` — are now wired, at two chokepoints rather than twenty-odd call sites (`AIService._require_budget`, `guard.enforce_rate_limit`). The backend argument that held them back is unchanged and still true; what changed is that opening registration made the comparison "imperfect ceiling vs. none" rather than "imperfect ceiling vs. proper one". Residual: the in-memory backend (SEC-0010), and session-authenticated `/api/v1` traffic, which the token-scoped policies cannot key on | Low | **Narrowed, Phase 10.6** |
 | SEC-0019 | ~~No credential — session or API token — could be invalidated by a change to the account behind it~~ — `session_version` now covers both surfaces, raised automatically whenever a password hash changes. **The residual noted here is closed in Phase 10.5:** `/settings/password` and `/settings/sessions/revoke` are the controls that trigger it, and a completed password reset does too | Medium | **Closed, Phase 10.5** |
 | SEC-0020 | ~~`@public` returned before the session-lifetime check, so a public view that also renders signed-in content (`/`) would serve the dashboard to an expired or invalidated session~~ — the marker now suppresses the login redirect and nothing else | High | **Closed, Phase 10.5** |
 | SEC-0021 | ~~`authenticate_bearer` only ever *set* the bearer actor, so `bearer_actor()` named the previous request's actor wherever an app context outlived a request — and `current_user` reads it first, skipping the session check~~ | Medium | **Closed, Phase 10.5** |

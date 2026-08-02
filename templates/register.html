@@ -105,6 +105,17 @@
       </div>
 
       <button type="submit" class="auth-btn">Create account</button>
+      {# The consent moment, and the only place it can honestly be recorded.
+         Below the button rather than above it: a checkbox would add a step and
+         a failure mode ("you must accept") to a form that already has four,
+         and the notice-plus-action pattern is what makes the agreement real.
+         Both links open the actual pages -- an unreadable term is not agreed
+         to, however prominently it is referenced. #}
+      <p class="auth-hint auth-hint--center">
+        By creating an account you agree to the
+        <a href="{{ url_for('legal.terms') }}">Terms of Service</a> and the
+        <a href="{{ url_for('legal.privacy') }}">Privacy Policy</a>.
+      </p>
       <p class="auth-hint auth-hint--center">
         Already have one? <a href="{{ url_for('auth.login') }}">Sign in</a>
       </p>

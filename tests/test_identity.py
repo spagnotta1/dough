@@ -269,6 +269,113 @@ def test_registration_is_closed_by_default(tmp_path):
     scheduler_module._scheduler = None
 
 
+def _closed_app(tmp_path, name='closed'):
+    """An app with authentication on and registration at its default: off."""
+    scheduler_module._scheduler = None
+    return create_app(test_config={
+        'TESTING': True, 'AUTH_ENABLED': True,
+        'SQLALCHEMY_DATABASE_URI': f"sqlite:///{tmp_path / f'{name}.db'}",
+        'SYNC_SYNCHRONOUS': True, 'SYNC_AUTO_ENABLED': False,
+    })
+
+
+def test_a_closed_instance_refuses_a_posted_registration(tmp_path):
+    """The gate is the route, not the rendered form.
+
+    The test above proves the *page* says no. This proves the **operation** does,
+    which is a different claim and the one that matters: somebody bypassing the
+    UI does not need the form, and a check that only hid the button would let
+    `curl -d` create an account on an instance whose owner believes it closed.
+
+    The route refuses before reading the body, so no password is hashed and no
+    row is written for a request that was never going to be honoured.
+    """
+    from models import AppUser
+
+    application = _closed_app(tmp_path, 'posted')
+    with application.app_context():
+        response = application.test_client().post('/register', data={
+            'username': 'intruder', 'email': 'intruder@example.com',
+            'password': 'a-perfectly-good-password', 'confirm':
+            'a-perfectly-good-password'})
+        assert response.status_code == 403
+        assert AppUser.query.count() == 0, (
+            'a closed instance must not grow the user table')
+    scheduler_module._scheduler = None
+
+
+def test_closing_registration_does_not_lock_out_the_people_already_there(tmp_path):
+    """Closing the door must not also lock the people inside.
+
+    `ALLOW_REGISTRATION` is the switch an operator reaches for under pressure —
+    an abuse spike, or the realisation that mail does not deliver yet. It has to
+    be safe to flip on a running deployment, which means it governs *creating*
+    an account and nothing else.
+    """
+    application = _closed_app(tmp_path, 'existing')
+    with application.app_context():
+        from models import db
+
+        client = application.test_client()
+        page = client.get('/setup')
+        client.post('/setup', data={
+            'username': 'sal', 'password': PASSWORD, 'confirm': PASSWORD,
+            '_csrf_token': _csrf(page)})
+        db.session.remove()
+
+        signed_out = application.test_client()
+        page = signed_out.get('/login')
+        response = signed_out.post('/login', data={
+            'username': 'sal', 'password': PASSWORD,
+            '_csrf_token': _csrf(page)}, follow_redirects=True)
+        assert response.status_code == 200
+        assert signed_out.get('/').status_code == 200
+    scheduler_module._scheduler = None
+
+
+def test_an_invitation_still_works_while_registration_is_closed(tmp_path):
+    """The intended path in, and the reason closing the door is not a lockdown.
+
+    `ALLOW_REGISTRATION` governs *self-serve* signup. An invitation is the
+    owner deciding, one person at a time, which is exactly the model an
+    invite-only launch runs on — so it must keep working when the public form
+    does not, or "closed" would mean the product cannot grow at all.
+    """
+    from dough.services.membership import issue_invite
+    from dough.tenancy import tenant_scope, unscoped
+    from models import ROLE_MEMBER, AppUser, db
+
+    application = _closed_app(tmp_path, 'invited')
+    with application.app_context():
+        client = application.test_client()
+        page = client.get('/setup')
+        client.post('/setup', data={
+            'username': 'sal', 'password': PASSWORD, 'confirm': PASSWORD,
+            '_csrf_token': _csrf(page)})
+
+        with unscoped():
+            owner = AppUser.query.filter_by(username='sal').one()
+            household_id = owner.household_id
+        with tenant_scope(household_id):
+            _row, token = issue_invite(household_id, owner, role=ROLE_MEMBER,
+                                       label='partner')
+        db.session.commit()
+        db.session.remove()
+
+        guest = application.test_client()
+        page = guest.get(f'/join/{token}')
+        assert page.status_code == 200, 'a closed instance must still honour an invite'
+        guest.post(f'/join/{token}', data={
+            'username': 'partner', 'password': PASSWORD, 'confirm': PASSWORD,
+            '_csrf_token': _csrf(page)}, follow_redirects=True)
+
+        with unscoped():
+            joined = AppUser.query.filter_by(username='partner').one_or_none()
+        assert joined is not None, 'the invited person must get an account'
+        assert joined.household_id == household_id
+    scheduler_module._scheduler = None
+
+
 def test_registration_sends_a_verification_mail(client, mailbox):
     _register(client)
     sent = [m for m in mailbox.sent if m.purpose == 'verify_email']
