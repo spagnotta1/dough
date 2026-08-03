@@ -111,6 +111,16 @@
   font-weight: var(--w-semi);
   color: var(--ink-strong);
 }
+/* A category's patterns, stacked. One card can now propose several — the
+   grouping that replaced two separate "Shopping" cards both calling themselves
+   a new category. */
+.rules-sugg__patterns {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--sp-1);
+  margin-bottom: var(--sp-1);
+}
 /* The pattern, shown as what it is: a literal to be matched, not prose. */
 .rules-sugg__pattern {
   display: block;
@@ -269,3 +279,34 @@
   #rulesTable td.rules-cell--keywords { grid-column: 1 / -1; grid-row: 2; }
   #rulesTable td.rules-cell--actions  { grid-column: 1 / -1; grid-row: 3; text-align: right; }
 }
+
+/* ── The manual-rule disclosure ───────────────────────────────────────────
+   Dough writing the rules is the primary path, so the hand-authoring form
+   sits behind a <details> rather than competing with it for the top of the
+   page. Styled to read as a quiet secondary affordance: no accent, no filled
+   background, and the summary carries its own explanation of when to reach
+   for it. */
+.rules-advanced > .rules-advanced__summary {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  cursor: pointer;
+  list-style: none;
+}
+.rules-advanced__summary::-webkit-details-marker { display: none; }
+/* The disclosure triangle, drawn rather than inherited, so it can sit inline
+   with the label and rotate on open. */
+.rules-advanced__summary::before {
+  content: '▸';
+  position: absolute;
+  margin-left: calc(var(--sp-3) * -1);
+  color: var(--ink-faint);
+  transition: transform var(--dur-2) var(--ease-out);
+}
+.rules-advanced[open] > .rules-advanced__summary::before { content: '▾'; }
+.rules-advanced > .rules-advanced__summary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: var(--r-sm);
+}
+.rules-advanced[open] > .rules-advanced__summary { margin-bottom: var(--sp-4); }

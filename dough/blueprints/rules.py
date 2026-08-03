@@ -5,6 +5,7 @@ import re
 
 from flask import (Blueprint, current_app, flash, jsonify, redirect,
                    render_template, request, url_for)
+from sqlalchemy import func
 
 from dough.ai import persona
 from dough.ai.errors import AIConfigurationError, AIError
@@ -95,8 +96,13 @@ def index():
         return redirect(url_for('rules.index'))
 
     rules = rules_service.all_rules()
-    rule_stats = {category: Transaction.query.filter(
-        Transaction.category == category).count() for category in rules}
+    # Match counts, not label counts. `Transaction.category == name` answers a
+    # different question — how many rows carry this label, which survives the
+    # rule that wrote it — and a household carrying rules it never transacted
+    # against saw healthy numbers beside rules matching nothing. See
+    # `rules_service.match_counts`.
+    matched = rules_service.match_counts()
+    rule_stats = {category: matched.get(category, 0) for category in rules}
     uncategorized_count = Transaction.query.filter_by(
         category='Uncategorized').count()
 
@@ -225,17 +231,29 @@ def ai_suggest():
     if not ai.is_available:
         return jsonify({'error': 'ANTHROPIC_API_KEY not configured'}), 503
 
-    # Unique uncategorized descriptions (cap at 200 to stay within token limits)
-    rows = (Transaction.query
-            .filter_by(category='Uncategorized')
-            .with_entities(Transaction.description)
-            .distinct()
+    # The 200 *most frequent* uncategorized descriptions, with their counts.
+    #
+    # This used to be `.distinct().limit(200)` with no ORDER BY, which hands the
+    # database an arbitrary 200 of them. On a ledger with more than 200 distinct
+    # uncategorized descriptions that means the merchants the household actually
+    # spends at may never reach the model at all, while 200 one-off charges do —
+    # so the suggestions came back scattershot and missed the obvious wins.
+    #
+    # Ordering by frequency inverts that: the model always sees the biggest
+    # patterns first, and the count travels with each description so it can tell
+    # a merchant visited weekly from one visited once. That is the single input
+    # it most needs to judge whether a rule is worth proposing.
+    rows = (db.session.query(Transaction.description,
+                             func.count(Transaction.id).label('n'))
+            .filter(Transaction.category == 'Uncategorized')
+            .group_by(Transaction.description)
+            .order_by(func.count(Transaction.id).desc())
             .limit(200)
             .all())
     if not rows:
         return jsonify({'suggestions': [], 'message': 'No uncategorized transactions found.'})
 
-    descriptions     = [r[0] for r in rows]
+    descriptions     = [{'description': r[0], 'count': int(r[1])} for r in rows]
     existing_cats    = list(get_category_rules().get_all_rules().keys())
 
     try:
@@ -257,9 +275,17 @@ def ai_suggest():
         current_app.logger.error('rules_ai_suggest unexpected error: %s', e)
         return jsonify({'error': f'Unexpected error: {e}'}), 500
 
-    # Enrich each suggestion with real match counts and example descriptions
+    # Enrich each suggestion with real match counts and example descriptions.
+    #
+    # Grouped by category rather than one card per rule. The model returns one
+    # suggestion per keyword and often several for the same category, which the
+    # page rendered as two separate "Shopping" cards each labelled "new
+    # category" — two cards proposing the same category, each claiming to
+    # invent it. Accepting one then made the other's badge a lie.
     all_transactions = Transaction.query.all()
-    enriched = []
+    existing_lower = {c.lower() for c in existing_cats}
+
+    grouped = {}
     for s in raw_suggestions[:20]:
         cat    = (s.get('category') or '').strip()
         kw     = (s.get('keyword')  or '').strip()
@@ -267,57 +293,96 @@ def ai_suggest():
         if not cat or not kw:
             continue
 
+        # Case-insensitive, so "shopping" and "Shopping" land on one card
+        # instead of two. The first spelling seen wins the display name.
+        key = cat.lower()
+        entry = grouped.setdefault(key, {
+            'category': cat, 'keywords': [], 'reason': reason,
+            'total_count': 0, 'uncat_count': 0, 'examples': [],
+            'is_new': key not in existing_lower,
+        })
+        if kw in entry['keywords']:
+            continue
+        entry['keywords'].append(kw)
+        if reason and not entry['reason']:
+            entry['reason'] = reason
+
         is_regex = kw.startswith('/') and kw.endswith('/') and len(kw) > 2
-        total_count = 0
-        uncat_count = 0
-        examples    = []
         for t in all_transactions:
             try:
                 hit = (re.search(kw[1:-1], t.description, re.IGNORECASE)
                        if is_regex else kw.upper() in t.description.upper())
-                if hit:
-                    total_count += 1
-                    if t.category == 'Uncategorized':
-                        uncat_count += 1
-                    if len(examples) < 3 and t.description not in examples:
-                        examples.append(t.description)
             except re.error:
-                pass
+                continue
+            if not hit:
+                continue
+            entry['total_count'] += 1
+            if t.category == 'Uncategorized':
+                entry['uncat_count'] += 1
+            if len(entry['examples']) < 3 and t.description not in entry['examples']:
+                entry['examples'].append(t.description)
 
-        enriched.append({
-            'category':    cat,
-            'keyword':     kw,
-            'reason':      reason,
-            'total_count': total_count,
-            'uncat_count': uncat_count,
-            'examples':    examples,
-        })
+    # A suggestion matching nothing is dropped rather than shown at zero. The
+    # model occasionally proposes a plausible-looking pattern that no
+    # description satisfies — an over-escaped regex, or a merchant it inferred
+    # rather than read — and a card offering to categorize nothing is noise the
+    # user has to evaluate and reject by hand.
+    enriched = [e for e in grouped.values() if e['total_count'] > 0]
+    enriched.sort(key=lambda e: -e['uncat_count'])
 
     return jsonify({'suggestions': enriched})
 
 @bp.route('/rules/ai-apply', methods=['POST'])
 def ai_apply():
-    """Accept one AI suggestion: add the rule and recategorize matching transactions."""
-    body     = request.get_json(force=True) or {}
-    category = (body.get('category') or '').strip()
-    keyword  = (body.get('keyword')  or '').strip()
-    if not category or not keyword:
+    """Accept AI suggestions: add the rules, then recategorize once.
+
+    Takes `keywords` (a list) or `keyword` (one), and `categories` (a list of
+    `{category, keywords}`) for "Accept all". All three land on the same path.
+
+    **The re-derivation happens once, after every rule is written.** Accepting
+    six suggestions used to mean six requests, each re-deriving the whole
+    ledger: O(6 × transactions) to reach a state that one pass computes exactly
+    as well, because the final categories depend only on the final rule set. It
+    also made "Accept all" non-atomic — a failure on the fourth card left three
+    rules applied and the page showing six as accepted.
+    """
+    body = request.get_json(force=True) or {}
+
+    # One shape internally, whichever shape arrived.
+    if body.get('categories'):
+        incoming = [(str(c.get('category') or '').strip(),
+                     [str(k).strip() for k in (c.get('keywords') or []) if str(k).strip()])
+                    for c in body['categories']]
+    else:
+        category = (body.get('category') or '').strip()
+        keywords = body.get('keywords') or ([body.get('keyword')]
+                                            if body.get('keyword') else [])
+        incoming = [(category, [str(k).strip() for k in keywords if str(k).strip()])]
+
+    incoming = [(c, k) for c, k in incoming if c and k]
+    if not incoming:
         return jsonify({'error': 'Missing category or keyword'}), 400
 
-    # Add at the TOP of the priority order so an accepted suggestion beats the
-    # rules that were miscategorizing those transactions. Persisted through the
-    # service: this used to call `add_rule_first` on the engine, which now edits
-    # an in-memory copy and would have been discarded at the end of the request.
-    if rules_service.add_rule(category, keyword, first=True) is None:
-        return jsonify({'ok': True, 'applied_count': 0,
-                        'message': 'That rule already exists.'})
+    # Added at the TOP of the priority order so an accepted suggestion beats the
+    # rules that were miscategorizing those transactions. Reversed within each
+    # category because each insert shifts the previous one down, and without it
+    # a card's keywords would land in the order the user did not choose.
+    added = 0
+    for category, keywords in incoming:
+        for keyword in reversed(keywords):
+            if rules_service.add_rule(category, keyword, first=True) is not None:
+                added += 1
 
-    # Re-derive from the whole rule set rather than matching the keyword here.
+    if not added:
+        return jsonify({'ok': True, 'applied_count': 0, 'added': 0,
+                        'message': 'Those rules already exist.'})
+
+    # Re-derive from the whole rule set rather than matching the keywords here.
     # The old version applied the new rule directly to every row it matched,
     # which ignored priority: a transaction claimed by a higher rule was
     # reassigned anyway, so accepting a broad suggestion silently overwrote
-    # categories the user had already curated. `add_rule(first=True)` puts this
-    # rule at the top, so re-deriving gives it precedence *and* respects the
+    # categories the user had already curated. `add_rule(first=True)` puts these
+    # rules at the top, so re-deriving gives them precedence *and* respects the
     # rest of the order.
     engine = rules_service.as_engine()
     count = 0
@@ -332,4 +397,4 @@ def ai_apply():
         db.session.rollback()
         return jsonify({'error': str(e)}), 500
 
-    return jsonify({'ok': True, 'applied_count': count})
+    return jsonify({'ok': True, 'applied_count': count, 'added': added})

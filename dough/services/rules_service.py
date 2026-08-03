@@ -49,8 +49,8 @@ from __future__ import annotations
 
 from sqlalchemy import func
 
-from models import CategoryRule, db
-from rules import CategoryRules
+from models import CategoryRule, Transaction, db
+from rules import UNCATEGORIZED, CategoryRules
 
 
 def all_rules():
@@ -247,6 +247,49 @@ def rule_counts():
     return {category: int(count) for category, count in rows}
 
 
+def match_counts():
+    """`{category: transactions this category's rules actually claim}`.
+
+    **Not the same as counting `Transaction.category == name`,** which is what
+    the Rules page used to show, and the difference is what made a broken rule
+    set look healthy.
+
+    `Transaction.category` is a stored label, re-derived only on a rule edit or
+    at import. Counting it answers "how many rows currently carry this name",
+    which drifts from "how many rows does this rule match" the moment the rules
+    change underneath the labels. A household carrying seeded rules it had never
+    transacted against saw `Student Loan — 56` next to a rule matching nothing:
+    56 rows wearing a label from an earlier categorization, presented as
+    evidence that the rule was working.
+
+    Counting matches instead means the column can only ever say something true
+    about the rules beside it. A category whose rules match nothing reads 0,
+    which is the signal that something is wrong — and it is the signal that was
+    missing.
+
+    Priority is respected, because this asks the engine rather than testing
+    keywords itself: a transaction claimed by a higher rule counts for *that*
+    category only, so the column sums to the number of categorized transactions
+    rather than double-counting every overlap.
+
+    Grouped by description first. The engine's answer depends on nothing else,
+    so a ledger of 1,200 transactions over 300 distinct descriptions costs 300
+    match attempts instead of 1,200 — and the ratio only improves as history
+    grows, which matters because this runs on a page view.
+    """
+    engine = as_engine()
+    rows = (db.session.query(Transaction.description,
+                             func.count(Transaction.id))
+            .group_by(Transaction.description).all())
+
+    counts = {}
+    for description, count in rows:
+        category = engine.get_category(description)
+        if category != UNCATEGORIZED:
+            counts[category] = counts.get(category, 0) + int(count)
+    return counts
+
+
 # ── internals ───────────────────────────────────────────────────────────────
 
 def _ordered():
@@ -261,4 +304,4 @@ def _max_position():
 
 __all__ = ['all_rules', 'as_engine', 'categories', 'clear_all', 'add_rule',
            'remove_rule', 'remove_category', 'rename_category', 'reorder',
-           'replace_all', 'rule_counts']
+           'replace_all', 'rule_counts', 'match_counts']

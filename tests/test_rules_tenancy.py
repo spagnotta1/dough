@@ -486,3 +486,151 @@ def test_the_page_lists_only_this_households_rules(page):
     body = page.test_client().get('/rules').get_data(as_text=True)
     assert 'STARBUCKS' in body
     assert 'PLANET FITNESS' not in body
+
+
+# ── The seed rows the code fix left behind  [2026-08-03] ────────────────────
+
+def test_match_counts_measures_rules_not_labels(two_households):
+    """The Rules page's Transactions column used to describe the wrong thing.
+
+    Reported from the running app: a household's page listed
+    `Student Loan — First Tech FCU, FIRSTMARK — 56` for a rule matching none of
+    its transactions. The number was real; it just answered a different
+    question. `Transaction.category == 'Student Loan'` counts rows *wearing*
+    that label, and a label outlives the rule that wrote it — categories are
+    re-derived only on a rule edit or at import, never on a page view.
+
+    So a rule set that had stopped matching anything still presented healthy
+    numbers, which is exactly the evidence a person uses to conclude their
+    rules are fine. Counting matches instead means the column can only say
+    something true about the rules beside it, and a stale label reads 0.
+    """
+    from datetime import date
+    from decimal import Decimal
+
+    from dough.services import rules_service
+    from dough.tenancy import tenant_scope
+    from models import Transaction, db
+
+    a_id, _ = two_households
+
+    with tenant_scope(a_id):
+        # Labelled `Student Loan` by some earlier categorization, but nothing
+        # in the description any Student Loan rule could match.
+        for i in range(3):
+            db.session.add(Transaction(
+                account_name='Checking', date=date(2026, 8, 1),
+                description=f'WHOLE FOODS MARKET #{i}', amount=Decimal('-20.00'),
+                category='Student Loan'))
+        db.session.commit()
+
+        rules_service.replace_all({'Student Loan': ['FIRSTMARK'],
+                                   'Groceries': ['WHOLE FOODS']})
+
+        counts = rules_service.match_counts()
+
+        # The label count is 3 and would have been reported as 3.
+        assert Transaction.query.filter(
+            Transaction.category == 'Student Loan').count() == 3
+        # What the rules actually claim.
+        assert counts.get('Student Loan', 0) == 0
+        assert counts['Groceries'] == 3
+
+
+def test_match_counts_respects_priority_and_does_not_double_count(two_households):
+    """A transaction claimed by two rules counts once, for the winner.
+
+    The column sums to the number of categorized transactions rather than to
+    the number of (rule, transaction) hits, which is what makes it readable as
+    "how much of my ledger does this category own".
+    """
+    from datetime import date
+    from decimal import Decimal
+
+    from dough.services import rules_service
+    from dough.tenancy import tenant_scope
+    from models import Transaction, db
+
+    a_id, _ = two_households
+
+    with tenant_scope(a_id):
+        db.session.add(Transaction(
+            account_name='Checking', date=date(2026, 8, 1),
+            description='AMAZON GROCERY', amount=Decimal('-31.00'),
+            category='Uncategorized'))
+        db.session.commit()
+
+        # Both match; Groceries is written first, so it wins on position.
+        rules_service.replace_all({'Groceries': ['GROCERY'],
+                                   'Shopping': ['AMAZON']})
+
+        counts = rules_service.match_counts()
+        assert counts == {'Groceries': 1}
+        assert sum(counts.values()) == 1
+
+
+def test_the_unseed_migration_clears_a_household_that_only_ever_got_the_seed():
+    """The seven `DEFAULT_RULES` rows, removed from households that only hold them.
+
+    Phase 11A.2 emptied `DEFAULT_RULES` and deleted `seed_defaults()`, which
+    stops *new* households receiving the developer's credit union, student-loan
+    servicer, broker, card issuers, auto lender and employer. It did not touch
+    the rows already written, so every household seeded before that commit kept
+    its copy — which is what put `First Tech FCU` and `VANGUARD BUY` on a real
+    user's Rules page for merchants they have never transacted with.
+
+    `docs/rule-engine.md` states the reason the code fix was not sufficient on
+    its own: "No amount of correct filtering fixes seed data that should never
+    have been written."
+    """
+    from migrations.versions import (
+        __name__ as _versions,  # noqa: F401  (ensures the package imports)
+    )
+    import importlib.util
+    import os
+
+    path = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        'migrations', 'versions', '20260803_10_unseed_default_rules.py')
+    spec = importlib.util.spec_from_file_location('unseed_mig', path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    seeded = module.SEEDED_PAIRS
+
+    # The set is the historical constant, recovered from `26720e6~1`. Asserted
+    # rather than trusted: a migration that deletes by literal is only correct
+    # if the literal is right, and nothing else in the tree still holds it.
+    assert ('Student Loan', 'First Tech FCU') in seeded
+    assert ('Investments', 'VANGUARD BUY') in seeded
+    assert ('Income', 'TEVA PHARMA') in seeded
+    assert len(seeded) == 7
+
+    # `(id, household_id, category, keyword)` — the shape `upgrade()` selects.
+    rows = [
+        # Household 1: the full seed and nothing else. This is the household in
+        # the bug report, and every row of it goes.
+        (1, 1, 'Student Loan', 'First Tech FCU'),
+        (2, 1, 'Student Loan', 'FIRSTMARK'),
+        (3, 1, 'Investments', 'VANGUARD BUY'),
+        (4, 1, 'Credit Card', 'CAPITAL ONE'),
+        (5, 1, 'Credit Card', 'CHASE CREDIT CRD'),
+        (6, 1, 'Auto Loan', 'JPMorgan Chase'),
+        (7, 1, 'Income', 'TEVA PHARMA'),
+
+        # Household 2: seeded rules *plus* rules of its own. Untouched — the
+        # conservative direction, because deleting by pair alone would destroy
+        # real hand-written rules in a household that genuinely banks with
+        # First Tech FCU. See the migration's docstring.
+        (8, 2, 'Student Loan', 'First Tech FCU'),
+        (9, 2, 'Groceries', 'WHOLE FOODS'),
+
+        # Household 3: never seeded. Nothing to do.
+        (10, 3, 'Dining', 'CHIPOTLE'),
+
+        # Household 4: a partial seed — it opened the page once and got some of
+        # it. Still entirely somebody else's data, so it still goes.
+        (11, 4, 'Investments', 'VANGUARD BUY'),
+    ]
+
+    assert sorted(module.rows_to_delete(rows)) == [1, 2, 3, 4, 5, 6, 7, 11]

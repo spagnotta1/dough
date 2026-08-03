@@ -35,6 +35,19 @@ def _script(page, ai, reply):
     ai.scripted.append(reply)
 
 
+def _open_manual_form(page):
+    """Expand the "Add a rule manually" disclosure.
+
+    The hand-authoring form moved behind a collapsed `<details>` when Dough
+    writing the rules became the primary path — an empty two-field form at the
+    top of the page was asking the user to do by hand the job the page exists to
+    do for them. The form is unchanged and still the supported escape hatch, so
+    these tests open it the way a person does rather than reaching past it.
+    """
+    page.click('.rules-advanced__summary')
+    page.wait_for_selector('#category:not([hidden])', state='visible')
+
+
 # ── The page ────────────────────────────────────────────────────────────────
 
 def test_the_rules_page_lists_the_existing_rules(signed_in):
@@ -110,6 +123,7 @@ def test_the_keyword_preview_shows_what_a_rule_would_catch(signed_in):
     page = signed_in
     visit(page, '/rules')
 
+    _open_manual_form(page)
     page.fill('#keyword', 'Netflix')
     page.wait_for_selector('#previewBox:not([hidden])', timeout=10_000)
 
@@ -123,6 +137,7 @@ def test_a_keyword_that_matches_nothing_says_so(signed_in):
     page = signed_in
     visit(page, '/rules')
 
+    _open_manual_form(page)
     page.fill('#keyword', 'zzz-nothing-matches-this')
     page.wait_for_selector('#previewNone:not([hidden])', timeout=10_000)
     assert page.locator('#previewBox').is_hidden(), \
@@ -135,6 +150,7 @@ def test_adding_a_rule_puts_it_in_the_table(signed_in):
     page = signed_in
     visit(page, '/rules')
 
+    _open_manual_form(page)
     page.fill('#category', 'BrowserTestCategory')
     page.fill('#keyword', 'ZZTESTKEYWORD')
     page.click('#addRuleForm button[type="submit"]')
@@ -157,6 +173,7 @@ def test_removing_a_keyword_takes_it_out_of_its_row(signed_in):
     visit(page, '/rules')
 
     # Make our own rule to remove, rather than mutating shared seed data.
+    _open_manual_form(page)
     page.fill('#category', 'RemovalTestCategory')
     page.fill('#keyword', 'FIRSTKEYWORD')
     page.click('#addRuleForm button[type="submit"]')
