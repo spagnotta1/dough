@@ -194,7 +194,7 @@ SERVICE_FUNCTIONS = {
     'goals': ('list_goals', 'describe', 'momentum', 'projection', 'summary',
               'create_goal', 'update_goal', 'contribute', 'delete_goal',
               'contributions'),
-    'rules_service': ('all_rules', 'as_engine', 'categories', 'seed_defaults',
+    'rules_service': ('all_rules', 'as_engine', 'categories', 'clear_all',
                       'add_rule', 'remove_rule', 'remove_category',
                       'rename_category', 'reorder', 'replace_all',
                       'rule_counts'),

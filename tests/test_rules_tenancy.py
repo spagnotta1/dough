@@ -92,14 +92,21 @@ def test_one_households_rules_are_invisible_to_another(two_households):
         assert 'DEPT EDUCATION' not in flattened
 
         assert 'Gym' not in rules
-        assert rules['Student Loan'] == ['First Tech FCU', 'FIRSTMARK']
+        assert rules == {}
 
 
-def test_a_new_household_gets_defaults_not_the_other_households_rules(two_households):
-    """What RankParsely should have seen."""
+def test_a_new_household_gets_nothing_at_all(two_households):
+    """What RankParsely should have seen, and now does.  [Phase 11A.2]
+
+    This assertion used to be `== DEFAULT_RULES`, and passing it was the bug.
+    The defaults were the developer's credit union, student-loan servicer,
+    broker, card issuers, auto lender and employer, so a second account really
+    did open the Rules page onto somebody else's banks — the tenancy was sound
+    and the seed data was not. Nothing is seeded now; `/rules/ai-suggest` reads
+    the household's own descriptions instead.
+    """
     from dough.services import rules_service
     from dough.tenancy import tenant_scope
-    from rules import DEFAULT_RULES
 
     a_id, b_id = two_households
 
@@ -108,7 +115,27 @@ def test_a_new_household_gets_defaults_not_the_other_households_rules(two_househ
                                    'Gym': ['PLANET FITNESS']})
 
     with tenant_scope(b_id):
-        assert rules_service.all_rules() == DEFAULT_RULES
+        assert rules_service.all_rules() == {}
+
+
+def test_no_default_rule_names_a_real_institution(two_households):
+    """The regression guard for the disclosure itself.
+
+    Not "DEFAULT_RULES is empty" — that is today's implementation and a future
+    contributor may have a good reason to ship a genuinely generic starter set.
+    What must never come back is a *default* that names somebody's actual bank,
+    lender or employer, because that is what shipped to every household for the
+    life of the previous implementation.
+    """
+    from rules import DEFAULT_RULES
+
+    leaked = ('FIRST TECH FCU', 'FIRSTMARK', 'VANGUARD', 'CAPITAL ONE',
+              'CHASE', 'JPMORGAN', 'TEVA')
+    flattened = str(DEFAULT_RULES).upper()
+    for name in leaked:
+        assert name not in flattened, (
+            f'{name} is back in DEFAULT_RULES. Every household that opens the '
+            f'Rules page would be seeded with it — see rules.py.')
 
 
 def test_editing_one_households_rules_does_not_touch_the_other(two_households):
@@ -163,17 +190,35 @@ def test_both_households_may_hold_the_same_rule(two_households):
             assert rules_service.add_rule('Coffee', 'STARBUCKS') is not None
 
 
-def test_seeding_happens_once_and_does_not_resurrect(two_households):
-    """A household that deliberately cleared the defaults keeps them cleared."""
+def test_clearing_all_rules_leaves_the_household_empty(two_households):
+    """Cleared stays cleared, and does not touch the other household.
+
+    The property that makes "Clear all rules" honest. It holds because
+    `DEFAULT_RULES` is empty rather than because anything records that the
+    person meant it — which is why removing the seed also removed the need for
+    a marker column.
+    """
     from dough.services import rules_service
     from dough.tenancy import tenant_scope
 
-    a_id, _ = two_households
+    a_id, b_id = two_households
 
     with tenant_scope(a_id):
-        rules_service.all_rules()                      # seeds
-        rules_service.replace_all({'Coffee': ['STARBUCKS']})
-        assert rules_service.all_rules() == {'Coffee': ['STARBUCKS']}
+        rules_service.replace_all({'Coffee': ['STARBUCKS'], 'Gym': ['YMCA']})
+    with tenant_scope(b_id):
+        rules_service.replace_all({'Fuel': ['SHELL']})
+
+    with tenant_scope(a_id):
+        # Two, not three: B's `Fuel` row is not this household's to count.
+        assert rules_service.clear_all() == 2
+        assert rules_service.all_rules() == {}
+        # The read that used to re-seed. Twice, because the old bug needed a
+        # second look at the page to show itself.
+        assert rules_service.all_rules() == {}
+        assert rules_service.clear_all() == 0
+
+    with tenant_scope(b_id):
+        assert rules_service.all_rules() == {'Fuel': ['SHELL']}
 
 
 # ── Delete category: the button that lied ───────────────────────────────────
@@ -330,6 +375,53 @@ def test_the_delete_category_button_actually_deletes(page):
 
     assert response.status_code == 200
     assert 'Subscriptions' not in rules_service.all_rules()
+
+
+def test_clear_all_button_empties_the_rules_and_uncategorises(page):
+    """The button, end to end.  [Phase 11A.2]"""
+    from dough.services import rules_service
+    from models import Transaction
+
+    response = page.test_client().post('/rules', data={'action': 'clear_all'},
+                                       follow_redirects=True)
+
+    assert response.status_code == 200
+    assert rules_service.all_rules() == {}
+    assert {t.category for t in Transaction.query.all()} == {'Uncategorized'}
+
+
+def test_a_cleared_page_does_not_re_seed_on_the_next_view(page):
+    """The regression this replaced the seeding with.
+
+    Under `DEFAULT_RULES`, clearing every rule and reloading the page put the
+    defaults straight back — so "clear all" could not have been implemented
+    without a marker column recording that the household meant it. With nothing
+    to seed, the second view is as empty as the first.
+    """
+    from dough.services import rules_service
+
+    client = page.test_client()
+    client.post('/rules', data={'action': 'clear_all'}, follow_redirects=True)
+
+    body = client.get('/rules').get_data(as_text=True)
+
+    assert rules_service.all_rules() == {}
+    assert 'No rules yet' in body
+    # The specific thing that used to come back.
+    assert 'FIRSTMARK' not in body
+    assert 'TEVA' not in body
+
+
+def test_the_rules_page_never_renders_a_seeded_institution(page):
+    """Belt and braces on the disclosure, at the surface a person actually sees."""
+    from dough.services import rules_service
+
+    rules_service.clear_all()
+    body = page.test_client().get('/rules').get_data(as_text=True).upper()
+
+    for name in ('FIRST TECH FCU', 'FIRSTMARK', 'VANGUARD BUY', 'CAPITAL ONE',
+                 'CHASE CREDIT CRD', 'JPMORGAN', 'TEVA PHARMA'):
+        assert name not in body
 
 
 def test_deleting_a_category_recategorises_its_transactions(page):

@@ -200,11 +200,16 @@ covers the exports of several banks.
 
 You can customize how transactions are automatically categorized:
 
+A new account starts with **no rules at all**. Dough does not guess at your
+banks and never copies anyone else's: open the Rules page with uncategorised
+transactions and it reads your own descriptions and proposes rules built from
+them, which you accept or ignore.
+
 1. Go to the Rules page
 2. Add new rules by specifying:
    - Category name
    - Keyword to match in transaction descriptions
-3. Remove existing rules as needed
+3. Remove existing rules as needed, or **Clear all rules** to start over
 
 Every rule edit recalculates the category on **every** transaction in the
 household, so a rule fixes the past as well as the future. The cost is that a

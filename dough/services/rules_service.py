@@ -12,17 +12,26 @@ household saw the first household's rules — not through a leaky filter, but
 because there was only one rule set. A rule set names the merchants somebody
 actually pays, so that is a disclosure of personal financial data.
 
-## Why a fresh household gets defaults rather than nothing
+## Why a fresh household gets nothing  [Phase 11A.2]
 
-An empty rule set categorises every transaction as `Uncategorized`, which makes
-a new account look broken on the first import — the dashboard is one grey bar and
-no budget matches anything. `rules.DEFAULT_RULES` is deliberately small and
-generic (five categories, no merchant anybody could recognise as another user's),
-so seeding it discloses nothing while leaving the account usable.
+It used to get `rules.DEFAULT_RULES`, seeded on first read, and this module
+claimed that set was "deliberately small and generic (five categories, no
+merchant anybody could recognise as another user's)". That claim was false. The
+list named the developer's credit union, student-loan servicer, broker, card
+issuers, auto lender and employer, and every household that opened the Rules
+page received a copy. A second account signed in and read the first account's
+banks — which is the disclosure `20260802_08_category_rules` was written to
+stop, surviving the fix because that revision moved the rows and left the
+content alone.
 
-Seeding happens on first *read*, not at registration. A household created by an
-invitation, a test fixture, or a migration all reach this the same way, and
-there is no registration path that can forget to call it.
+So there is no seeding. A new household has no rules, and the on-ramp is
+`/rules/ai-suggest`, which derives rules from the household's *own* transaction
+descriptions. That is both safer and better: it cannot disclose anyone else's
+merchants, and it proposes rules for the merchants this household actually has.
+
+The empty default is also what lets "clear all" mean it. Nothing re-seeds, so a
+household that clears its rules stays cleared without a marker column to
+remember the intent.
 
 ## Ordering
 
@@ -41,19 +50,16 @@ from __future__ import annotations
 from sqlalchemy import func
 
 from models import CategoryRule, db
-from rules import DEFAULT_RULES, CategoryRules
+from rules import CategoryRules
 
 
-def all_rules(seed=True):
+def all_rules():
     """This household's rules as `{category: [keyword, ...]}`, in priority order.
 
-    Seeds the defaults on first read when the household has none — see the
-    module docstring for why that is a read and not a registration step.
+    Returns `{}` for a household that has none, which is the ordinary state of a
+    new account — see the module docstring for why nothing is seeded into it.
     """
     rows = _ordered()
-    if not rows and seed:
-        seed_defaults()
-        rows = _ordered()
 
     grouped = {}
     for row in rows:
@@ -61,14 +67,17 @@ def all_rules(seed=True):
     return grouped
 
 
-def as_engine(seed=True):
+def as_engine():
     """A `CategoryRules` over this household's rules.
 
     The one function `finance_sync`, the importer and the Rules page should all
     call. Returning the engine rather than the dict keeps every caller on one
     implementation of matching.
+
+    An engine over no rules is valid and answers `Uncategorized` for everything,
+    which is the correct answer for a household that has not written a rule yet.
     """
-    return CategoryRules(all_rules(seed=seed))
+    return CategoryRules(all_rules())
 
 
 def categories():
@@ -76,24 +85,28 @@ def categories():
     return list(all_rules().keys())
 
 
-def seed_defaults():
-    """Give a household with no rules the built-in starter set.
+def clear_all():
+    """Delete every rule this household has. Returns how many rows went.
 
-    A no-op when the household already has any rule, so calling it twice — or
-    calling it on a household that has deliberately deleted everything and added
-    one rule of their own — cannot resurrect the defaults.
+    The whole-category `remove_category` repeated for all of them, and worth its
+    own function because "start over" is a real intention: a household that
+    inherited rules it did not write — or that grew a set it no longer trusts —
+    should not have to delete them one category at a time.
+
+    Nothing re-seeds afterwards. That is a property of `DEFAULT_RULES` being
+    empty rather than something this function arranges, and it is the reason
+    this can be a plain delete instead of a delete plus a marker recording that
+    the household meant it.
+
+    The caller is responsible for re-deriving categories afterwards; with no
+    rules left, every transaction resolves to `Uncategorized`.
     """
-    if _count():
-        return 0
-
-    position = 0
-    for category, keywords in DEFAULT_RULES.items():
-        for keyword in keywords:
-            db.session.add(CategoryRule(category=category, keyword=keyword,
-                                        position=position))
-            position += 1
-    db.session.commit()
-    return position
+    rows = CategoryRule.query.all()
+    for row in rows:
+        db.session.delete(row)
+    if rows:
+        db.session.commit()
+    return len(rows)
 
 
 def add_rule(category, keyword, *, first=False):
@@ -242,14 +255,10 @@ def _ordered():
             .all())
 
 
-def _count():
-    return int(db.session.query(func.count(CategoryRule.id)).scalar() or 0)
-
-
 def _max_position():
     return db.session.query(func.max(CategoryRule.position)).scalar()
 
 
-__all__ = ['all_rules', 'as_engine', 'categories', 'seed_defaults', 'add_rule',
+__all__ = ['all_rules', 'as_engine', 'categories', 'clear_all', 'add_rule',
            'remove_rule', 'remove_category', 'rename_category', 'reorder',
            'replace_all', 'rule_counts']

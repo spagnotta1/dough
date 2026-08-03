@@ -133,6 +133,18 @@
         <h2 id="existingRulesHeading" class="ds-section__title">Existing rules</h2>
         <p class="ds-section__sub">Drag a row to reorder — rules higher in the list win.</p>
       </div>
+      {% if rules %}
+      {# Destructive and irreversible, so it confirms with the count in the
+         question — "clear all rules" is easy to click without picturing what
+         it removes. The re-derivation it triggers is the same one every rule
+         edit runs; see dough/blueprints/rules.py::_recategorize. #}
+      <form method="POST" class="rules-actions"
+            onsubmit="return confirm('Delete all {{ rules.values()|map('length')|sum }} rules across {{ rules|length }} categor{{ 'y' if rules|length == 1 else 'ies' }}?\n\nEvery transaction they categorised goes back to Uncategorized. Nothing is seeded in their place.');">
+        {{ csrf_field() }}
+        <input type="hidden" name="action" value="clear_all">
+        <button type="submit" class="ds-btn ds-btn--sm ds-btn--danger">Clear all rules</button>
+      </form>
+      {% endif %}
     </div>
 
     {% if rules %}
@@ -217,7 +229,17 @@
     <div class="ds-empty">
       <p class="ds-empty__title">No rules yet</p>
       <p class="ds-empty__body">
+        {% if autostart_ai %}
+        Dough is reading your {{ uncategorized_count }} uncategorised
+        transaction{{ 's' if uncategorized_count != 1 }} now and will suggest
+        rules built from your own descriptions. Nothing is applied until you
+        accept it.
+        {% elif uncategorized_count > 0 %}
         Add one above, or let Dough read your uncategorised transactions and propose some.
+        {% else %}
+        Add one above. A new account starts with no rules — Dough does not
+        guess at your banks, and never copies anyone else's.
+        {% endif %}
       </p>
     </div>
     {% endif %}
@@ -519,5 +541,24 @@ function saveOrder() {
     .then(function (d) { if (d.success) showToast('Rule order saved.', 'success'); })
     .catch(function () { showToast('Could not save the new order.', 'error'); });
 }
+
+// ── First-run rule suggestions  [Phase 11A.2] ────────────────────────────────
+// A household with no rules used to be given `rules.DEFAULT_RULES`, which was
+// the developer's own banks and lenders copied into every new account. Nothing
+// is seeded now; instead the analysis that reads *this* household's own
+// descriptions starts on its own, once, the first time somebody opens a Rules
+// page with no rules on it.
+//
+// The server decides whether that applies -- rules empty, something
+// uncategorised to read, and an API key configured -- because all three facts
+// live there. See dough/blueprints/rules.py::index.
+//
+// It only proposes. `runAISuggest` renders cards and waits, exactly as the
+// button does, so nothing reaches the ledger without somebody accepting it.
+{% if autostart_ai %}
+document.addEventListener('DOMContentLoaded', function () {
+    runAISuggest();
+});
+{% endif %}
 </script>
 {% endblock %}

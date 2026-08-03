@@ -71,6 +71,18 @@ def index():
             else:
                 flash(f'There is no {category} rule to delete.', 'info')
 
+        elif action == 'clear_all':
+            removed = rules_service.clear_all()
+            if removed:
+                changed = _recategorize()
+                flash(f'Cleared all {removed} rule{"" if removed == 1 else "s"} '
+                      f'— {changed} transaction{"" if changed == 1 else "s"} '
+                      f'went back to Uncategorized. Nothing will be seeded in '
+                      f'their place; ask Dough to suggest rules when you are '
+                      f'ready.', 'success')
+            else:
+                flash('There were no rules to clear.', 'info')
+
         elif action == 'rename_category':
             new_name = (request.form.get('new_category') or '').strip()
             moved = rules_service.rename_category(category, new_name)
@@ -87,9 +99,25 @@ def index():
         Transaction.category == category).count() for category in rules}
     uncategorized_count = Transaction.query.filter_by(
         category='Uncategorized').count()
+
+    # A household with no rules and transactions to read gets the analysis
+    # started for it, rather than a starter set written by somebody else.
+    # [Phase 11A.2] This is what replaced `DEFAULT_RULES` — see `rules.py` for
+    # what that used to contain and why seeding it was a disclosure.
+    #
+    # Three conditions, and each one is a way the automatic run would be wrong:
+    # rules already exist (the household has answered this question), there is
+    # nothing uncategorised (there would be nothing to analyse), or no API key
+    # (the request would fail and the page would open on an error). The button
+    # stays exactly where it is for every other case.
+    autostart_ai = (not rules
+                    and uncategorized_count > 0
+                    and current_ai().is_available)
+
     return render_template('rules.html', rules=rules,
                            rule_stats=rule_stats,
-                           uncategorized_count=uncategorized_count)
+                           uncategorized_count=uncategorized_count,
+                           autostart_ai=autostart_ai)
 
 
 def _recategorize():

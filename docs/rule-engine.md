@@ -21,6 +21,38 @@ A keyword is a plain substring, or a regular expression when wrapped in slashes
 matching the page's "rules higher in the list win"; `get_category` takes the
 first match, so it needs to know nothing about priority.
 
+## Where a new household's rules come from
+
+**Nowhere. It starts with none.** `rules.DEFAULT_RULES` is `{}`, and
+`rules_service` has no seeding function.
+
+This is the fix for a disclosure that outlived the migration meant to stop it.
+Until Phase 11A.2, `DEFAULT_RULES` held five categories that read as a generic
+starter set and were in fact one person's financial life — a credit union, a
+student-loan servicer, a broker, two card issuers, an auto lender and an
+employer. `seed_defaults()` copied them into every household on first read of
+`/rules`, so a second account signed in and read the first account's banks.
+
+Worth being precise about the mechanism, because the obvious diagnosis is wrong:
+**tenancy was working the entire time.** The rows were correctly scoped, the ORM
+backstop was applied, and `tools/verify_tenancy.py` passed. Each household held
+its own private copy of somebody else's merchant list. No amount of correct
+filtering fixes seed data that should never have been written.
+`20260802_08_category_rules` moved rule *storage* into per-household rows and
+never questioned the *content* of the defaults.
+
+The replacement is `/rules/ai-suggest`, which reads this household's own
+uncategorised descriptions and proposes rules from them. That cannot disclose
+another household's merchants, and it is more accurate than any keyword list a
+source file could ship. `dough/blueprints/rules.py::index` starts the analysis
+automatically when three things are true — no rules, something uncategorised to
+read, and an API key configured — and it only ever *proposes*; nothing reaches
+the ledger until somebody accepts a card.
+
+`tests/test_rules_tenancy.py` guards the property rather than the
+implementation: a future contributor may ship a genuinely generic starter set,
+but no default may name a real institution.
+
 ## The invariant
 
 > A transaction's category is a pure function of its description and the current
@@ -45,7 +77,8 @@ It runs on every rule mutation:
 | Remove a keyword | `POST /rules` `action=remove` |
 | Delete a category | `POST /rules` `action=remove_category` |
 | Rename a category | `POST /rules` `action=rename_category` |
-| Accept an AI suggestion | `POST /rules/ai-apply` — an equivalent loop inlined at [rules.py:273](../dough/blueprints/rules.py#L273) |
+| Accept an AI suggestion | `POST /rules/ai-apply` — an equivalent loop inlined in `ai_apply` |
+| Clear every rule | `POST /rules` `action=clear_all` — after which everything is `Uncategorized`, which is correct and total |
 
 Whole-ledger, rather than "the rows this keyword matched", is the fix rather than
 laziness. A keyword-shaped query cannot answer the question correctly in either

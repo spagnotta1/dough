@@ -41,20 +41,49 @@ from typing import Dict, List, Optional
 #: the Rules page all compare against this string, so it is named once.
 UNCATEGORIZED = 'Uncategorized'
 
-#: The rule set a household starts with. Small on purpose: a default that tries
-#: to be comprehensive is a default that miscategorises confidently, and the
-#: Rules page's AI suggestions are the intended way to grow it.
+#: Empty, and it has to be. **A new household starts with no rules at all.**
 #:
-#: `migrations/versions/20260802_08_category_rules.py` carries its own copy
-#: rather than importing this one — a migration must keep behaving the way it
-#: did the day it was written.
-DEFAULT_RULES: Dict[str, List[str]] = {
-    'Student Loan': ['First Tech FCU', 'FIRSTMARK'],
-    'Investments': ['VANGUARD BUY'],
-    'Credit Card': ['CAPITAL ONE', 'CHASE CREDIT CRD'],
-    'Auto Loan': ['JPMorgan Chase'],
-    'Income': ['TEVA PHARMA'],
-}
+#: ## What this replaced, and why it was a disclosure
+#:
+#: Until Phase 11A.2 this held five categories of what looked like generic
+#: starter rules and was in fact one person's financial life:
+#:
+#:     'Student Loan': ['First Tech FCU', 'FIRSTMARK'],
+#:     'Investments':  ['VANGUARD BUY'],
+#:     'Credit Card':  ['CAPITAL ONE', 'CHASE CREDIT CRD'],
+#:     'Auto Loan':    ['JPMorgan Chase'],
+#:     'Income':       ['TEVA PHARMA'],
+#:
+#: That is a credit union, a student-loan servicer, a broker, two card issuers,
+#: an auto lender and an employer — belonging to the developer, and copied into
+#: every household that ever opened the Rules page. It was reported by exactly
+#: the route anyone would predict: a second account signed in and read a list of
+#: the first account's banks.
+#:
+#: `20260802_08_category_rules` moved rule *storage* into per-household rows and
+#: never questioned the *content* of the defaults, so it fixed the sharing and
+#: preserved the disclosure. Tenancy was working the whole time. The rows really
+#: were scoped; they had simply been seeded with somebody's private data, which
+#: no amount of correct filtering can undo.
+#:
+#: ## Why empty rather than a generic set
+#:
+#: Because a generic default is a guess, and this application has something
+#: better: the household's own transactions. `/rules/ai-suggest` reads the
+#: descriptions actually in the ledger and proposes rules from them, which
+#: discloses nothing about anyone else and is more accurate than any keyword
+#: list shipped in a source file could be. `dough/blueprints/rules.py` starts
+#: that analysis automatically for a household that has no rules yet.
+#:
+#: The empty set is also what makes "Clear all rules" honest: with nothing to
+#: re-seed, cleared stays cleared, and no marker column is needed to remember
+#: that a person meant it.
+#:
+#: `migrations/versions/20260802_08_category_rules.py` still carries the old
+#: list. It is unreachable — `_owner_household()` returns None on a fresh
+#: database and the revision returns before seeding — and a migration must keep
+#: behaving the way it did the day it was written, so it is left alone.
+DEFAULT_RULES: Dict[str, List[str]] = {}
 
 
 def is_pattern(keyword: str) -> bool:
