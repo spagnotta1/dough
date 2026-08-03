@@ -31,7 +31,7 @@ and a caller *with* a session has already been through `_enforce_session_lifetim
 superseded, is cleared and redirected before this function runs at all.
 """
 
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 
 from flask import (Blueprint, current_app, redirect, render_template, request,
                    session, url_for)
@@ -110,14 +110,30 @@ def dashboard():
     end_date_str = request.args.get('end_date') or session.get('end_date')
     account_filter = request.args.get('account') or session.get('account', 'both')
 
+    # `date`, never `datetime`, and it is a fix rather than tidying — the same
+    # one `services/transactions.build_transaction_query` carries, which is why
+    # the transactions list showed four August rows while this page counted one.
+    #
+    # `Transaction.date` is a `Date` column. Compared against a `datetime`,
+    # SQLAlchemy types the bind by the *value* rather than the column and sends
+    # '2026-08-01 00:00:00.000000', which SQLite compares as a string against
+    # the stored '2026-08-01'. The stored value is shorter and sorts first, so
+    # `date >= start` is False for every transaction falling on the start date
+    # itself: the window silently drops its first day. The end boundary
+    # survives only by accident of the same rule.
+    #
+    # Every window on this page is derived from these two — the comparison
+    # period, the balance history, both monthly trends, the category trend —
+    # so the whole dashboard was reading a window one day short, and
+    # disagreeing with the transactions page about the same dates.
     if not start_date_str or not end_date_str:
-        end_date = datetime.now()
+        end_date = date.today()
         start_date = end_date.replace(day=1)
         start_date_str = start_date.strftime('%Y-%m-%d')
         end_date_str = end_date.strftime('%Y-%m-%d')
     else:
-        start_date = datetime.strptime(start_date_str, '%Y-%m-%d')
-        end_date = datetime.strptime(end_date_str, '%Y-%m-%d')
+        start_date = datetime.strptime(start_date_str, '%Y-%m-%d').date()
+        end_date = datetime.strptime(end_date_str, '%Y-%m-%d').date()
 
     session['start_date'] = start_date_str
     session['end_date'] = end_date_str
@@ -351,7 +367,7 @@ def dashboard():
     forecast_txns = [{'date': t.date, 'amount': float(t.amount),
                       'description': t.description}
                      for t in Transaction.query
-                     .filter(Transaction.date >= today - timedelta(days=90))
+                     .filter(Transaction.date >= (today - timedelta(days=90)).date())
                      .order_by(Transaction.date.asc()).all()]
     forecast = dashboard_intel.cash_flow_forecast(
         transactions=forecast_txns, cash=nw['cash'], bills=upcoming, today=today)

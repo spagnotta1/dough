@@ -32,6 +32,7 @@ from datetime import date, datetime, timedelta
 from sqlalchemy import func
 
 import dashboard_intel
+from dough.services.analytics import as_date
 from dough.services.networth import (compute_net_worth, portfolio_snapshot,
                                      wealth_snapshot)
 from dough.services.recurring_service import (detect_recurring_full,
@@ -62,7 +63,11 @@ def build_finance_context(months=6, detail=False):
     assistant needs to answer questions about specific purchases: recent
     transactions, top merchants, and unreviewed anomalies.
     """
-    cutoff = datetime.now() - timedelta(days=months * 30)
+    # `.date()`: `Transaction.date` is a `Date` column, and a `datetime` bound
+    # against it is compared as the string '2026-08-01 00:00:00.000000' by
+    # SQLite, which excludes rows stored as '2026-08-01' — the cutoff day
+    # itself. See `services/transactions.build_transaction_query`.
+    cutoff = (datetime.now() - timedelta(days=months * 30)).date()
 
     # --- Spending by category (last N months) ---
     rows = (db.session.query(Transaction.category, func.sum(Transaction.amount))
@@ -313,8 +318,13 @@ def copilot_context(start=None, end=None):
     own filter when one is given. Without that the copilot would narrate
     July while the page beneath it showed March through June.
     """
-    end = end or datetime.now()
-    start = start or end.replace(day=1)
+    # Normalised to `date` because the callers hand this function `datetime`
+    # (the API converts to one explicitly), and a `datetime` compared against
+    # the `Date` column loses the first day of the window under SQLite — see
+    # `services/transactions.build_transaction_query`. The briefing sits on the
+    # dashboard, so a window one day short here contradicts the page around it.
+    end = as_date(end or datetime.now())
+    start = as_date(start) if start else end.replace(day=1)
     txns = Transaction.query.filter(Transaction.date.between(start, end)).all()
 
     def is_transfer(t):

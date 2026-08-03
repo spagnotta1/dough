@@ -66,7 +66,10 @@ def monthly_outgo(months=6):
     so they are excluded — counting them would make the buffer look far
     thinner than it is.
     """
-    cutoff = datetime.now() - timedelta(days=months * 30)
+    # `.date()`, matching `snapshot_history` below: a `datetime` bound against
+    # the `Date` column is compared as a padded string by SQLite and drops the
+    # cutoff day. See `services/transactions.build_transaction_query`.
+    cutoff = (datetime.now() - timedelta(days=months * 30)).date()
     total = float(db.session.query(func.sum(func.abs(Transaction.amount)))
                   .filter(Transaction.date >= cutoff, Transaction.amount < 0,
                           func.lower(Transaction.category).notin_(('transfer', 'transfers')))
