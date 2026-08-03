@@ -319,3 +319,65 @@ def test_dashboard_embeds_parseable_json_for_the_client(client):
     # The forecast drives the one chart drawn before any panel is opened.
     assert data["forecast"]["points"], "forecast must carry at least one point"
     assert all(isinstance(p["balance"], (int, float)) for p in data["forecast"]["points"])
+
+
+def test_the_dashboard_window_includes_its_own_start_date(client):
+    """The dashboard counted a window one day shorter than it advertised.
+
+    Reported from the running app: the transactions page listed four August
+    rows over `2026-08-01 .. 2026-08-03` while the dashboard beside it counted
+    one. Everything dated on the start day was missing, so `Spending` read
+    $5.00 against an actual $41.21.
+
+    The cause was `Transaction.date.between(start, end)` given `datetime`
+    objects. SQLAlchemy types that bind by the value rather than by the `Date`
+    column and sends '2026-08-01 00:00:00.000000'; SQLite compares it as a
+    string against the stored '2026-08-01', which is shorter and sorts first,
+    so `>= start` is False on the start date itself.
+
+    `build_transaction_query` had already been fixed for exactly this — which
+    is what made the two pages disagree rather than both being wrong — so this
+    asserts the agreement rather than the total alone. A boundary this quiet is
+    only visible when two views of the same window are compared.
+    """
+    import json
+    import re
+    from datetime import date
+    from models import db, Transaction
+
+    rows = [
+        (date(2026, 8, 1), 'Whole Foods', -35.92, 'Groceries'),    # the start day
+        (date(2026, 8, 2), 'RAILWAY', -5.00, 'Uncategorized'),
+        (date(2026, 8, 3), 'Hardware store', -12.00, 'Shopping'),  # the end day
+        (date(2026, 7, 31), 'Before the window', -99.00, 'Shopping'),
+    ]
+    for day, description, amount, category in rows:
+        db.session.add(Transaction(account_name='Checking', date=day,
+                                   description=description, amount=amount,
+                                   category=category))
+    db.session.commit()
+
+    window = 'start_date=2026-08-01&end_date=2026-08-03'
+    html = client.get(f'/?{window}').get_data(as_text=True)
+    data = json.loads(re.search(
+        r'<script id="dashData" type="application/json">(.*?)</script>',
+        html, re.S).group(1))
+
+    # Asserted on the embedded state rather than the rendered figure: `money`
+    # rounds to whole dollars by default, and $53 vs $5 would have caught this
+    # one while a subtler boundary slipped through.
+    spent = sum(s['outbound'] for s in data['categoryStats'].values())
+    assert spent == 35.92 + 5.00 + 12.00, \
+        'dashboard spending must cover the whole window, both boundaries included'
+
+    # The balance history is the series drawn on the page, and it is built by
+    # its own query -- so it can disagree with the totals above, and did.
+    assert [p['date'] for p in data['balanceHistory']] == [
+        '2026-08-01', '2026-08-02', '2026-08-03']
+
+    # And the two pages agree about which rows are in the window.
+    listed = client.get(f'/transactions?{window}').get_data(as_text=True)
+    for description in ('Whole Foods', 'RAILWAY', 'Hardware store'):
+        assert description in listed
+    assert 'Before the window' not in listed
+    assert data['categoryStats'].keys() == {'Groceries', 'Uncategorized', 'Shopping'}

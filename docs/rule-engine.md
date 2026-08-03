@@ -53,6 +53,30 @@ the ledger until somebody accepts a card.
 implementation: a future contributor may ship a genuinely generic starter set,
 but no default may name a real institution.
 
+### The rows the code fix left behind
+
+Emptying `DEFAULT_RULES` stopped *new* households receiving the seed. It did not
+remove the rows already written, and for a while this document described the fix
+as complete while every household seeded before it kept its copy. That is how a
+real user's Rules page came to list `Student Loan → First Tech FCU, FIRSTMARK`
+and `Investments → VANGUARD BUY` for merchants that account had never
+transacted with.
+
+`20260803_10_unseed` is the cleanup. It deletes the seven seeded pairs from
+every household whose **entire** rule set is a subset of them — the test for
+"this household never wrote a rule of its own", so every row it holds is
+somebody else's data. A household holding a seeded pair *alongside* rules of its
+own is left untouched, because deleting by pair alone would destroy real
+hand-written rules in a household that genuinely banks with First Tech FCU. The
+ambiguous case is left for a person, on the page, where "Clear all rules" does
+it on demand.
+
+The migration does not re-derive `Transaction.category`. Doing so would need the
+matching engine imported into a migration, which breaks the moment that code
+moves; the application re-derives instead, on the next rule edit or AI analysis.
+In between, a transaction can carry a label no surviving rule produces — which
+is why the Transactions column counts *matches* and not labels. See below.
+
 ## The invariant
 
 > A transaction's category is a pure function of its description and the current
@@ -61,6 +85,37 @@ but no default may name a real institution.
 That is what `_recategorize()` enforces, and it is worth stating plainly because
 every consequence below — the good ones and the surprising one — follows from it
 and from nothing else.
+
+**It holds only at the moments `_recategorize()` runs.** Between them,
+`Transaction.category` is a stored label that can outlive the rule that wrote
+it: rules change on an edit, categories are rewritten on an edit, and nothing
+reconciles the two on a page view. That gap is why the Rules page counts rule
+matches rather than labels — see below.
+
+## The Transactions column counts matches, not labels
+
+[`rules_service.match_counts()`](../dough/services/rules_service.py) asks the
+engine what each distinct description resolves to and sums the transactions
+behind it. The obvious implementation is one query — `Transaction.category ==
+name` — and it was what the page shipped with. It answers a different question.
+
+A household carrying seeded rules it had never transacted against saw
+`Student Loan — 56` beside a rule matching nothing: 56 rows wearing a label from
+an earlier categorization, presented as evidence the rule was working. The
+number was real and the column was lying, which is the worst combination — it is
+exactly the evidence a person uses to conclude their rules are fine.
+
+Counting matches means the column can only say something true about the rules
+beside it, and a category whose rules match nothing reads `0`. Priority is
+respected because the engine is asked rather than each keyword tested, so a
+transaction claimed by two rules counts once, for the winner, and the column
+sums to the number of categorized transactions rather than to the number of
+`(rule, transaction)` hits.
+
+It is grouped by description first: a ledger of 1,200 transactions over 300
+distinct descriptions costs 300 match attempts, not 1,200, and the ratio
+improves as history grows — which matters because unlike `_recategorize()` this
+does run on a page view.
 
 ## `_recategorize()` recalculates the whole ledger, deliberately
 
@@ -77,7 +132,7 @@ It runs on every rule mutation:
 | Remove a keyword | `POST /rules` `action=remove` |
 | Delete a category | `POST /rules` `action=remove_category` |
 | Rename a category | `POST /rules` `action=rename_category` |
-| Accept an AI suggestion | `POST /rules/ai-apply` — an equivalent loop inlined in `ai_apply` |
+| Accept AI suggestions | `POST /rules/ai-apply` — an equivalent loop inlined in `ai_apply`, run **once** after every accepted rule is written, not once per rule |
 | Clear every rule | `POST /rules` `action=clear_all` — after which everything is `Uncategorized`, which is correct and total |
 
 Whole-ledger, rather than "the rows this keyword matched", is the fix rather than

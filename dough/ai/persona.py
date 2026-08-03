@@ -452,16 +452,55 @@ def rules_suggest_prompt(existing_categories, descriptions):
 Existing categories (reuse these when they fit):
 {json.dumps(existing_categories)}
 
-Here are {len(descriptions)} unique transaction descriptions that are currently "Uncategorized":
+Here are the {len(descriptions)} most common "Uncategorized" transaction \
+descriptions, with how many times each appears:
 {json.dumps(descriptions, indent=2)}
 
-Suggest keyword rules to categorize them. Guidelines:
-- Group related merchants into ONE rule using a regex pattern /merchant1|merchant2/
-- Use concise, standard personal-finance categories (Groceries, Dining, Gas, Utilities, Streaming, Healthcare, Shopping, Travel, Entertainment, Rent, Insurance, etc.)
-- Reuse existing categories where they fit; only create new ones when clearly needed
-- Patterns are case-insensitive substring matches — keep them specific enough to avoid false positives
-- Skip descriptions that are too ambiguous or clearly one-off transfers
-- Aim for 5–15 high-quality suggestions, not exhaustive coverage
+Suggest keyword rules to categorize them.
+
+## The rule that matters most: one rule identifies ONE merchant
+
+A keyword is matched as a case-insensitive substring against the whole
+description. A pattern wrapped in slashes is a regular expression.
+
+Write the shortest fragment that uniquely identifies a merchant, and nothing
+else. `WHOLE FOODS` is a good rule. These are all bad rules:
+
+- `/LSU HERITAGE FOOD|LONG ISLAND SPIRIT/` — two unrelated merchants welded
+  into one rule. They are separate businesses; give them separate rules, even
+  when they share a category.
+- `/BARB/` — matches BARBECUE, BARBER, BARBARA'S. A fragment that is a common
+  substring of unrelated words will silently miscategorize.
+- `/PACKAGE/`, `/EXCHANGE/`, `/STORE/`, `/PAYMENT/`, `/PURCHASE/` — generic
+  banking or retail words that appear in descriptions from every merchant.
+- `/DEBIT CARD PURCHASE/` — bank boilerplate, not a merchant.
+
+Use the `|` alternation ONLY for spelling variants of the *same* merchant:
+`/AMAZON|AMZN/` and `/STARBUCKS|SBUX/` are correct uses.
+
+A false positive is much worse than a missed transaction. Accepting a rule
+rewrites categories across the entire ledger, so an over-broad pattern damages
+data that was already correct. When a fragment is ambiguous, make it longer or
+skip the merchant.
+
+## Categories
+
+- Reuse an existing category whenever it fits. Only create a new one when no
+  existing category could reasonably hold the merchant.
+- Use concise, standard personal-finance categories: Groceries, Dining, Gas,
+  Utilities, Subscriptions, Healthcare, Shopping, Travel, Entertainment, Rent,
+  Insurance, Income, Transfer.
+- Do not invent a category for a single low-frequency merchant. One visit to
+  one shop does not deserve its own category — leave it uncategorized.
+
+## What to prioritize
+
+- The counts are the signal. A description appearing 40 times is worth a rule;
+  one appearing once usually is not.
+- Skip transfers between the person's own accounts, ATM withdrawals, check
+  deposits and card payments. These are movement, not spending.
+- Skip anything genuinely ambiguous. Returning fewer, correct rules is the goal.
+- Aim for 5-15 high-confidence rules, not exhaustive coverage.
 
 Respond with ONLY valid JSON (no markdown fences, no commentary):
 {{
@@ -469,7 +508,7 @@ Respond with ONLY valid JSON (no markdown fences, no commentary):
     {{
       "category": "Category Name",
       "keyword": "keyword or /regex/",
-      "reason": "one-sentence explanation"
+      "reason": "one-sentence explanation naming the merchant"
     }}
   ]
 }}"""

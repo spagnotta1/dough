@@ -81,14 +81,29 @@
     <div id="ai-error" class="ds-card ds-card--danger ds-card--compact" role="alert" hidden></div>
   </section>
 
-  <!-- ── Add a rule ──────────────────────────────────────────────────────── -->
-  <section class="ds-card" aria-labelledby="addRuleHeading">
+  <!-- ── Add a rule (advanced) ───────────────────────────────────────────── -->
+  {# Behind a <details> rather than removed. Dough writing the rules is the
+     primary path now, so leading with an empty two-field form asked the user
+     to do by hand the job the page exists to do for them. It stays reachable
+     because the escape hatch is the thing that makes automation safe: when a
+     suggestion gets a merchant wrong, "fix it yourself" has to be available.
+
+     A details element, not a JS toggle: it opens and closes with no script at
+     all, is keyboard accessible for free, and the disclosure state is the
+     element's own rather than a class some other handler can disagree with. #}
+  <details class="ds-card rules-advanced">
+    <summary class="rules-advanced__summary">
+      <span class="ds-section__title">Add a rule manually</span>
+      <span class="ds-section__sub">Advanced — Dough writes these for you above.</span>
+    </summary>
+
     <div class="ds-card__head">
       <div>
-        <h2 id="addRuleHeading" class="ds-section__title">Add a rule</h2>
+        <h2 id="addRuleHeading" class="ds-sr">Add a rule</h2>
         <p class="ds-section__sub">
           A keyword wrapped in slashes is treated as a regular expression —
-          <code>/amazon|amzn/</code> matches either.
+          <code>/amazon|amzn/</code> matches either. Keep it specific: adding a
+          rule recategorizes matching transactions across your whole ledger.
         </p>
       </div>
     </div>
@@ -124,14 +139,18 @@
         <button type="submit" class="ds-btn ds-btn--primary">Add rule</button>
       </div>
     </form>
-  </section>
+  </details>
 
   <!-- ── Existing rules ──────────────────────────────────────────────────── -->
   <section class="ds-card" aria-labelledby="existingRulesHeading">
     <div class="ds-card__head">
       <div>
-        <h2 id="existingRulesHeading" class="ds-section__title">Existing rules</h2>
-        <p class="ds-section__sub">Drag a row to reorder — rules higher in the list win.</p>
+        <h2 id="existingRulesHeading" class="ds-section__title">Your rules</h2>
+        <p class="ds-section__sub">
+          Drag a row to reorder — rules higher in the list win. Transactions
+          counts how many the rule <em>matches</em> now, so a category reading 0
+          has rules that no longer catch anything.
+        </p>
       </div>
       {% if rules %}
       {# Destructive and irreversible, so it confirms with the count in the
@@ -335,8 +354,11 @@ function renderSuggestions() {
     document.getElementById('ai-accept-all-btn').hidden = false;
 
     aiSuggestions.forEach(function (s, i) {
-        var isNew = existingCategories.indexOf(s.category) === -1;
-        var catBadge = isNew
+        // `is_new` comes from the server, which compares case-insensitively
+        // against the household's real categories. Deciding it here meant two
+        // cards for the same category could each call themselves new — and
+        // accepting one made the other's badge false without a re-render.
+        var catBadge = s.is_new
             ? '<span class="ds-badge ds-badge--ai">new category</span>'
             : '<span class="ds-badge">existing</span>';
         var matchBadge = s.uncat_count > 0
@@ -346,6 +368,10 @@ function renderSuggestions() {
             ? '<p class="rules-sugg__examples" title="' + esc(s.examples.join(' · ')) + '">' +
               'e.g. ' + esc(s.examples.slice(0, 2).join(' · ')) + '</p>'
             : '';
+        // One card per category now carries every pattern proposed for it.
+        var patterns = (s.keywords || []).map(function (k) {
+            return '<code class="rules-sugg__pattern">' + esc(k) + '</code>';
+        }).join(' ');
 
         var card = document.createElement('div');
         card.className   = 'ds-card ds-card--compact rules-sugg';
@@ -357,7 +383,7 @@ function renderSuggestions() {
                   '<span class="rules-sugg__name">' + esc(s.category) + '</span>' +
                   catBadge + matchBadge +
                 '</div>' +
-                '<code class="rules-sugg__pattern">' + esc(s.keyword) + '</code>' +
+                '<div class="rules-sugg__patterns">' + patterns + '</div>' +
                 '<p class="rules-sugg__reason">' + esc(s.reason) + '</p>' +
                 examples +
               '</div>' +
@@ -394,7 +420,7 @@ async function acceptSuggestion(idx, btn) {
         var res = await fetch('/rules/ai-apply', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({category: s.category, keyword: s.keyword})
+            body: JSON.stringify({category: s.category, keywords: s.keywords})
         });
         var data = await res.json();
         if (!res.ok || data.error) {
@@ -411,7 +437,9 @@ async function acceptSuggestion(idx, btn) {
               '<span class="ds-meta">' + data.applied_count + ' updated</span>' +
             '</div>';
 
-        // Keep the local list in step so the badge is right on a re-render.
+        // Keep the local state in step so the badge is right on a re-render:
+        // the category exists now, whatever the card said a moment ago.
+        s.is_new = false;
         if (existingCategories.indexOf(s.category) === -1) {
             existingCategories.push(s.category);
         }
@@ -429,21 +457,63 @@ function skipSuggestion(idx) {
     if (card) card.classList.add('rules-sugg--skipped');
 }
 
+// One request for every outstanding card, not one request per card.
+//
+// The loop version re-derived the whole ledger once per suggestion — six cards
+// meant six full passes to reach a state one pass computes identically, since
+// the final categories depend only on the final rule set. It was also not
+// atomic: a failure on the fourth card left three rules written and the page
+// showing six accepted.
 async function acceptAllSuggestions() {
     var allBtn = document.getElementById('ai-accept-all-btn');
+
+    var pending = [];
+    aiSuggestions.forEach(function (s, i) {
+        var card = document.querySelector('.rules-sugg[data-idx="' + i + '"]');
+        if (!card) return;
+        if (card.classList.contains('rules-sugg--accepted')) return;
+        if (card.classList.contains('rules-sugg--skipped')) return;
+        pending.push({idx: i, card: card, category: s.category, keywords: s.keywords});
+    });
+
+    if (!pending.length) { allBtn.textContent = 'Done'; return; }
+
     allBtn.disabled = true;
     allBtn.textContent = 'Accepting…';
 
-    for (var i = 0; i < aiSuggestions.length; i++) {
-        var card = document.querySelector('.rules-sugg[data-idx="' + i + '"]');
-        if (!card) continue;
-        if (card.classList.contains('rules-sugg--accepted')) continue;
-        if (card.classList.contains('rules-sugg--skipped')) continue;
-        var acceptBtn = card.querySelector('[data-accept]');
-        if (acceptBtn) await acceptSuggestion(i, acceptBtn);
-    }
+    try {
+        var res = await fetch('/rules/ai-apply', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({categories: pending.map(function (p) {
+                return {category: p.category, keywords: p.keywords};
+            })})
+        });
+        var data = await res.json();
+        if (!res.ok || data.error) {
+            allBtn.disabled = false;
+            allBtn.textContent = 'Retry';
+            showToast(data.error || 'Could not save those rules.', 'error');
+            return;
+        }
 
-    allBtn.textContent = 'Done';
+        // The recategorized count belongs to the batch, not to any one card, so
+        // the cards say they were accepted and the toast carries the total.
+        pending.forEach(function (p) {
+            p.card.classList.add('rules-sugg--accepted');
+            p.card.querySelector('.rules-sugg__actions').innerHTML =
+                '<div class="rules-sugg__done">' +
+                  '<span class="ds-badge ds-badge--ok">Accepted</span>' +
+                '</div>';
+        });
+        allBtn.textContent = 'Done';
+        showToast(data.added + ' rule(s) added — ' + data.applied_count +
+                  ' transaction(s) recategorized', 'success');
+    } catch (e) {
+        allBtn.disabled = false;
+        allBtn.textContent = 'Retry';
+        showToast('Could not reach the server. Please try again.', 'error');
+    }
 }
 
 function clearSuggestions() {

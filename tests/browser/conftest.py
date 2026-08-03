@@ -101,6 +101,41 @@ TRANSACTIONS = [
 TRANSACTION_COUNT = len(TRANSACTIONS)
 UNCATEGORIZED_COUNT = sum(1 for t in TRANSACTIONS if t[4] == 'Uncategorized')
 
+#: The seeded rule set. `{category: [keyword, ...]}`, in priority order.
+#:
+#: The ledger above used to be seeded without any rules at all, and three tests
+#: paid for it. `test_the_rules_page_lists_the_existing_rules` asserted at least
+#: one row in a table that was always empty, and the overflow pin needed a
+#: keywords cell with enough chips in it to overflow. Both simply failed.
+#:
+#: The third was quieter and worse. `/rules` starts its own analysis when a
+#: household has no rules (`autostart_ai` — see dough/blueprints/rules.py), so
+#: every visit fired `/rules/ai-suggest` before a test could script a reply.
+#: The EchoAdapter answers an unscripted request by echoing the prompt back,
+#: `generate_json` takes the first `{...}` out of it, and the prompt's own
+#: response template parsed — so the autostart happened to 200 and nobody
+#: noticed the race. It stopped parsing the moment the prompt began carrying
+#: `{"description": ..., "count": ...}` objects ahead of that template, and
+#: every rules test started reporting a stray 500.
+#:
+#: Seeding rules removes the race at its source rather than papering over the
+#: 500: with rules present, `autostart_ai` is False and the page asks for
+#: nothing until a test clicks the button.
+#:
+#: **None of these may match the two Uncategorized descriptions.**
+#: `UNCATEGORIZED_COUNT` is asserted on, the Analyze button disables at zero,
+#: and the STARBUCKS suggestion test needs that row still uncategorized.
+RULES = {
+    'Groceries':     ["Trader Joe's", 'WHOLE FOODS', 'SAFEWAY', 'KROGER',
+                      'ALDI', 'WEGMANS', 'SPROUTS', 'H-E-B'],
+    'Housing':       ['Rent —', 'MORTGAGE'],
+    'Income':        ['Paycheck', 'PAYROLL'],
+    'Utilities':     ['Con Edison', 'NATIONAL GRID'],
+    'Travel':        ['Delta Air Lines', 'UNITED AIR'],
+    'Subscriptions': ['Netflix', 'SPOTIFY'],
+    'Transfer':      ['Transfer to savings'],
+}
+
 
 # ── The application under test ──────────────────────────────────────────────
 
@@ -130,6 +165,19 @@ def _seed(app):
                     date=today - timedelta(days=days_ago),
                     description=desc, amount=Decimal(amount),
                     category=category, source='manual'))
+            db.session.commit()
+
+            # Written directly rather than through `rules_service.replace_all`
+            # so nothing re-derives: the categories above are the fixture, and
+            # a re-derivation would silently rewrite them from these rules.
+            from models import CategoryRule
+            position = 0
+            for category, keywords in RULES.items():
+                for keyword in keywords:
+                    db.session.add(CategoryRule(category=category,
+                                                keyword=keyword,
+                                                position=position))
+                    position += 1
             db.session.commit()
 
 
