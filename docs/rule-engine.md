@@ -92,6 +92,37 @@ it: rules change on an edit, categories are rewritten on an edit, and nothing
 reconciles the two on a page view. That gap is why the Rules page counts rule
 matches rather than labels — see below.
 
+### The one exception: transfers
+
+The invariant has exactly one documented exception, and it is a second pass
+rather than a hole:
+
+```
+category = rules(description)            # pure function of description + rules
+category = 'Transfer' if the row pairs   # a fact about the row, not its text
+```
+
+[`dough/services/transfers.py`](../dough/services/transfers.py) matches a debit
+against an equal credit in a **different** account within a few days and labels
+both halves `Transfer`. No rule can express this, because the evidence is not in
+the description — the two halves of one movement are often worded completely
+differently, and `WIRE TRANSFER` to a landlord is rent. What identifies a
+transfer is the arithmetic.
+
+It exists because every income and spending total in the application already
+excluded the `Transfer` category and **nothing was writing it**: a household
+sweeping $2,000 from checking to savings had the arriving half counted as
+income.
+
+Three properties keep it compatible with everything above:
+
+- It runs *after* the rule pass, everywhere the rule pass runs
+  (`_recategorize`, `ai_apply`, the CSV importer, the sync repository).
+- It only ever adds the label. Rows that stop pairing are cleared by the rule
+  pass that runs first, which is what makes the whole thing idempotent.
+- Pairing wins over a rule that claimed one of the halves. A rule matched a
+  description; this matched the money.
+
 ## The Transactions column counts matches, not labels
 
 [`rules_service.match_counts()`](../dough/services/rules_service.py) asks the

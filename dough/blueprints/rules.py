@@ -1,21 +1,41 @@
 """Categorization rules, including the AI suggest/apply pair."""
 
 
-import re
-
 from flask import (Blueprint, current_app, flash, jsonify, redirect,
                    render_template, request, url_for)
-from sqlalchemy import func
+from sqlalchemy import case, func
 
 from dough.ai import persona
 from dough.ai.errors import AIConfigurationError, AIError
 from dough.ai.service import current_ai
-from dough.services import rules_service
+from dough.services import rules_service, transfers
 from dough.services.categorization import get_category_rules
 
 from models import Transaction, db
+#: Aliased: `test()` binds a local named `matches` for its result rows, and a
+#: bare import would be shadowed inside that function.
+from rules import matches as keyword_matches
 
 bp = Blueprint('rules', __name__)
+
+#: How many distinct descriptions go to the model in one request, and how many
+#: requests one analysis will make. [Phase 11A.3]
+#:
+#: This used to be a single call over the 200 most frequent descriptions, with
+#: a prompt asking for "5-15 high-confidence rules". A household with 900
+#: distinct uncategorized descriptions therefore got, at best, fifteen rules
+#: for its top 200 — so the user accepted everything, watched most of the
+#: ledger stay uncategorized, and pressed Analyze again. And again. The button
+#: was doing exactly what it was built to do; what it was built to do was a
+#: sample.
+#:
+#: One analysis now walks the whole uncategorized ledger. The batching is only
+#: a context-window concern — 4,000 descriptions do not fit in one prompt, and
+#: a model asked to categorize that many in one reply truncates its JSON.
+#: `MAX_BATCHES` bounds what a single click can spend; past that the remainder
+#: is reported honestly instead of being silently dropped.
+AI_BATCH_SIZE = 120
+AI_MAX_BATCHES = 12
 
 @bp.route('/rules', methods=['GET', 'POST'])
 def index():
@@ -167,6 +187,18 @@ def _recategorize():
     than logic — with no `category_source` column there is nothing to decide
     from. `docs/rule-engine.md` holds the worked example and the three options,
     and is the specification for that work.
+
+    ## The transfer pass runs after, always
+
+    Rules answer from the description alone, and no description can prove that
+    money moved between two accounts the household owns —
+    `dough/services/transfers.py` explains why. So the rule pass runs first and
+    `net_out_transfers()` runs over its output, relabelling both halves of every
+    matched pair.
+
+    Running it here rather than only at import is what keeps it idempotent: the
+    rule pass has just reset every row from the current rules, so a pair that no
+    longer exists loses the label instead of keeping it forever.
     """
     engine = rules_service.as_engine()
     changed = 0
@@ -175,6 +207,7 @@ def _recategorize():
         if transaction.category != category:
             transaction.category = category
             changed += 1
+    changed += transfers.net_out_transfers(commit=False)
     if changed:
         try:
             db.session.commit()
@@ -225,55 +258,103 @@ def reorder():
 
 @bp.route('/rules/ai-suggest', methods=['POST'])
 def ai_suggest():
-    """Send uncategorized descriptions to Claude and get rule suggestions."""
+    """Analyze **every** uncategorized description and return rule suggestions.
+
+    ## One click, one analysis  [Phase 11A.3]
+
+    This used to send the 200 most frequent descriptions in a single call and
+    ask for "5-15 high-confidence rules". Both halves capped it: a household
+    with 900 distinct uncategorized descriptions never showed the model 700 of
+    them, and the model was told to stop at fifteen rules for the 200 it did
+    see. The user pressed Analyze, accepted everything, saw most of the ledger
+    still uncategorized, and pressed Analyze again — the loop this route was
+    reported for.
+
+    It now walks the whole uncategorized ledger in batches of
+    `AI_BATCH_SIZE`, up to `AI_MAX_BATCHES`, and merges the results. The
+    batching is a context-window constraint, not a sampling strategy: each
+    batch knows its position and the categories its predecessors proposed, so
+    the merged output reads as one analysis rather than twelve unrelated ones.
+
+    A failure part-way through returns what earlier batches produced rather
+    than nothing — the suggestions already in hand are good, and discarding
+    them would put the user right back in the loop this was written to end.
+    Only a failure on the *first* batch is an error response.
+    """
     body = request.get_json(force=True) or {}
     ai = current_ai()
     if not ai.is_available:
         return jsonify({'error': 'ANTHROPIC_API_KEY not configured'}), 503
 
-    # The 200 *most frequent* uncategorized descriptions, with their counts.
-    #
-    # This used to be `.distinct().limit(200)` with no ORDER BY, which hands the
-    # database an arbitrary 200 of them. On a ledger with more than 200 distinct
-    # uncategorized descriptions that means the merchants the household actually
-    # spends at may never reach the model at all, while 200 one-off charges do —
-    # so the suggestions came back scattershot and missed the obvious wins.
-    #
-    # Ordering by frequency inverts that: the model always sees the biggest
-    # patterns first, and the count travels with each description so it can tell
-    # a merchant visited weekly from one visited once. That is the single input
-    # it most needs to judge whether a rule is worth proposing.
+    # Netting first, so the model is never asked to write a rule for a movement
+    # the arithmetic has already settled. Both halves of a matched pair become
+    # `Transfer` here and drop out of the uncategorized set below.
+    transfers.net_out_transfers()
+
+    # Ordered by frequency, so batch one holds the merchants the household
+    # actually spends at. That ordering used to be the whole defence against a
+    # 200-row cap; it now only decides which rules the user sees first.
     rows = (db.session.query(Transaction.description,
                              func.count(Transaction.id).label('n'))
             .filter(Transaction.category == 'Uncategorized')
             .group_by(Transaction.description)
             .order_by(func.count(Transaction.id).desc())
-            .limit(200)
             .all())
     if not rows:
         return jsonify({'suggestions': [], 'message': 'No uncategorized transactions found.'})
 
-    descriptions     = [{'description': r[0], 'count': int(r[1])} for r in rows]
-    existing_cats    = list(get_category_rules().get_all_rules().keys())
+    descriptions  = [{'description': r[0], 'count': int(r[1])} for r in rows]
+    existing_cats = list(get_category_rules().get_all_rules().keys())
 
-    try:
-        # The model comes from the picker, so it is user-controlled; the
-        # catalog resolves an unknown id to the default rather than letting
-        # it reach the provider. That replaces the old inline allow-set.
-        data, _ = ai.generate_json(
-            messages=[{'role': 'user',
-                       'content': persona.rules_suggest_prompt(existing_cats,
-                                                              descriptions)}],
-            model=body.get('model'), role='suggest', max_tokens=2000,
-            metadata={'surface': 'rules_ai_suggest'})
-        raw_suggestions = data.get('suggestions', [])
-    except AIError as e:
-        current_app.logger.warning('rules_ai_suggest failed: %s', e)
-        return jsonify({'error': e.user_message}), 503 if isinstance(
-            e, AIConfigurationError) else 500
-    except Exception as e:
-        current_app.logger.error('rules_ai_suggest unexpected error: %s', e)
-        return jsonify({'error': f'Unexpected error: {e}'}), 500
+    batches = [descriptions[i:i + AI_BATCH_SIZE]
+               for i in range(0, len(descriptions), AI_BATCH_SIZE)]
+    analyzed = batches[:AI_MAX_BATCHES]
+    skipped = sum(len(b) for b in batches[AI_MAX_BATCHES:])
+
+    raw_suggestions = []
+    proposed_cats   = []
+    analyzed_count  = 0
+    done_batches    = 0
+    failed          = False
+    for index, batch in enumerate(analyzed, start=1):
+        try:
+            # The model comes from the picker, so it is user-controlled; the
+            # catalog resolves an unknown id to the default rather than letting
+            # it reach the provider. That replaces the old inline allow-set.
+            data, _ = ai.generate_json(
+                messages=[{'role': 'user',
+                           'content': persona.rules_suggest_prompt(
+                               existing_cats, batch,
+                               batch=(index, len(analyzed)),
+                               covered=proposed_cats)}],
+                # Room for a full batch's worth of rules. The old 2,000 was
+                # sized for the fifteen the prompt asked for, and a longer
+                # reply would have been truncated into an `AIResponseError`.
+                model=body.get('model'), role='suggest', max_tokens=8000,
+                metadata={'surface': 'rules_ai_suggest'})
+        except AIError as e:
+            current_app.logger.warning('rules_ai_suggest batch %s/%s failed: %s',
+                                       index, len(analyzed), e)
+            if not raw_suggestions:
+                return jsonify({'error': e.user_message}), 503 if isinstance(
+                    e, AIConfigurationError) else 500
+            failed = True
+            break
+        except Exception as e:
+            current_app.logger.error('rules_ai_suggest unexpected error: %s', e)
+            if not raw_suggestions:
+                return jsonify({'error': f'Unexpected error: {e}'}), 500
+            failed = True
+            break
+
+        analyzed_count += len(batch)
+        done_batches += 1
+        batch_suggestions = data.get('suggestions', []) or []
+        raw_suggestions.extend(batch_suggestions)
+        for s in batch_suggestions:
+            cat = (s.get('category') or '').strip()
+            if cat and cat not in proposed_cats:
+                proposed_cats.append(cat)
 
     # Enrich each suggestion with real match counts and example descriptions.
     #
@@ -282,11 +363,18 @@ def ai_suggest():
     # page rendered as two separate "Shopping" cards each labelled "new
     # category" — two cards proposing the same category, each claiming to
     # invent it. Accepting one then made the other's badge a lie.
-    all_transactions = Transaction.query.all()
+    #
+    # Matched against *distinct descriptions* rather than transaction rows.
+    # The row-scan version was O(keywords x transactions) and was affordable
+    # only because the keyword count was capped at twenty; an analysis that
+    # returns two hundred rules over a ledger of forty thousand rows is eight
+    # million comparisons. Descriptions repeat heavily, and the answer depends
+    # on nothing else about the row, so the counts travel with the group.
+    ledger = _description_counts()
     existing_lower = {c.lower() for c in existing_cats}
 
     grouped = {}
-    for s in raw_suggestions[:20]:
+    for s in raw_suggestions:
         cat    = (s.get('category') or '').strip()
         kw     = (s.get('keyword')  or '').strip()
         reason = (s.get('reason')   or '').strip()
@@ -307,20 +395,17 @@ def ai_suggest():
         if reason and not entry['reason']:
             entry['reason'] = reason
 
-        is_regex = kw.startswith('/') and kw.endswith('/') and len(kw) > 2
-        for t in all_transactions:
-            try:
-                hit = (re.search(kw[1:-1], t.description, re.IGNORECASE)
-                       if is_regex else kw.upper() in t.description.upper())
-            except re.error:
+        # `rules.matches` rather than a local re-implementation, so a card's
+        # count is produced by the same matcher that will categorize the rows
+        # once the card is accepted. An invalid regex matches nothing there and
+        # nothing here, instead of raising in one and being caught in the other.
+        for description, total, uncategorized in ledger:
+            if not keyword_matches(kw, description):
                 continue
-            if not hit:
-                continue
-            entry['total_count'] += 1
-            if t.category == 'Uncategorized':
-                entry['uncat_count'] += 1
-            if len(entry['examples']) < 3 and t.description not in entry['examples']:
-                entry['examples'].append(t.description)
+            entry['total_count'] += total
+            entry['uncat_count'] += uncategorized
+            if len(entry['examples']) < 3 and description not in entry['examples']:
+                entry['examples'].append(description)
 
     # A suggestion matching nothing is dropped rather than shown at zero. The
     # model occasionally proposes a plausible-looking pattern that no
@@ -330,7 +415,37 @@ def ai_suggest():
     enriched = [e for e in grouped.values() if e['total_count'] > 0]
     enriched.sort(key=lambda e: -e['uncat_count'])
 
-    return jsonify({'suggestions': enriched})
+    # What the analysis actually covered, so the page can say so. A user who
+    # has been trained by the old behaviour to press Analyze repeatedly needs
+    # to be told that this pass read everything — and told honestly when it
+    # did not.
+    return jsonify({
+        'suggestions': enriched,
+        'analyzed_descriptions': analyzed_count,
+        'total_descriptions': len(descriptions),
+        # Everything the analysis did not reach, whether because the batch cap
+        # cut it off or because a batch failed part-way through.
+        'skipped_descriptions': len(descriptions) - analyzed_count,
+        'batches': done_batches,
+        'partial': failed or skipped > 0,
+    })
+
+
+def _description_counts():
+    """`[(description, transactions, uncategorized), ...]` for the household.
+
+    One GROUP BY instead of loading the ledger, because the only things the
+    suggestion enrichment needs from a transaction are its description and
+    whether it is still uncategorized.
+    """
+    rows = (db.session.query(
+                Transaction.description,
+                func.count(Transaction.id),
+                func.sum(case((Transaction.category == 'Uncategorized', 1),
+                              else_=0)))
+            .group_by(Transaction.description).all())
+    return [(description, int(total or 0), int(uncategorized or 0))
+            for description, total, uncategorized in rows]
 
 @bp.route('/rules/ai-apply', methods=['POST'])
 def ai_apply():
@@ -392,6 +507,10 @@ def ai_apply():
             if transaction.category != resolved:
                 transaction.category = resolved
                 count += 1
+        # Same second pass as `_recategorize`, for the same reason: the rules
+        # just overwrote every row, including the transfers a previous run had
+        # netted out. See `dough/services/transfers.py`.
+        count += transfers.net_out_transfers(commit=False)
         db.session.commit()
     except Exception as e:
         db.session.rollback()

@@ -139,6 +139,13 @@ SERVICE_FUNCTIONS = {
     # is separate because "prices rose" and "you shopped more" need different
     # advice and are one indistinguishable number until they are split.
     'trends': ('category_trends', 'merchant_trends', 'unit_cost_trend'),
+    # Movement between the household's own accounts, identified by pairing a
+    # debit against an equal credit in another account rather than by reading
+    # the description. Every income and spending total already excluded the
+    # `Transfer` category and nothing was writing it, so a checking-to-savings
+    # sweep was counted as income.
+    'transfers': ('find_transfer_pairs', 'net_out_transfers',
+                  'looks_like_transfer'),
     # Feature 6. Named causes rather than a bare flag -- the ledger's
     # `anomaly_score` column already answers "is this odd?" and cannot answer
     # "why?", which is the only part a user can act on. Median-and-MAD

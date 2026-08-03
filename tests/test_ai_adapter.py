@@ -1041,6 +1041,132 @@ def test_rules_ai_suggest_enriches_suggestions(ai_app, ai_client):
     assert ai_app.echo.requests[0].model == catalog.provider_id('quick')
 
 
+def _uncategorized(count, prefix='MERCHANT'):
+    """`count` distinct uncategorized descriptions, one transaction each."""
+    from datetime import datetime
+
+    from models import Transaction, db
+
+    for i in range(count):
+        db.session.add(Transaction(
+            date=datetime(2026, 3, 1), description=f'{prefix} {i:04d}',
+            amount=-4.50, category='Uncategorized', account_name='Checking'))
+    db.session.commit()
+
+
+def test_rules_ai_suggest_reads_the_whole_ledger_in_one_run(ai_app, ai_client):
+    """One click analyses everything, not the busiest 200 descriptions.
+
+    The reported bug: a household had to press Analyze, accept, and press it
+    again, several times over. The cause was a 200-row `LIMIT` on the query
+    plus a prompt asking for "5-15 high-confidence rules" — so most of the
+    ledger was never shown to the model, and there was nothing on the page to
+    say so.
+
+    250 descriptions is three batches of `AI_BATCH_SIZE`. All three have to
+    happen inside the one request, and the coverage has to come back honest.
+    """
+    _uncategorized(250)
+    _script(ai_app,
+            json.dumps({'suggestions': [{'category': 'Shopping',
+                                         'keyword': 'MERCHANT 00',
+                                         'reason': 'a shop'}]}),
+            json.dumps({'suggestions': [{'category': 'Dining',
+                                         'keyword': 'MERCHANT 01',
+                                         'reason': 'a cafe'}]}),
+            json.dumps({'suggestions': [{'category': 'Travel',
+                                         'keyword': 'MERCHANT 02',
+                                         'reason': 'an airline'}]}))
+
+    data = ai_client.post('/rules/ai-suggest', json={}).get_json()
+
+    assert len(ai_app.echo.requests) == 3, 'the ledger was not fully walked'
+    assert data['analyzed_descriptions'] == 250
+    assert data['total_descriptions'] == 250
+    assert data['skipped_descriptions'] == 0
+    assert data['partial'] is False
+    assert {s['category'] for s in data['suggestions']} == {'Shopping', 'Dining',
+                                                            'Travel'}
+
+
+def test_rules_ai_suggest_tells_a_later_batch_what_came_before(ai_app, ai_client):
+    """Batch three must not invent `Coffee` for what batch one filed as Dining.
+
+    The batching is a context-window constraint, so the output still has to
+    read as one analysis. The only thing holding that together is the prompt
+    carrying the categories already proposed.
+    """
+    _uncategorized(250)
+    _script(ai_app,
+            json.dumps({'suggestions': [{'category': 'Dining',
+                                         'keyword': 'MERCHANT 00',
+                                         'reason': 'a cafe'}]}),
+            json.dumps({'suggestions': []}),
+            json.dumps({'suggestions': []}))
+
+    ai_client.post('/rules/ai-suggest', json={})
+
+    first, second = (r.messages[0].content for r in ai_app.echo.requests[:2])
+    # `Dining` also appears in the prompt's list of standard category names, so
+    # the assertion is on the carried-forward block rather than the word.
+    assert 'already proposed' not in first, 'nothing had been proposed yet'
+    assert '"Dining"' in second.split('already proposed')[1]
+    assert 'batch 2 of 3' in second
+
+
+def test_rules_ai_suggest_keeps_what_it_had_when_a_later_batch_fails(ai_app,
+                                                                     ai_client):
+    """A failure on batch three does not throw away batches one and two.
+
+    Discarding them would put the user straight back into the accept-and-retry
+    loop this whole change exists to end. The response says it was partial
+    instead.
+    """
+    _uncategorized(250)
+    # Two scripted replies for three batches: the third falls through to the
+    # echo behaviour, which is prose and fails to parse as JSON.
+    _script(ai_app,
+            json.dumps({'suggestions': [{'category': 'Shopping',
+                                         'keyword': 'MERCHANT 00',
+                                         'reason': 'a shop'}]}),
+            json.dumps({'suggestions': []}))
+
+    resp = ai_client.post('/rules/ai-suggest', json={})
+    data = resp.get_json()
+
+    assert resp.status_code == 200
+    assert [s['category'] for s in data['suggestions']] == ['Shopping']
+    assert data['partial'] is True
+    assert data['analyzed_descriptions'] == 240
+    assert data['skipped_descriptions'] == 10
+
+
+def test_rules_ai_suggest_nets_transfers_before_asking(ai_app, ai_client):
+    """A movement the arithmetic settles is not a question for the model.
+
+    Both halves of a matched pair are `Transfer` before the uncategorized set
+    is read, so no rule is proposed for either and neither reaches a prompt.
+    """
+    from datetime import datetime
+
+    from models import Transaction, db
+
+    db.session.add(Transaction(
+        date=datetime(2026, 3, 10), description='ONLINE TRANSFER TO SAVINGS',
+        amount=-2000, category='Uncategorized', account_name='Checking'))
+    db.session.add(Transaction(
+        date=datetime(2026, 3, 11), description='DEPOSIT FROM CHECKING',
+        amount=2000, category='Uncategorized', account_name='Savings'))
+    db.session.commit()
+
+    _script(ai_app, json.dumps({'suggestions': []}))
+    data = ai_client.post('/rules/ai-suggest', json={}).get_json()
+
+    assert data['suggestions'] == []
+    assert 'No uncategorized' in data['message']
+    assert ai_app.echo.requests == [], 'the model was asked about a settled pair'
+
+
 def test_rules_ai_suggest_reports_a_provider_failure_as_doughs_message(ai_app, ai_client):
     from datetime import datetime
 

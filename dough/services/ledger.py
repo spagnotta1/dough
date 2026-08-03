@@ -387,9 +387,17 @@ def import_csv(paths, account_name, *, batch_id, rules_engine, on_file=None):
         if on_file is not None:
             on_file(path)
 
-    # Recomputed once for the whole import rather than per file, matching the
-    # route. Scoring is a model fit over every transaction in the household, so
-    # doing it per file would be the same work repeated.
+    # Both of these run once for the whole import rather than per file.
+    #
+    # The transfer pass has to be here and not in the per-row loop: it pairs a
+    # debit in one account against a credit in another, and during the loop the
+    # other account's half may not have been imported yet. Importing checking
+    # and savings in one drop would otherwise net out nothing at all.
+    from dough.services.transfers import net_out_transfers
+    net_out_transfers()
+
+    # Scoring is a model fit over every transaction in the household, so doing
+    # it per file would be the same work repeated.
     compute_anomaly_scores()
     return result
 

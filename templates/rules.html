@@ -299,8 +299,11 @@ function setAnalyzing(on) {
     // The spinner is the design system's, so it turns at the same rate as every
     // other pending thing in the product.
     document.getElementById('ai-analyze-icon').classList.toggle('ds-spin', on);
+    // Named for what it does now: one run reads every uncategorized
+    // description, which takes longer than the old 200-row sample and should
+    // look like it is doing more rather than like it has hung.
     document.getElementById('ai-analyze-label').textContent =
-        on ? 'Analyzing…' : 'Analyze & suggest rules';
+        on ? 'Analyzing every transaction…' : 'Analyze & suggest rules';
 }
 
 function failAI(message) {
@@ -327,6 +330,7 @@ async function runAISuggest() {
             return;
         }
         aiSuggestions = data.suggestions || [];
+        aiCoverage    = data;
         renderSuggestions();
     } catch (e) {
         failAI('Could not reach the server. Please try again.');
@@ -336,6 +340,25 @@ async function runAISuggest() {
 }
 
 var existingCategories = {{ rules.keys()|list|tojson }};
+var aiCoverage = null;
+
+// What the analysis actually read, in the user's words.
+//
+// One run now walks the whole uncategorized ledger rather than sampling its
+// busiest 200 descriptions, and saying so is half the fix: the old behaviour
+// trained people to press Analyze over and over because nothing ever told them
+// the pass had been partial. Now the page says which it was.
+function coverageNote() {
+    if (!aiCoverage || !aiCoverage.analyzed_descriptions) return '';
+    if (aiCoverage.skipped_descriptions > 0) {
+        return ' Read ' + aiCoverage.analyzed_descriptions + ' of ' +
+               aiCoverage.total_descriptions +
+               ' uncategorized descriptions — accept these, then run it again ' +
+               'for the rest.';
+    }
+    return ' Read all ' + aiCoverage.analyzed_descriptions +
+           ' uncategorized descriptions — one pass covers the whole ledger.';
+}
 
 function renderSuggestions() {
     var cards = document.getElementById('ai-cards');
@@ -343,14 +366,16 @@ function renderSuggestions() {
     cards.innerHTML = '';
 
     if (aiSuggestions.length === 0) {
-        sumEl.textContent = 'No suggestions — the remaining descriptions may be too ambiguous.';
+        sumEl.textContent = 'No suggestions — the remaining descriptions may be too ambiguous.' +
+                            coverageNote();
         document.getElementById('ai-accept-all-btn').hidden = true;
         show('ai-suggestions-area', true);
         return;
     }
 
     sumEl.textContent = aiSuggestions.length +
-        (aiSuggestions.length === 1 ? ' suggestion' : ' suggestions') + ':';
+        (aiSuggestions.length === 1 ? ' suggestion' : ' suggestions') + '.' +
+        coverageNote();
     document.getElementById('ai-accept-all-btn').hidden = false;
 
     aiSuggestions.forEach(function (s, i) {
@@ -518,6 +543,7 @@ async function acceptAllSuggestions() {
 
 function clearSuggestions() {
     aiSuggestions = [];
+    aiCoverage = null;
     show('ai-suggestions-area', false);
     show('ai-error', false);
 }

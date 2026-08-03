@@ -75,6 +75,12 @@ class SyncRepository:
         self._import_transactions(payload, account_rows, result)
         self._update_market_prices(connection, payload)
         db.session.commit()
+        # After the commit, because pairing reads across accounts: a transfer's
+        # two halves can arrive from two different connections, and the pass has
+        # to see whatever is already persisted rather than only this payload.
+        # See `dough/services/transfers.py`.
+        from dough.services.transfers import net_out_transfers
+        net_out_transfers()
         # These read committed data across *all* connections:
         self.refresh_cash_account_totals()
         self.write_daily_snapshot()

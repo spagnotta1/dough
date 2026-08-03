@@ -438,25 +438,57 @@ CHAT_JSON_SYSTEM = (
 )
 
 
-def rules_suggest_prompt(existing_categories, descriptions):
+def rules_suggest_prompt(existing_categories, descriptions, *,
+                         batch=None, covered=None):
     """The category-rule suggestion prompt.
 
     A function rather than a constant because it is the one prompt that is
     mostly data. Built here anyway so every word the model is ever sent lives
     in this module.
+
+    `batch` is `(index, total)`, one-based, when the route is walking the
+    ledger in more than one pass — the model is told where it is so it does not
+    treat a slice as the whole picture. `covered` is the categories proposed by
+    earlier batches, which are offered alongside the household's real ones:
+    without them, batch three invents `Coffee` for the merchant batch one
+    already filed under `Dining`.
     """
     import json
+
+    position = ''
+    if batch and batch[1] > 1:
+        position = (f"\nThis is batch {batch[0]} of {batch[1]}. Every batch is "
+                    f"part of one analysis of the same ledger — categorize "
+                    f"what is in front of you and assume the rest is being "
+                    f"handled by the other batches.\n")
+
+    proposed = ''
+    if covered:
+        proposed = (f"\nCategories already proposed earlier in this same "
+                    f"analysis (prefer these over inventing a near-duplicate):\n"
+                    f"{json.dumps(sorted(covered))}\n")
 
     return f"""You are a personal finance assistant analyzing bank/credit-card transaction descriptions.
 
 Existing categories (reuse these when they fit):
 {json.dumps(existing_categories)}
-
-Here are the {len(descriptions)} most common "Uncategorized" transaction \
+{proposed}{position}
+Here are {len(descriptions)} "Uncategorized" transaction \
 descriptions, with how many times each appears:
 {json.dumps(descriptions, indent=2)}
 
 Suggest keyword rules to categorize them.
+
+## Cover everything you can in this one pass
+
+This is the user's single analysis run, not the first of several. They will
+accept your suggestions once and expect the ledger to be categorized. Every
+description you leave unaddressed stays `Uncategorized` and they have to come
+back and do this again, so work through the whole list rather than stopping at
+the obvious wins.
+
+Completeness does not mean guessing: a description you genuinely cannot place
+should still be skipped. It means not stopping early on the ones you can.
 
 ## The rule that matters most: one rule identifies ONE merchant
 
@@ -491,16 +523,35 @@ skip the merchant.
   Utilities, Subscriptions, Healthcare, Shopping, Travel, Entertainment, Rent,
   Insurance, Income, Transfer.
 - Do not invent a category for a single low-frequency merchant. One visit to
-  one shop does not deserve its own category — leave it uncategorized.
+  one shop does not deserve its own category — file it under the closest
+  standard category instead, and only leave it alone if none fits.
+
+## Transfers: name them `Transfer`, do not skip them
+
+Money moving between the person's own accounts — checking to savings, a sweep,
+a credit-card payment from checking, an internal transfer — is not income and
+not spending. It appears twice in the ledger, once leaving and once arriving,
+so counting it inflates both sides.
+
+Descriptions like `TRANSFER TO SAVINGS`, `ONLINE TRANSFER`, `XFER`, `INTERNAL
+TRANSFER` and card payments such as `PAYMENT THANK YOU` or `AUTOPAY PAYMENT`
+belong in a category named exactly `Transfer`. The application nets that
+category out of every income and spending total, which is the whole point of
+labelling it.
+
+Two cautions:
+
+- `WIRE TRANSFER` to a person or a landlord is real spending, not a transfer
+  between the person's own accounts. So is `VENMO` or `ZELLE` to someone else.
+- Do not use `Transfer` for ATM withdrawals or check deposits. Those are cash
+  crossing the boundary of the household, not moving inside it.
 
 ## What to prioritize
 
-- The counts are the signal. A description appearing 40 times is worth a rule;
-  one appearing once usually is not.
-- Skip transfers between the person's own accounts, ATM withdrawals, check
-  deposits and card payments. These are movement, not spending.
-- Skip anything genuinely ambiguous. Returning fewer, correct rules is the goal.
-- Aim for 5-15 high-confidence rules, not exhaustive coverage.
+- The counts are the signal. A description appearing 40 times is worth a rule
+  before one appearing once — but get to the long tail too.
+- Skip anything genuinely ambiguous. A wrong rule is worse than a missing one.
+- There is no target count. Propose as many correct rules as the list supports.
 
 Respond with ONLY valid JSON (no markdown fences, no commentary):
 {{
