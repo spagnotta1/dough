@@ -40,13 +40,27 @@ requests==2.33.0
 # Fernet, for encrypting stored institution tokens at rest, and the
 # self-signed dev certificate Plaid's HTTPS redirect requirement forces.
 #
-# 41.0.7 -> 48.0.1 is the one upgrade here that could have destroyed data
-# rather than just breaking a test: it holds the key to every stored bank
-# token. Verified before pinning -- all four `auth_blob` values in the live
-# database still decrypt, and a fresh round-trip still reads back. Fernet's
-# on-disk format is unchanged; the CVEs were in the statically linked OpenSSL
-# and in EC/PKCS12 parsing paths this app never reaches.
-cryptography==48.0.1
+# This is the one pin here whose upgrade could destroy data rather than just
+# break a test: it holds the key to every stored bank token. So the same check
+# is repeated before every bump, and 48.0.1 -> 50.0.0 passed it -- all four
+# `auth_blob` values in the live database still decrypt, and a fresh round-trip
+# still reads back. Fernet's on-disk format has not changed across any of these
+# versions.
+#
+# 50.0.0 clears three advisories against 48.0.1, none of them reachable from
+# this application -- worth stating, because "not reachable" is why this was a
+# routine bump rather than an incident:
+#
+#   CVE-2026-69248  a name-constrained CA accepts an over-broad wildcard SAN.
+#                   In `x509.verification`, which nothing here calls. The only
+#                   x509 use is `app.py` generating its own self-signed dev
+#                   certificate; it verifies no chains.
+#   CVE-2026-69247  a Bleichenbacher oracle in `pkcs7_decrypt_*`. No PKCS#7
+#                   anywhere in the tree, and no S/MIME.
+#   CVE-2026-69249  exponential blowup building chains from duplicated
+#                   self-signed certificates. Same verification API as the
+#                   first, same reason it cannot be reached.
+cryptography==50.0.0
 
 # --- Utilities ---
 python-dotenv==1.2.2
