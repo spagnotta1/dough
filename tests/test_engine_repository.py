@@ -83,7 +83,7 @@ def test_second_sync_creates_no_duplicates(app):
 
 
 def test_synced_transactions_are_categorized_by_rules(app):
-    """A sync must categorise through the household's rules.
+    """A sync must categorize through the household's rules.
 
     [Phase 11A.1] The rule is now created by the test. It used to rely on
     whatever happened to be in `category_rules.json` — a file at the repo root

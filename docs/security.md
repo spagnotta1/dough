@@ -1032,7 +1032,7 @@ should be deleted and git-ignored once the last environment is migrated;
 **Fix.** `models.CategoryRule`, one tenant-scoped row per (category, keyword),
 carrying `household_id` NOT NULL with a foreign key, a standalone index, and
 `UNIQUE(household_id, category, keyword)` — leading with the household so two
-families may both categorise `STARBUCKS` as `Coffee`.
+families may both categorize `STARBUCKS` as `Coffee`.
 
 - `rules.py` keeps the matching logic and became framework-free and stateless;
   it holds no storage and cannot reach the wrong household's rules.
@@ -1042,7 +1042,7 @@ families may both categorise `STARBUCKS` as `Coffee`.
 - `dough/services/categorization.py` **has no cache any longer**, deliberately:
   a cached engine is a cached household.
 - `finance_sync/repository.py` resolves rules per call rather than at
-  construction, so a sync categorises with the household's own rules.
+  construction, so a sync categorizes with the household's own rules.
 - A household with no rules is seeded with `rules.DEFAULT_RULES` on first read —
   five generic categories naming no recognisable merchant.
 
@@ -1051,11 +1051,11 @@ existing file to the *owner's* household only; every other household starts from
 the defaults. Verified against a copy before the real database: no table lost or
 changed a row, `tools/verify_tenancy.py` reports all 145 invariants holding
 (the tool gained nine checks for the new table), and all 1,200 transactions
-categorise identically to the JSON engine.
+categorize identically to the JSON engine.
 
 **Tests.** `tests/test_rules_tenancy.py` — two households with different rules,
 asserting neither can see or overwrite the other's, plus the unique-index
-composite and per-household categorisation.
+composite and per-household categorization.
 `tests/test_services.py::test_the_rules_accessor_reads_the_current_household`
 asserts the same property through the public accessor.
 

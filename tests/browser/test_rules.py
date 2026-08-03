@@ -20,7 +20,7 @@ from .conftest import UNCATEGORIZED_COUNT, assert_no_horizontal_overflow, visit
 #: What the model is told to answer with. `/rules/ai-suggest` sends this through
 #: `generate_json`, then enriches each entry with real match counts from the
 #: ledger — so STARBUCKS has to be a description that is actually seeded and
-#: actually uncategorised, or the card renders with a zero count and the badge
+#: actually uncategorized, or the card renders with a zero count and the badge
 #: assertion below would be testing nothing.
 SUGGESTION_REPLY = json.dumps({'suggestions': [
     {'category': 'Coffee', 'keyword': 'STARBUCKS',
@@ -102,7 +102,7 @@ def test_the_model_picker_moves_its_pressed_state(signed_in):
 # ── The keyword preview ─────────────────────────────────────────────────────
 
 def test_the_keyword_preview_shows_what_a_rule_would_catch(signed_in):
-    """Adding a rule retroactively recategorises matching transactions.
+    """Adding a rule retroactively recategorizes matching transactions.
 
     That makes the preview the difference between a tool and a gamble, which is
     why it is asserted on rather than treated as decoration.
@@ -173,12 +173,12 @@ def test_removing_a_keyword_takes_it_out_of_its_row(signed_in):
 
 # ── AI suggestions ──────────────────────────────────────────────────────────
 
-def test_the_analyse_button_is_live_when_there_is_something_to_analyse(signed_in):
+def test_the_analyze_button_is_live_when_there_is_something_to_analyze(signed_in):
     page = signed_in
     visit(page, '/rules')
-    assert UNCATEGORIZED_COUNT > 0, 'the seed has nothing uncategorised to analyse'
+    assert UNCATEGORIZED_COUNT > 0, 'the seed has nothing uncategorized to analyze'
     assert page.locator('#ai-analyze-btn').is_enabled(), \
-        'the Analyse button is disabled despite uncategorised transactions'
+        'the Analyze button is disabled despite uncategorized transactions'
 
 
 def test_suggestions_render_as_cards(signed_in, ai):
@@ -195,7 +195,7 @@ def test_suggestions_render_as_cards(signed_in, ai):
     assert 'STARBUCKS' in text
     # The count badge is enriched server-side from the real ledger, so this also
     # asserts that the enrichment ran and found the seeded transaction.
-    assert 'uncategorised' in text.lower(), f'no match-count badge on the card: {text!r}'
+    assert 'uncategorized' in text.lower(), f'no match-count badge on the card: {text!r}'
     assert page.locator('#ai-error').is_hidden()
 
 

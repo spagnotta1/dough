@@ -55,7 +55,7 @@ class SyncRepository:
             #   2. [Phase 11A.1] The rules are per household. Capturing an
             #      engine at construction would pin this repository to whichever
             #      household happened to be in scope when it was built, and a
-            #      sync would then categorise one family's transactions with
+            #      sync would then categorize one family's transactions with
             #      another family's rules.
             def categorize(description):
                 from dough.services.rules_service import as_engine

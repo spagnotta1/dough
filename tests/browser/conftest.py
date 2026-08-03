@@ -81,9 +81,9 @@ PASSWORD = 'hunter2boat'
 #: single day; `ledger()` below is what makes the ledger tests independent of
 #: it entirely.
 #:
-#: The last two are deliberately Uncategorized: /rules disables its Analyse
-#: button when nothing is uncategorised, and `/rules/ai-suggest` returns early
-#: with an empty list, so with a fully-categorised ledger the entire AI half of
+#: The last two are deliberately Uncategorized: /rules disables its Analyze
+#: button when nothing is uncategorized, and `/rules/ai-suggest` returns early
+#: with an empty list, so with a fully-categorized ledger the entire AI half of
 #: that page would be untestable.
 TRANSACTIONS = [
     ('Checking', 19, "Trader Joe's",             '-84.21',   'Groceries'),

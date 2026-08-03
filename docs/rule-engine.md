@@ -42,10 +42,10 @@ filtering fixes seed data that should never have been written.
 never questioned the *content* of the defaults.
 
 The replacement is `/rules/ai-suggest`, which reads this household's own
-uncategorised descriptions and proposes rules from them. That cannot disclose
+uncategorized descriptions and proposes rules from them. That cannot disclose
 another household's merchants, and it is more accurate than any keyword list a
 source file could ship. `dough/blueprints/rules.py::index` starts the analysis
-automatically when three things are true — no rules, something uncategorised to
+automatically when three things are true — no rules, something uncategorized to
 read, and an API key configured — and it only ever *proposes*; nothing reaches
 the ledger until somebody accepts a card.
 
@@ -86,11 +86,11 @@ direction:
 
 - **It cannot match a `/regex/` rule at all.** `ILIKE '%/amazon|amzn/%'` looks
   for those literal slashes in the description and finds nothing, so removing a
-  pattern rule used to leave every transaction it had categorised sitting under a
+  pattern rule used to leave every transaction it had categorized sitting under a
   rule that no longer existed.
 - **It is too broad for a plain keyword.** A row matching the removed rule may
   still be claimed by a *surviving* one. Blanking it to `Uncategorized` threw
-  away a correct categorisation.
+  away a correct categorization.
 
 Re-deriving is O(transactions) in Python. That is affordable because it runs on
 an explicit rule edit, not on a page view, and the alternative is a query that is
@@ -121,7 +121,7 @@ Worked example, and the shape of every report of this:
 4. `_recategorize()` runs over the whole ledger. `SQ *BLUE BOTTLE` still matches
    no rule, so the engine answers `Uncategorized`, which differs from `Coffee`,
    so it is written back. The hand-set category is gone, counted only as one
-   number in "I recategorised 31 transactions".
+   number in "I recategorized 31 transactions".
 
 The loss is silent in the sense that matters: the flash message reports a count,
 never which rows or what they used to say, and nothing warns beforehand.
@@ -129,7 +129,7 @@ never which rows or what they used to say, and nothing warns beforehand.
 Two related notes for anyone reading the code:
 
 - **The same applies to a *wrong* rule-derived category**, which is the point of
-  the design. Fixing a miscategorised row by hand and leaving the rule alone is
+  the design. Fixing a miscategorized row by hand and leaving the rule alone is
   not durable; fixing the rule is.
 - **`POST /rules/reorder` does not re-derive.** Reordering changes which rule
   wins a conflict, so the stored categories can disagree with what the current
@@ -147,7 +147,7 @@ information from which to decide what to keep. Any implementation starts by
 recording where a category came from. Three options, roughly in order of cost:
 
 1. **Warn, do not change.** Before committing, count the rows the re-derivation
-   would change and confirm — "this will recategorise 31 transactions, 4 of them
+   would change and confirm — "this will recategorize 31 transactions, 4 of them
    ones you set yourself". Cheapest, and it still needs option 2's column to say
    "4 of them".
 2. **A provenance column.** `Transaction.category_source` — `'rule'` |

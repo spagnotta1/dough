@@ -29,7 +29,7 @@ def index():
     unconditionally. There is a `remove_category` action now, and every branch
     reports what actually happened rather than what was attempted.
 
-    **Deleting a keyword uncategorised too much.** The recategorise query
+    **Deleting a keyword uncategorized too much.** The recategorize query
     matched `description ILIKE %keyword%`, which is wrong for a `/regex/` rule
     (it looked for the literal string `/amazon|amzn/` in descriptions and found
     nothing) and too broad for a plain one — it reset rows that a *different*
@@ -48,14 +48,14 @@ def index():
                 flash(f'"{keyword}" is already a {category} rule.', 'info')
             else:
                 changed = _recategorize()
-                flash(f'Rule saved — I recategorised {changed} '
+                flash(f'Rule saved — I recategorized {changed} '
                       f'transaction{"" if changed == 1 else "s"} to match.',
                       'success')
 
         elif action == 'remove':
             if rules_service.remove_rule(category, keyword):
                 changed = _recategorize()
-                flash(f'Removed "{keyword}" — I recategorised {changed} '
+                flash(f'Removed "{keyword}" — I recategorized {changed} '
                       f'transaction{"" if changed == 1 else "s"}.', 'success')
             else:
                 flash('That rule was already gone.', 'info')
@@ -65,7 +65,7 @@ def index():
             if removed:
                 changed = _recategorize()
                 flash(f'Deleted {category} and its {removed} '
-                      f'keyword{"" if removed == 1 else "s"} — I recategorised '
+                      f'keyword{"" if removed == 1 else "s"} — I recategorized '
                       f'{changed} transaction{"" if changed == 1 else "s"}.',
                       'success')
             else:
@@ -107,7 +107,7 @@ def index():
     #
     # Three conditions, and each one is a way the automatic run would be wrong:
     # rules already exist (the household has answered this question), there is
-    # nothing uncategorised (there would be nothing to analyse), or no API key
+    # nothing uncategorized (there would be nothing to analyze), or no API key
     # (the request would fail and the page would open on an error). The button
     # stays exactly where it is for every other case.
     autostart_ai = (not rules
@@ -131,11 +131,11 @@ def _recategorize():
 
     - It cannot match a `/regex/` rule at all — `ILIKE '%/amazon|amzn/%'` looks
       for those literal slashes in the description and finds nothing, so
-      removing a pattern rule left every transaction it had categorised sitting
+      removing a pattern rule left every transaction it had categorized sitting
       under a rule that no longer exists.
     - It is too broad for a plain keyword, because a row matching the removed
       rule may still be claimed by a *surviving* one. Blanking it to
-      `Uncategorized` threw away a correct categorisation.
+      `Uncategorized` threw away a correct categorization.
 
     Re-deriving is O(transactions) in Python, which is affordable here: this
     runs on an explicit rule edit, not on a page view, and the alternative is
@@ -149,11 +149,11 @@ def _recategorize():
     `/update_categories_bulk`, `PUT /transactions/<id>` or the v1 bulk endpoint
     — is indistinguishable from one a rule derived, and this rewrites it like
     any other. Adding an unrelated rule can therefore silently undo hand
-    categorisation elsewhere in the ledger, reported only as a count in the
+    categorization elsewhere in the ledger, reported only as a count in the
     flash message.
 
     That is the intended behaviour today and not an oversight: fixing a
-    miscategorised row by hand is not durable, and fixing the rule is. It is
+    miscategorized row by hand is not durable, and fixing the rule is. It is
     still the thing people are surprised by.
 
     TODO (rule engine, future enhancement): preserve manual assignments across
@@ -174,7 +174,7 @@ def _recategorize():
             db.session.commit()
         except Exception as exc:                       # pragma: no cover
             db.session.rollback()
-            current_app.logger.error('recategorise failed: %s', exc)
+            current_app.logger.error('recategorize failed: %s', exc)
             flash('I could not update your transactions.', 'error')
             return 0
     return changed
@@ -305,7 +305,7 @@ def ai_apply():
         return jsonify({'error': 'Missing category or keyword'}), 400
 
     # Add at the TOP of the priority order so an accepted suggestion beats the
-    # rules that were miscategorising those transactions. Persisted through the
+    # rules that were miscategorizing those transactions. Persisted through the
     # service: this used to call `add_rule_first` on the engine, which now edits
     # an in-memory copy and would have been discarded at the end of the request.
     if rules_service.add_rule(category, keyword, first=True) is None:

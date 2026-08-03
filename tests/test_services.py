@@ -540,11 +540,11 @@ def test_services_import_without_a_flask_app():
 # categorization to whatever was loaded at boot -- and each is now the stronger
 # statement of it, asserted behaviourally rather than by reading an import.
 
-def test_sync_repository_does_not_pin_the_rules_it_categorises_with():
+def test_sync_repository_does_not_pin_the_rules_it_categorizes_with():
     """A rule edited in the Rules page must reach the very next sync.
 
     The original reason `SyncRepository` built its own engine, and still true.
-    Asserted by editing a rule and re-categorising rather than by checking which
+    Asserted by editing a rule and re-categorizing rather than by checking which
     name the module imports, so any implementation that resolves rules per call
     satisfies it.
     """

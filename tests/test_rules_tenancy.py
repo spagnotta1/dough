@@ -20,7 +20,7 @@ route called `remove_rule(category, None)`, matched nothing, returned silently,
 and then flashed "Rule removed". It appeared to work and never did. There was no
 `remove_category` on the engine at all.
 
-Removing a keyword then re-categorised by `description ILIKE '%keyword%'`, which
+Removing a keyword then re-categorized by `description ILIKE '%keyword%'`, which
 finds nothing for a `/regex/` rule and is too broad for a plain one — it blanked
 rows that a *surviving* rule still claimed.
 """
@@ -157,7 +157,7 @@ def test_editing_one_households_rules_does_not_touch_the_other(two_households):
         assert rules_service.all_rules() == {'Coffee': ['PEETS']}
 
 
-def test_categorisation_uses_the_current_households_rules(two_households):
+def test_categorization_uses_the_current_households_rules(two_households):
     from dough.services import rules_service
     from dough.tenancy import tenant_scope
 
@@ -377,7 +377,7 @@ def test_the_delete_category_button_actually_deletes(page):
     assert 'Subscriptions' not in rules_service.all_rules()
 
 
-def test_clear_all_button_empties_the_rules_and_uncategorises(page):
+def test_clear_all_button_empties_the_rules_and_uncategorizes(page):
     """The button, end to end.  [Phase 11A.2]"""
     from dough.services import rules_service
     from models import Transaction
@@ -424,7 +424,7 @@ def test_the_rules_page_never_renders_a_seeded_institution(page):
         assert name not in body
 
 
-def test_deleting_a_category_recategorises_its_transactions(page):
+def test_deleting_a_category_recategorizes_its_transactions(page):
     from models import Transaction
 
     page.test_client().post('/rules', data={
@@ -439,7 +439,7 @@ def test_deleting_a_keyword_leaves_rows_a_surviving_rule_still_claims(page):
     """The over-broad `ILIKE` bug.
 
     Removing SPOTIFY must not disturb the NETFLIX row, which the surviving
-    NETFLIX rule still categorises as Subscriptions.
+    NETFLIX rule still categorizes as Subscriptions.
     """
     from models import Transaction
 
@@ -453,7 +453,7 @@ def test_deleting_a_keyword_leaves_rows_a_surviving_rule_still_claims(page):
         description='SPOTIFY USA').one().category == 'Uncategorized'
 
 
-def test_removing_a_regex_rule_recategorises_what_it_had_claimed(page):
+def test_removing_a_regex_rule_recategorizes_what_it_had_claimed(page):
     """The `ILIKE '%/regex/%'` bug: it matched nothing, so nothing was fixed."""
     from dough.services import rules_service
     from models import Transaction

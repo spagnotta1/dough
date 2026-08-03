@@ -6,7 +6,7 @@ that were imported before it existed.
 [Phase 11A.1] Rules are per household now, so this iterates households and
 enters each one's scope rather than building a single global engine. The old
 version built one `CategoryRules()` from the shared JSON file and applied it to
-`Transaction.query.all()` — which, once tenancy existed, meant recategorising
+`Transaction.query.all()` — which, once tenancy existed, meant recategorizing
 every household's transactions with whichever rule set happened to be on disk.
 """
 

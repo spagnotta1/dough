@@ -114,7 +114,7 @@ def add_rule(category, keyword, *, first=False):
 
     `first` puts the new rule at the top of the priority order, which is what
     the AI-apply path wants: a suggestion the user just accepted should win over
-    whatever was already miscategorising those transactions.
+    whatever was already miscategorizing those transactions.
     """
     category = (category or '').strip()
     keyword = (keyword or '').strip()

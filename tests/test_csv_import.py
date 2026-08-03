@@ -154,7 +154,7 @@ def _write(tmp_path, name, text):
 
 
 class _Rules:
-    """The categoriser, stubbed. `import_csv` takes it as a parameter rather
+    """The categorizer, stubbed. `import_csv` takes it as a parameter rather
     than reaching for configuration — see dough/services/README.md rule 2."""
 
     def get_category(self, description):

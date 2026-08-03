@@ -31,7 +31,7 @@ they are testing.
 `finance_sync/repository.py` builds its rules per sync rather than holding one,
 so a rule edited in the Rules page applies to the next sync without a restart.
 That is still true and still important. It now resolves them per sync inside the
-household's scope, which additionally means a sync categorises with *that
+household's scope, which additionally means a sync categorizes with *that
 household's* rules rather than whichever set was loaded at boot.
 
 Allowed:   `rules`, sibling services, models, stdlib

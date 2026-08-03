@@ -2,7 +2,7 @@
 
 A local web application for understanding your money, fronted by **Dough** —
 the app's mascot, voice, and the name every intelligent feature answers to.
-Connect your accounts (or upload CSV exports), and Dough categorises your
+Connect your accounts (or upload CSV exports), and Dough categorizes your
 transactions, explains what changed, watches your budgets, reviews your
 portfolio, and answers questions about any of it in plain language.
 
@@ -201,7 +201,7 @@ covers the exports of several banks.
 You can customize how transactions are automatically categorized:
 
 A new account starts with **no rules at all**. Dough does not guess at your
-banks and never copies anyone else's: open the Rules page with uncategorised
+banks and never copies anyone else's: open the Rules page with uncategorized
 transactions and it reads your own descriptions and proposes rules built from
 them, which you accept or ignore.
 

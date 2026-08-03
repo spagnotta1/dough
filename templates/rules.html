@@ -29,11 +29,11 @@
       <div>
         <h2 id="aiRulesHeading" class="ds-section__title">AI Rule Suggestions</h2>
         <p class="ds-section__sub">
-          Analyse your uncategorised transactions and let Dough suggest rules.
+          Analyze your uncategorized transactions and let Dough suggest rules.
           {% if uncategorized_count > 0 %}
-          <strong>{{ uncategorized_count }} uncategorised transaction{{ 's' if uncategorized_count != 1 }} ready to analyse.</strong>
+          <strong>{{ uncategorized_count }} uncategorized transaction{{ 's' if uncategorized_count != 1 }} ready to analyze.</strong>
           {% else %}
-          Everything is categorised.
+          Everything is categorized.
           {% endif %}
         </p>
       </div>
@@ -60,7 +60,7 @@
              stroke="currentColor" stroke-width="1.5" aria-hidden="true">
           <path stroke-linecap="round" stroke-linejoin="round" d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09z"/>
         </svg>
-        <span id="ai-analyze-label">Analyse &amp; suggest rules</span>
+        <span id="ai-analyze-label">Analyze &amp; suggest rules</span>
       </button>
     </div>
 
@@ -112,7 +112,7 @@
       </div>
 
       {# What this rule would catch, before it is saved. Adding a rule
-         retroactively recategorises matching transactions, so seeing the
+         retroactively recategorizes matching transactions, so seeing the
          damage first is the difference between a tool and a gamble. #}
       <div id="previewBox" class="ds-card ds-card--wash ds-card--compact" hidden>
         <p class="ds-eyebrow">Would match — first 10</p>
@@ -139,7 +139,7 @@
          it removes. The re-derivation it triggers is the same one every rule
          edit runs; see dough/blueprints/rules.py::_recategorize. #}
       <form method="POST" class="rules-actions"
-            onsubmit="return confirm('Delete all {{ rules.values()|map('length')|sum }} rules across {{ rules|length }} categor{{ 'y' if rules|length == 1 else 'ies' }}?\n\nEvery transaction they categorised goes back to Uncategorized. Nothing is seeded in their place.');">
+            onsubmit="return confirm('Delete all {{ rules.values()|map('length')|sum }} rules across {{ rules|length }} categor{{ 'y' if rules|length == 1 else 'ies' }}?\n\nEvery transaction they categorized goes back to Uncategorized. Nothing is seeded in their place.');">
         {{ csrf_field() }}
         <input type="hidden" name="action" value="clear_all">
         <button type="submit" class="ds-btn ds-btn--sm ds-btn--danger">Clear all rules</button>
@@ -230,12 +230,12 @@
       <p class="ds-empty__title">No rules yet</p>
       <p class="ds-empty__body">
         {% if autostart_ai %}
-        Dough is reading your {{ uncategorized_count }} uncategorised
+        Dough is reading your {{ uncategorized_count }} uncategorized
         transaction{{ 's' if uncategorized_count != 1 }} now and will suggest
         rules built from your own descriptions. Nothing is applied until you
         accept it.
         {% elif uncategorized_count > 0 %}
-        Add one above, or let Dough read your uncategorised transactions and propose some.
+        Add one above, or let Dough read your uncategorized transactions and propose some.
         {% else %}
         Add one above. A new account starts with no rules — Dough does not
         guess at your banks, and never copies anyone else's.
@@ -281,7 +281,7 @@ function setAnalyzing(on) {
     // other pending thing in the product.
     document.getElementById('ai-analyze-icon').classList.toggle('ds-spin', on);
     document.getElementById('ai-analyze-label').textContent =
-        on ? 'Analysing…' : 'Analyse & suggest rules';
+        on ? 'Analyzing…' : 'Analyze & suggest rules';
 }
 
 function failAI(message) {
@@ -340,7 +340,7 @@ function renderSuggestions() {
             ? '<span class="ds-badge ds-badge--ai">new category</span>'
             : '<span class="ds-badge">existing</span>';
         var matchBadge = s.uncat_count > 0
-            ? '<span class="ds-badge ds-badge--ok">' + s.uncat_count + ' uncategorised</span>'
+            ? '<span class="ds-badge ds-badge--ok">' + s.uncat_count + ' uncategorized</span>'
             : '<span class="ds-badge">' + s.total_count + ' total</span>';
         var examples = s.examples && s.examples.length
             ? '<p class="rules-sugg__examples" title="' + esc(s.examples.join(' · ')) + '">' +
@@ -416,7 +416,7 @@ async function acceptSuggestion(idx, btn) {
             existingCategories.push(s.category);
         }
         showToast('"' + s.category + '" moved to top priority — ' +
-                  data.applied_count + ' transaction(s) recategorised', 'success');
+                  data.applied_count + ' transaction(s) recategorized', 'success');
     } catch (e) {
         btn.disabled = false;
         btn.textContent = 'Retry';
@@ -550,7 +550,7 @@ function saveOrder() {
 // page with no rules on it.
 //
 // The server decides whether that applies -- rules empty, something
-// uncategorised to read, and an API key configured -- because all three facts
+// uncategorized to read, and an API key configured -- because all three facts
 // live there. See dough/blueprints/rules.py::index.
 //
 // It only proposes. `runAISuggest` renders cards and waits, exactly as the

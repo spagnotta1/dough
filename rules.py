@@ -14,7 +14,7 @@ Storage is now `models.CategoryRule`, one tenant-scoped row per
 writing it. What is left here is the part that was always correct and always
 worth keeping framework-free: **the matching**.
 
-That split is what lets `finance_sync/repository.py` categorise a synced
+That split is what lets `finance_sync/repository.py` categorize a synced
 transaction, a test assert on a pattern, and the Rules page preview all use one
 implementation of "does this keyword match this description".
 
@@ -143,7 +143,7 @@ class CategoryRules:
         """`(category, keyword)` for the rule that won, or `(None, None)`.
 
         The Rules page's "test a description" box needs to show *why* something
-        categorised the way it did, and a bare category name cannot answer "which
+        categorized the way it did, and a bare category name cannot answer "which
         of my nine Subscriptions patterns caught this?".
         """
         for category, keywords in self.rules.items():
