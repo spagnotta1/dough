@@ -21,7 +21,7 @@
           <circle opacity=".25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
           <path opacity=".75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
         </svg>
-        Syncing…
+        <span x-text="categorizing ? 'Categorizing…' : 'Syncing…'">Syncing…</span>
       </span>
       <button @click="syncAll()" :disabled="syncing" class="ds-btn ds-btn--primary">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke="currentColor" aria-hidden="true">
@@ -33,103 +33,22 @@
     </div>
   </div>
 
-  <!-- Connected institutions -->
-  {% set active_connections = connections|rejectattr('status', 'equalto', 'disconnected')|list %}
-  <section class="ds-card" aria-labelledby="connectedHeading">
-    <div class="ds-card__head">
-      <h2 id="connectedHeading" class="ds-section__title">Connected Institutions</h2>
-    </div>
-    {% if active_connections %}
-    <div class="conn-list">
-      {% for c in active_connections %}
-      <div class="conn-row ds-row ds-row--between ds-row--wrap" id="conn-{{ c.id }}">
-        <div class="ds-row conn-row__info">
-          <span class="conn-dot conn-dot--{{ 'ok' if c.status == 'connected' else 'warn' if c.status == 'expired' else 'danger' }}"
-                title="{{ c.status }}"></span>
-          <div class="conn-row__info">
-            <p class="conn-row__name">{{ c.display_name }}</p>
-            <p class="conn-row__meta">
-              {{ c.account_count }} account{% if c.account_count != 1 %}s{% endif %}
-              {% if c.last_sync_at %} · Last sync {{ c.last_sync_at }}{% else %} · Never synced{% endif %}
-              {% if c.status != 'connected' %}
-                · <span class="conn-row__error">{{ c.last_error or c.status }}</span>
-              {% endif %}
-            </p>
-          </div>
-        </div>
-        <div class="ds-row">
-          <button @click="syncOne({{ c.id }})" :disabled="syncing" class="ds-btn ds-btn--sm ds-btn--secondary">
-            Refresh
-          </button>
-          <button @click="disconnect({{ c.id }}, '{{ c.display_name }}')" class="ds-btn ds-btn--sm ds-btn--danger">
-            Disconnect
-          </button>
-        </div>
-      </div>
-      {% endfor %}
-    </div>
-    {% else %}
-    <div class="ds-empty">
-      <span class="ds-empty__art" data-dough="greeting" data-dough-size="104"></span>
-      <p class="ds-empty__title">No banks connected yet</p>
-      <p class="ds-empty__body">Connect one below and I'll keep your
-        transactions up to date on my own — you won't have to upload
-        anything again.</p>
-    </div>
-    {% endif %}
-  </section>
-
-  <!-- Synced accounts -->
-  {% if accounts %}
-  <section class="ds-card" aria-labelledby="syncedHeading">
-    <div class="ds-card__head">
-      <h2 id="syncedHeading" class="ds-section__title">Synced Accounts</h2>
-    </div>
-    <div class="ds-table-wrap ds-scroll">
-      <table class="ds-table ds-table--hover">
-        <thead>
-          <tr>
-            <th scope="col">Institution</th>
-            <th scope="col">Account</th>
-            <th scope="col">Type</th>
-            <th scope="col" class="ds-table__num">Balance</th>
-            <th scope="col">Last Synced</th>
-          </tr>
-        </thead>
-        <tbody>
-          {% for a in accounts %}
-          <tr>
-            <td class="conn-capitalize">{{ a.institution.replace('_', ' ') }}</td>
-            <td>
-              {{ a.name }}{% if a.mask %} <span class="conn-mask">••{{ a.mask }}</span>{% endif %}
-            </td>
-            <td>
-              <span class="ds-badge conn-capitalize {{ 'ds-badge--info' if a.account_type == 'checking'
-                else 'ds-badge--ok' if a.account_type == 'savings'
-                else 'ds-badge--ai' if a.account_type == 'brokerage'
-                else 'ds-badge--warn' if a.account_type == 'crypto'
-                else '' }}">
-                {{ a.account_type }}
-              </span>
-            </td>
-            <td class="ds-table__num">${{ "{:,.2f}".format(a.balance) }}</td>
-            <td>{{ a.last_synced_at or '—' }}</td>
-          </tr>
-          {% endfor %}
-        </tbody>
-      </table>
-    </div>
-  </section>
-  {% endif %}
-
-  <!-- Available institutions -->
+  <!-- Available institutions.
+       First on the page, deliberately. [UAT round 1] Testers opened Connections,
+       saw a list of what they had already connected — for a new account, an
+       empty state — and had to scroll past the synced-accounts table to find
+       the one control that does anything for them. Linking an institution is
+       the action this page exists to produce, and automatic sync is the path
+       the product wants people on; uploading a file stays available on
+       /upload, as the deliberate second choice. So the offers lead and the
+       state of what is already connected follows. -->
   <section class="ds-card" aria-labelledby="addInstitutionHeading">
     <div class="ds-card__head">
       <div>
         <h2 id="addInstitutionHeading" class="ds-section__title">Add an Institution</h2>
         <p class="ds-section__sub">
           Connect an institution to sync its live data. Balances, holdings, and transactions
-          update automatically every 12 hours.
+          update automatically every 12 hours — and Dough categorizes what arrives on its own.
         </p>
       </div>
     </div>
@@ -180,6 +99,95 @@
     </ul>
   </section>
 
+  <!-- Connected institutions -->
+  {% set active_connections = connections|rejectattr('status', 'equalto', 'disconnected')|list %}
+  <section class="ds-card" aria-labelledby="connectedHeading">
+    <div class="ds-card__head">
+      <h2 id="connectedHeading" class="ds-section__title">Connected Institutions</h2>
+    </div>
+    {% if active_connections %}
+    <div class="conn-list">
+      {% for c in active_connections %}
+      <div class="conn-row ds-row ds-row--between ds-row--wrap" id="conn-{{ c.id }}">
+        <div class="ds-row conn-row__info">
+          <span class="conn-dot conn-dot--{{ 'ok' if c.status == 'connected' else 'warn' if c.status == 'expired' else 'danger' }}"
+                title="{{ c.status }}"></span>
+          <div class="conn-row__info">
+            <p class="conn-row__name">{{ c.display_name }}</p>
+            <p class="conn-row__meta">
+              {{ c.account_count }} account{% if c.account_count != 1 %}s{% endif %}
+              {% if c.last_sync_at %} · Last sync {{ c.last_sync_at }}{% else %} · Never synced{% endif %}
+              {% if c.status != 'connected' %}
+                · <span class="conn-row__error">{{ c.last_error or c.status }}</span>
+              {% endif %}
+            </p>
+          </div>
+        </div>
+        <div class="ds-row">
+          <button @click="syncOne({{ c.id }})" :disabled="syncing" class="ds-btn ds-btn--sm ds-btn--secondary">
+            Refresh
+          </button>
+          <button @click="disconnect({{ c.id }}, '{{ c.display_name }}')" class="ds-btn ds-btn--sm ds-btn--danger">
+            Disconnect
+          </button>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+    {% else %}
+    <div class="ds-empty">
+      <span class="ds-empty__art" data-dough="greeting" data-dough-size="104"></span>
+      <p class="ds-empty__title">No banks connected yet</p>
+      <p class="ds-empty__body">Connect one above and I'll keep your
+        transactions up to date and categorized on my own — you won't have to
+        upload anything again.</p>
+    </div>
+    {% endif %}
+  </section>
+
+  <!-- Synced accounts -->
+  {% if accounts %}
+  <section class="ds-card" aria-labelledby="syncedHeading">
+    <div class="ds-card__head">
+      <h2 id="syncedHeading" class="ds-section__title">Synced Accounts</h2>
+    </div>
+    <div class="ds-table-wrap ds-scroll">
+      <table class="ds-table ds-table--hover">
+        <thead>
+          <tr>
+            <th scope="col">Institution</th>
+            <th scope="col">Account</th>
+            <th scope="col">Type</th>
+            <th scope="col" class="ds-table__num">Balance</th>
+            <th scope="col">Last Synced</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for a in accounts %}
+          <tr>
+            <td class="conn-capitalize">{{ a.institution.replace('_', ' ') }}</td>
+            <td>
+              {{ a.name }}{% if a.mask %} <span class="conn-mask">••{{ a.mask }}</span>{% endif %}
+            </td>
+            <td>
+              <span class="ds-badge conn-capitalize {{ 'ds-badge--info' if a.account_type == 'checking'
+                else 'ds-badge--ok' if a.account_type == 'savings'
+                else 'ds-badge--ai' if a.account_type == 'brokerage'
+                else 'ds-badge--warn' if a.account_type == 'crypto'
+                else '' }}">
+                {{ a.account_type }}
+              </span>
+            </td>
+            <td class="ds-table__num">${{ "{:,.2f}".format(a.balance) }}</td>
+            <td>{{ a.last_synced_at or '—' }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+  {% endif %}
+
 </div>
 
 <!-- connectionsApp must be defined before any script that loads over the
@@ -191,6 +199,7 @@
 function connectionsApp() {
     return {
         syncing: false,
+        categorizing: false,
         connecting: null,
         _pollTimer: null,
 
@@ -339,21 +348,49 @@ function connectionsApp() {
             this.pollUntilIdle();
         },
 
+        // Two phases, one spinner. [UAT round 1] A sync now hands off to
+        // automatic categorization, which runs after the sync releases its
+        // lock and can take longer than the sync did. Stopping at
+        // `!status.running` would reload the page mid-analysis and tell the
+        // user everything was finished while Dough was still working, so this
+        // waits for both and says which one it is on.
         pollUntilIdle() {
             this.syncing = true;
+            this.categorizing = false;
             clearInterval(this._pollTimer);
             this._pollTimer = setInterval(async () => {
                 try {
                     const resp = await fetch('/api/sync/status');
                     const status = await resp.json();
-                    if (!status.running) {
-                        clearInterval(this._pollTimer);
-                        this.syncing = false;
-                        showToast('Sync finished.', status.last_status === 'success' ? 'success' : 'warning');
-                        location.reload();
-                    }
+                    this.categorizing = !status.running && !!status.categorizing;
+                    if (status.running || status.categorizing) return;
+
+                    clearInterval(this._pollTimer);
+                    this.syncing = false;
+                    this.categorizing = false;
+                    showToast(this._finishedMessage(status),
+                              status.last_status === 'success' ? 'success' : 'warning');
+                    location.reload();
                 } catch (e) { /* keep polling */ }
             }, 1500);
+        },
+
+        // What Dough actually did, rather than "Sync finished." The counts come
+        // from the categorization pass so the user can see the work they no
+        // longer have to do by hand — and is told plainly when the pass only
+        // got through part of the backlog, so a half-categorized ledger reads
+        // as a known state rather than a bug.
+        _finishedMessage(status) {
+            const done = status.last_categorization;
+            if (!done || done.skipped || !done.transactions_categorized) {
+                return 'Sync finished.';
+            }
+            const n = done.transactions_categorized;
+            const base = `Sync finished — I categorized ${n} transaction` +
+                         `${n === 1 ? '' : 's'} for you.`;
+            return done.partial
+                ? base + ' There is more to read — open Rules to finish it.'
+                : base;
         },
     };
 }

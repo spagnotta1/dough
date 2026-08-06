@@ -204,7 +204,22 @@ SERVICE_FUNCTIONS = {
     'rules_service': ('all_rules', 'as_engine', 'categories', 'clear_all',
                       'add_rule', 'remove_rule', 'remove_category',
                       'rename_category', 'reorder', 'replace_all',
-                      'rule_counts'),
+                      'rule_counts',
+                      # UAT round 1. `sources` is what lets the Rules page
+                      # label a rule Dough wrote unprompted, and `clear_auto`
+                      # is the undo for exactly those — distinct from
+                      # `clear_all`, which would take the user's own with them.
+                      'clear_auto', 'sources'),
+    # UAT round 1. The rule analysis, lifted out of `/rules/ai-suggest` so the
+    # automatic post-sync pass runs the identical thing without a request
+    # behind it. `run_once` is the automatic entry point; `analyze`/`apply` are
+    # the two halves the route still calls separately, and `recategorize` is
+    # the whole-ledger re-derivation every rule edit shares.
+    #
+    # Behaviour is covered in tests/test_auto_categorize.py rather than here —
+    # it needs a scripted model adapter, which this file has no fixture for.
+    'auto_categorize': ('analyze', 'apply', 'recategorize', 'run_once',
+                        'is_enabled', 'set_enabled'),
 }
 
 # The closure names Phase 3 removed from app.py. Any of these reappearing as a

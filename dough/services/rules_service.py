@@ -109,12 +109,17 @@ def clear_all():
     return len(rows)
 
 
-def add_rule(category, keyword, *, first=False):
+def add_rule(category, keyword, *, first=False, source='user'):
     """Add one keyword to a category. Returns the row, or None if it existed.
 
     `first` puts the new rule at the top of the priority order, which is what
     the AI-apply path wants: a suggestion the user just accepted should win over
     whatever was already miscategorizing those transactions.
+
+    `source` records who wrote it — `'user'` for typed or accepted, `'ai'` for
+    written unprompted by auto-categorization. It defaults to `'user'` so that
+    every existing caller keeps its meaning: a rule is a person's until some
+    code says otherwise.
     """
     category = (category or '').strip()
     keyword = (keyword or '').strip()
@@ -136,10 +141,45 @@ def add_rule(category, keyword, *, first=False):
     else:
         position = (_max_position() or 0) + 1
 
-    row = CategoryRule(category=category, keyword=keyword, position=position)
+    row = CategoryRule(category=category, keyword=keyword, position=position,
+                       source=source)
     db.session.add(row)
     db.session.commit()
     return row
+
+
+def clear_auto():
+    """Delete every rule Dough wrote on its own. Returns how many rows went.
+
+    The undo for auto-categorization, and the reason `CategoryRule.source`
+    exists. A household that dislikes what Dough decided for them needs to be
+    able to reject *that* without also throwing away the rules they wrote
+    themselves — which is what `clear_all` would do.
+
+    As with `clear_all`, the caller re-derives categories afterwards.
+    """
+    rows = CategoryRule.query.filter_by(source='ai').all()
+    for row in rows:
+        db.session.delete(row)
+    if rows:
+        db.session.commit()
+    return len(rows)
+
+
+def sources():
+    """`{category: source}` — `'ai'` only if *every* keyword in it is Dough's.
+
+    A category the user started and Dough later added a keyword to is theirs,
+    not Dough's, so the page must not offer to delete it as auto-written. The
+    conservative direction is the safe one here: mislabelling one of Dough's
+    categories as the user's costs a manual delete, and the reverse costs them
+    a rule they wrote.
+    """
+    grouped = {}
+    for row in _ordered():
+        grouped.setdefault(row.category, set()).add(row.source)
+    return {category: ('ai' if found == {'ai'} else 'user')
+            for category, found in grouped.items()}
 
 
 def remove_rule(category, keyword):
@@ -302,6 +342,6 @@ def _max_position():
     return db.session.query(func.max(CategoryRule.position)).scalar()
 
 
-__all__ = ['all_rules', 'as_engine', 'categories', 'clear_all', 'add_rule',
-           'remove_rule', 'remove_category', 'rename_category', 'reorder',
-           'replace_all', 'rule_counts', 'match_counts']
+__all__ = ['all_rules', 'as_engine', 'categories', 'clear_all', 'clear_auto',
+           'add_rule', 'remove_rule', 'remove_category', 'rename_category',
+           'reorder', 'replace_all', 'rule_counts', 'match_counts', 'sources']
