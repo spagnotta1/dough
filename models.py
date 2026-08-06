@@ -84,6 +84,20 @@ class Household(db.Model):
     # linked by the same family share one. Nullable — households created before
     # a Plaid link exists have none.
     plaid_user_id = db.Column(db.String(80), nullable=True, unique=True)
+    #: Whether Dough derives and applies category rules on its own after a sync
+    #: imports transactions no rule claims. [UAT round 1]
+    #:
+    #: On by default, because the whole point of the feature is that a household
+    #: connecting a bank gets a categorized ledger without being sent to a second
+    #: page to authorize work the application already knew it needed to do.
+    #:
+    #: It is a column rather than a constant because "stop doing that" has to be
+    #: expressible and has to *stick*. Deleting the rules Dough wrote is not an
+    #: undo on its own — the next sync would derive them again, and an undo the
+    #: application silently reverses is worse than no undo. Clearing them turns
+    #: this off; the Rules page turns it back on.
+    auto_categorize_enabled = db.Column(db.Boolean, nullable=False, default=True,
+                                        server_default='1')
     created_at    = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
     updated_at    = db.Column(db.DateTime, nullable=False, default=datetime.utcnow,
                               onupdate=datetime.utcnow)
@@ -640,6 +654,21 @@ class CategoryRule(TenantScopedMixin, db.Model):
     keyword = db.Column(db.String(200), nullable=False)
     position = db.Column(db.Integer, nullable=False, default=0,
                          server_default='0')
+    #: Who wrote this rule: `'user'` typed it or accepted it from a suggestion
+    #: card, `'ai'` means Dough wrote it unprompted after a sync.
+    #:
+    #: The column exists because of what auto-categorization does: it writes
+    #: rules into a household's ledger with nobody watching. A rule the user
+    #: chose and a rule that appeared while they were asleep deserve different
+    #: treatment on the Rules page — the second one has to be *labelled*, so
+    #: somebody scanning the list can tell what they agreed to from what was
+    #: decided for them, and can undo the second wholesale.
+    #:
+    #: `server_default` matters as much as `default`: every rule that exists
+    #: when this column is added was written or accepted by hand, and must
+    #: backfill to `'user'` rather than to NULL.
+    source = db.Column(db.String(10), nullable=False, default='user',
+                       server_default='user')
     created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
 
     __table_args__ = (
@@ -650,7 +679,8 @@ class CategoryRule(TenantScopedMixin, db.Model):
 
     def to_dict(self):
         return {'id': self.id, 'category': self.category,
-                'keyword': self.keyword, 'position': self.position}
+                'keyword': self.keyword, 'position': self.position,
+                'source': self.source}
 
     def __repr__(self):
         return f'<CategoryRule {self.category}: {self.keyword!r}>'

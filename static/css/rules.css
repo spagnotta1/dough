@@ -310,3 +310,25 @@
   border-radius: var(--r-sm);
 }
 .rules-advanced[open] > .rules-advanced__summary { margin-bottom: var(--sp-4); }
+
+/* ── Automatic categorization  [UAT round 1] ─────────────────────────────────
+   The banner that states Dough writes rules on its own, and carries the way
+   out. It sits between the section head and the rules table, so a user
+   scanning the page reads what is happening before they read what it produced.
+
+   Deliberately quiet — a rule of the surface, not an alert. It describes
+   steady-state behaviour that is working correctly, and a banner styled like a
+   warning would teach people to dismiss it before the one time it matters. */
+.rules-auto-banner {
+  gap: var(--sp-3);
+  padding: var(--sp-3) var(--sp-4);
+  margin-bottom: var(--sp-4);
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-md);
+  background: var(--surface-sunken);
+}
+.rules-auto-banner > p { margin: 0; flex: 1 1 22rem; }
+
+/* The badge on a category whose every keyword Dough wrote. Nudged off the
+   category name so the two do not read as one string. */
+.rules-auto { margin-left: var(--sp-2); }

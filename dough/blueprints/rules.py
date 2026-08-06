@@ -3,39 +3,20 @@
 
 from flask import (Blueprint, current_app, flash, jsonify, redirect,
                    render_template, request, url_for)
-from sqlalchemy import case, func
 
-from dough.ai import persona
-from dough.ai.errors import AIConfigurationError, AIError
 from dough.ai.service import current_ai
-from dough.services import rules_service, transfers
-from dough.services.categorization import get_category_rules
+from dough.services import auto_categorize, rules_service
 
-from models import Transaction, db
-#: Aliased: `test()` binds a local named `matches` for its result rows, and a
-#: bare import would be shadowed inside that function.
-from rules import matches as keyword_matches
+from models import Transaction
 
 bp = Blueprint('rules', __name__)
 
-#: How many distinct descriptions go to the model in one request, and how many
-#: requests one analysis will make. [Phase 11A.3]
-#:
-#: This used to be a single call over the 200 most frequent descriptions, with
-#: a prompt asking for "5-15 high-confidence rules". A household with 900
-#: distinct uncategorized descriptions therefore got, at best, fifteen rules
-#: for its top 200 — so the user accepted everything, watched most of the
-#: ledger stay uncategorized, and pressed Analyze again. And again. The button
-#: was doing exactly what it was built to do; what it was built to do was a
-#: sample.
-#:
-#: One analysis now walks the whole uncategorized ledger. The batching is only
-#: a context-window concern — 4,000 descriptions do not fit in one prompt, and
-#: a model asked to categorize that many in one reply truncates its JSON.
-#: `MAX_BATCHES` bounds what a single click can spend; past that the remainder
-#: is reported honestly instead of being silently dropped.
-AI_BATCH_SIZE = 120
-AI_MAX_BATCHES = 12
+#: The analysis itself lives in `dough/services/auto_categorize.py`. It was
+#: inline here until UAT round 1, when the automatic post-sync pass needed to
+#: run the identical thing without a request behind it. These names are kept as
+#: aliases because tests and the model-picker reference them.
+AI_BATCH_SIZE = auto_categorize.BATCH_SIZE
+AI_MAX_BATCHES = auto_categorize.MAX_BATCHES
 
 @bp.route('/rules', methods=['GET', 'POST'])
 def index():
@@ -92,6 +73,28 @@ def index():
             else:
                 flash(f'There is no {category} rule to delete.', 'info')
 
+        elif action == 'clear_auto':
+            # The undo for automatic categorization. Distinct from `clear_all`
+            # on purpose: a household that dislikes what Dough decided for them
+            # should not have to throw away the rules they wrote themselves to
+            # say so. See `rules_service.clear_auto`.
+            removed = rules_service.clear_auto()
+            # Turning it off is part of the same action, not a second thing to
+            # remember. Without it the next sync derives the same rules from
+            # the same descriptions and puts them straight back, which makes
+            # this button look broken rather than disagreed with.
+            auto_categorize.set_enabled(False)
+            if removed:
+                changed = _recategorize()
+                flash(f'Removed the {removed} rule'
+                      f'{"" if removed == 1 else "s"} I wrote on my own — '
+                      f'{changed} transaction{"" if changed == 1 else "s"} '
+                      f'changed. Your own rules are untouched, and I have '
+                      f'stopped categorizing on my own.', 'success')
+            else:
+                flash('I had not written any rules on my own. I have stopped '
+                      'categorizing without being asked.', 'info')
+
         elif action == 'clear_all':
             removed = rules_service.clear_all()
             if removed:
@@ -103,6 +106,14 @@ def index():
                       f'ready.', 'success')
             else:
                 flash('There were no rules to clear.', 'info')
+
+        elif action == 'set_auto':
+            enabled = request.form.get('enabled') == 'on'
+            auto_categorize.set_enabled(enabled)
+            flash('I will categorize new transactions as they arrive.'
+                  if enabled else
+                  'I will leave new transactions uncategorized until you ask.',
+                  'success')
 
         elif action == 'rename_category':
             new_name = (request.form.get('new_category') or '').strip()
@@ -140,83 +151,37 @@ def index():
                     and uncategorized_count > 0
                     and current_ai().is_available)
 
+    # Which categories Dough wrote unprompted, so the page can label them and
+    # offer to remove exactly those. [UAT round 1] A user has to be able to see
+    # what was decided for them; a rule that appeared overnight looking exactly
+    # like one they typed is the thing that would make this feature untrustworthy.
+    rule_sources = rules_service.sources()
+
     return render_template('rules.html', rules=rules,
                            rule_stats=rule_stats,
+                           rule_sources=rule_sources,
+                           auto_rule_count=sum(1 for s in rule_sources.values()
+                                               if s == 'ai'),
+                           auto_enabled=auto_categorize.is_enabled(),
                            uncategorized_count=uncategorized_count,
                            autostart_ai=autostart_ai)
 
 
 def _recategorize():
-    """Re-derive every transaction's category from the current rules.
+    """`auto_categorize.recategorize()`, with this page's error reporting.
 
-    Returns how many rows changed, which is what the flash message reports.
-
-    Whole-ledger rather than "the rows this keyword matched", and that is the
-    fix rather than laziness. A keyword-shaped query cannot answer the question
-    correctly in either direction:
-
-    - It cannot match a `/regex/` rule at all — `ILIKE '%/amazon|amzn/%'` looks
-      for those literal slashes in the description and finds nothing, so
-      removing a pattern rule left every transaction it had categorized sitting
-      under a rule that no longer exists.
-    - It is too broad for a plain keyword, because a row matching the removed
-      rule may still be claimed by a *surviving* one. Blanking it to
-      `Uncategorized` threw away a correct categorization.
-
-    Re-deriving is O(transactions) in Python, which is affordable here: this
-    runs on an explicit rule edit, not on a page view, and the alternative is
-    a query that is subtly wrong on the two cases that matter most.
-
-    ## What this costs: manual category assignments do not survive
-
-    The invariant is that a category is a pure function of the description and
-    the current rule set. `Transaction.category` carries no provenance, so a
-    category a person set by hand — through `/update_category`,
-    `/update_categories_bulk`, `PUT /transactions/<id>` or the v1 bulk endpoint
-    — is indistinguishable from one a rule derived, and this rewrites it like
-    any other. Adding an unrelated rule can therefore silently undo hand
-    categorization elsewhere in the ledger, reported only as a count in the
-    flash message.
-
-    That is the intended behaviour today and not an oversight: fixing a
-    miscategorized row by hand is not durable, and fixing the rule is. It is
-    still the thing people are surprised by.
-
-    TODO (rule engine, future enhancement): preserve manual assignments across
-    re-derivation, or warn before a bulk rewrite. The blocker is schema rather
-    than logic — with no `category_source` column there is nothing to decide
-    from. `docs/rule-engine.md` holds the worked example and the three options,
-    and is the specification for that work.
-
-    ## The transfer pass runs after, always
-
-    Rules answer from the description alone, and no description can prove that
-    money moved between two accounts the household owns —
-    `dough/services/transfers.py` explains why. So the rule pass runs first and
-    `net_out_transfers()` runs over its output, relabelling both halves of every
-    matched pair.
-
-    Running it here rather than only at import is what keeps it idempotent: the
-    rule pass has just reset every row from the current rules, so a pair that no
-    longer exists loses the label instead of keeping it forever.
+    The re-derivation itself moved to the service so the automatic post-sync
+    pass runs the identical thing; what stays here is the only part that is
+    about being a web page — turning a failed commit into a flash rather than a
+    500. See `dough/services/auto_categorize.py::recategorize` for why the pass
+    is whole-ledger and what it costs.
     """
-    engine = rules_service.as_engine()
-    changed = 0
-    for transaction in Transaction.query.all():
-        category = engine.get_category(transaction.description)
-        if transaction.category != category:
-            transaction.category = category
-            changed += 1
-    changed += transfers.net_out_transfers(commit=False)
-    if changed:
-        try:
-            db.session.commit()
-        except Exception as exc:                       # pragma: no cover
-            db.session.rollback()
-            current_app.logger.error('recategorize failed: %s', exc)
-            flash('I could not update your transactions.', 'error')
-            return 0
-    return changed
+    try:
+        return auto_categorize.recategorize()
+    except Exception as exc:                           # pragma: no cover
+        current_app.logger.error('recategorize failed: %s', exc)
+        flash('I could not update your transactions.', 'error')
+        return 0
 
 @bp.route('/rules/test', methods=['POST'])
 def test():
@@ -260,192 +225,40 @@ def reorder():
 def ai_suggest():
     """Analyze **every** uncategorized description and return rule suggestions.
 
-    ## One click, one analysis  [Phase 11A.3]
-
-    This used to send the 200 most frequent descriptions in a single call and
-    ask for "5-15 high-confidence rules". Both halves capped it: a household
-    with 900 distinct uncategorized descriptions never showed the model 700 of
-    them, and the model was told to stop at fifteen rules for the 200 it did
-    see. The user pressed Analyze, accepted everything, saw most of the ledger
-    still uncategorized, and pressed Analyze again — the loop this route was
-    reported for.
-
-    It now walks the whole uncategorized ledger in batches of
-    `AI_BATCH_SIZE`, up to `AI_MAX_BATCHES`, and merges the results. The
-    batching is a context-window constraint, not a sampling strategy: each
-    batch knows its position and the categories its predecessors proposed, so
-    the merged output reads as one analysis rather than twelve unrelated ones.
+    The analysis lives in `dough/services/auto_categorize.py`; this route is the
+    HTTP shape of it. It moved there in UAT round 1 so the automatic post-sync
+    pass could run the identical thing without a request behind it — the two
+    must not drift, because a user who presses Analyze after an automatic pass
+    is entitled to the same answer.
 
     A failure part-way through returns what earlier batches produced rather
-    than nothing — the suggestions already in hand are good, and discarding
-    them would put the user right back in the loop this was written to end.
-    Only a failure on the *first* batch is an error response.
+    than nothing. Only a failure on the *first* batch is an error response.
     """
     body = request.get_json(force=True) or {}
-    ai = current_ai()
-    if not ai.is_available:
-        return jsonify({'error': 'ANTHROPIC_API_KEY not configured'}), 503
+    analysis = auto_categorize.analyze(model=body.get('model'))
 
-    # Netting first, so the model is never asked to write a rule for a movement
-    # the arithmetic has already settled. Both halves of a matched pair become
-    # `Transfer` here and drop out of the uncategorized set below.
-    transfers.net_out_transfers()
-
-    # Ordered by frequency, so batch one holds the merchants the household
-    # actually spends at. That ordering used to be the whole defence against a
-    # 200-row cap; it now only decides which rules the user sees first.
-    rows = (db.session.query(Transaction.description,
-                             func.count(Transaction.id).label('n'))
-            .filter(Transaction.category == 'Uncategorized')
-            .group_by(Transaction.description)
-            .order_by(func.count(Transaction.id).desc())
-            .all())
-    if not rows:
-        return jsonify({'suggestions': [], 'message': 'No uncategorized transactions found.'})
-
-    descriptions  = [{'description': r[0], 'count': int(r[1])} for r in rows]
-    existing_cats = list(get_category_rules().get_all_rules().keys())
-
-    batches = [descriptions[i:i + AI_BATCH_SIZE]
-               for i in range(0, len(descriptions), AI_BATCH_SIZE)]
-    analyzed = batches[:AI_MAX_BATCHES]
-    skipped = sum(len(b) for b in batches[AI_MAX_BATCHES:])
-
-    raw_suggestions = []
-    proposed_cats   = []
-    analyzed_count  = 0
-    done_batches    = 0
-    failed          = False
-    for index, batch in enumerate(analyzed, start=1):
-        try:
-            # The model comes from the picker, so it is user-controlled; the
-            # catalog resolves an unknown id to the default rather than letting
-            # it reach the provider. That replaces the old inline allow-set.
-            data, _ = ai.generate_json(
-                messages=[{'role': 'user',
-                           'content': persona.rules_suggest_prompt(
-                               existing_cats, batch,
-                               batch=(index, len(analyzed)),
-                               covered=proposed_cats)}],
-                # Room for a full batch's worth of rules. The old 2,000 was
-                # sized for the fifteen the prompt asked for, and a longer
-                # reply would have been truncated into an `AIResponseError`.
-                model=body.get('model'), role='suggest', max_tokens=8000,
-                metadata={'surface': 'rules_ai_suggest'})
-        except AIError as e:
-            current_app.logger.warning('rules_ai_suggest batch %s/%s failed: %s',
-                                       index, len(analyzed), e)
-            if not raw_suggestions:
-                return jsonify({'error': e.user_message}), 503 if isinstance(
-                    e, AIConfigurationError) else 500
-            failed = True
-            break
-        except Exception as e:
-            current_app.logger.error('rules_ai_suggest unexpected error: %s', e)
-            if not raw_suggestions:
-                return jsonify({'error': f'Unexpected error: {e}'}), 500
-            failed = True
-            break
-
-        analyzed_count += len(batch)
-        done_batches += 1
-        batch_suggestions = data.get('suggestions', []) or []
-        raw_suggestions.extend(batch_suggestions)
-        for s in batch_suggestions:
-            cat = (s.get('category') or '').strip()
-            if cat and cat not in proposed_cats:
-                proposed_cats.append(cat)
-
-    # Enrich each suggestion with real match counts and example descriptions.
-    #
-    # Grouped by category rather than one card per rule. The model returns one
-    # suggestion per keyword and often several for the same category, which the
-    # page rendered as two separate "Shopping" cards each labelled "new
-    # category" — two cards proposing the same category, each claiming to
-    # invent it. Accepting one then made the other's badge a lie.
-    #
-    # Matched against *distinct descriptions* rather than transaction rows.
-    # The row-scan version was O(keywords x transactions) and was affordable
-    # only because the keyword count was capped at twenty; an analysis that
-    # returns two hundred rules over a ledger of forty thousand rows is eight
-    # million comparisons. Descriptions repeat heavily, and the answer depends
-    # on nothing else about the row, so the counts travel with the group.
-    ledger = _description_counts()
-    existing_lower = {c.lower() for c in existing_cats}
-
-    grouped = {}
-    for s in raw_suggestions:
-        cat    = (s.get('category') or '').strip()
-        kw     = (s.get('keyword')  or '').strip()
-        reason = (s.get('reason')   or '').strip()
-        if not cat or not kw:
-            continue
-
-        # Case-insensitive, so "shopping" and "Shopping" land on one card
-        # instead of two. The first spelling seen wins the display name.
-        key = cat.lower()
-        entry = grouped.setdefault(key, {
-            'category': cat, 'keywords': [], 'reason': reason,
-            'total_count': 0, 'uncat_count': 0, 'examples': [],
-            'is_new': key not in existing_lower,
-        })
-        if kw in entry['keywords']:
-            continue
-        entry['keywords'].append(kw)
-        if reason and not entry['reason']:
-            entry['reason'] = reason
-
-        # `rules.matches` rather than a local re-implementation, so a card's
-        # count is produced by the same matcher that will categorize the rows
-        # once the card is accepted. An invalid regex matches nothing there and
-        # nothing here, instead of raising in one and being caught in the other.
-        for description, total, uncategorized in ledger:
-            if not keyword_matches(kw, description):
-                continue
-            entry['total_count'] += total
-            entry['uncat_count'] += uncategorized
-            if len(entry['examples']) < 3 and description not in entry['examples']:
-                entry['examples'].append(description)
-
-    # A suggestion matching nothing is dropped rather than shown at zero. The
-    # model occasionally proposes a plausible-looking pattern that no
-    # description satisfies — an over-escaped regex, or a merchant it inferred
-    # rather than read — and a card offering to categorize nothing is noise the
-    # user has to evaluate and reject by hand.
-    enriched = [e for e in grouped.values() if e['total_count'] > 0]
-    enriched.sort(key=lambda e: -e['uncat_count'])
+    if analysis.error:
+        return jsonify({'error': analysis.error}), (
+            503 if analysis.error_is_configuration else 500)
+    if not analysis.total_descriptions:
+        return jsonify({'suggestions': [],
+                        'message': 'No uncategorized transactions found.'})
 
     # What the analysis actually covered, so the page can say so. A user who
     # has been trained by the old behaviour to press Analyze repeatedly needs
     # to be told that this pass read everything — and told honestly when it
     # did not.
     return jsonify({
-        'suggestions': enriched,
-        'analyzed_descriptions': analyzed_count,
-        'total_descriptions': len(descriptions),
+        'suggestions': analysis.suggestions,
+        'analyzed_descriptions': analysis.analyzed_descriptions,
+        'total_descriptions': analysis.total_descriptions,
         # Everything the analysis did not reach, whether because the batch cap
         # cut it off or because a batch failed part-way through.
-        'skipped_descriptions': len(descriptions) - analyzed_count,
-        'batches': done_batches,
-        'partial': failed or skipped > 0,
+        'skipped_descriptions': analysis.skipped_descriptions,
+        'batches': analysis.batches,
+        'partial': analysis.partial,
     })
 
-
-def _description_counts():
-    """`[(description, transactions, uncategorized), ...]` for the household.
-
-    One GROUP BY instead of loading the ledger, because the only things the
-    suggestion enrichment needs from a transaction are its description and
-    whether it is still uncategorized.
-    """
-    rows = (db.session.query(
-                Transaction.description,
-                func.count(Transaction.id),
-                func.sum(case((Transaction.category == 'Uncategorized', 1),
-                              else_=0)))
-            .group_by(Transaction.description).all())
-    return [(description, int(total or 0), int(uncategorized or 0))
-            for description, total, uncategorized in rows]
 
 @bp.route('/rules/ai-apply', methods=['POST'])
 def ai_apply():
@@ -454,12 +267,9 @@ def ai_apply():
     Takes `keywords` (a list) or `keyword` (one), and `categories` (a list of
     `{category, keywords}`) for "Accept all". All three land on the same path.
 
-    **The re-derivation happens once, after every rule is written.** Accepting
-    six suggestions used to mean six requests, each re-deriving the whole
-    ledger: O(6 × transactions) to reach a state that one pass computes exactly
-    as well, because the final categories depend only on the final rule set. It
-    also made "Accept all" non-atomic — a failure on the fourth card left three
-    rules applied and the page showing six as accepted.
+    Rules accepted here are `source='user'` even though a model proposed them,
+    and that is the distinction the column is for: a person read this card and
+    pressed the button. Only the unprompted post-sync pass writes `'ai'`.
     """
     body = request.get_json(force=True) or {}
 
@@ -478,42 +288,12 @@ def ai_apply():
     if not incoming:
         return jsonify({'error': 'Missing category or keyword'}), 400
 
-    # Added at the TOP of the priority order so an accepted suggestion beats the
-    # rules that were miscategorizing those transactions. Reversed within each
-    # category because each insert shifts the previous one down, and without it
-    # a card's keywords would land in the order the user did not choose.
-    added = 0
-    for category, keywords in incoming:
-        for keyword in reversed(keywords):
-            if rules_service.add_rule(category, keyword, first=True) is not None:
-                added += 1
+    try:
+        added, count = auto_categorize.apply(incoming, source='user')
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
 
     if not added:
         return jsonify({'ok': True, 'applied_count': 0, 'added': 0,
                         'message': 'Those rules already exist.'})
-
-    # Re-derive from the whole rule set rather than matching the keywords here.
-    # The old version applied the new rule directly to every row it matched,
-    # which ignored priority: a transaction claimed by a higher rule was
-    # reassigned anyway, so accepting a broad suggestion silently overwrote
-    # categories the user had already curated. `add_rule(first=True)` puts these
-    # rules at the top, so re-deriving gives them precedence *and* respects the
-    # rest of the order.
-    engine = rules_service.as_engine()
-    count = 0
-    try:
-        for transaction in Transaction.query.all():
-            resolved = engine.get_category(transaction.description)
-            if transaction.category != resolved:
-                transaction.category = resolved
-                count += 1
-        # Same second pass as `_recategorize`, for the same reason: the rules
-        # just overwrote every row, including the transfers a previous run had
-        # netted out. See `dough/services/transfers.py`.
-        count += transfers.net_out_transfers(commit=False)
-        db.session.commit()
-    except Exception as e:
-        db.session.rollback()
-        return jsonify({'error': str(e)}), 500
-
     return jsonify({'ok': True, 'applied_count': count, 'added': added})

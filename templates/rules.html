@@ -166,6 +166,50 @@
       {% endif %}
     </div>
 
+    {# Automatic categorization: what it is, and the way out. [UAT round 1]
+       Dough may act without asking, but never without saying — this is the
+       "saying". It states the behaviour in one sentence, reports how many
+       categories it produced, and carries the single control that stops it.
+
+       "Stop and remove" is one action rather than two on purpose: deleting the
+       rules alone is not an undo, because the next sync derives the same rules
+       from the same descriptions and puts them back. See
+       dough/blueprints/rules.py, action `clear_auto`. #}
+    <div class="rules-auto-banner ds-row ds-row--between ds-row--wrap">
+      <p class="ds-section__sub">
+        {% if auto_enabled %}
+        I categorize new transactions on my own as they sync in.
+        {% if auto_rule_count %}
+        {{ auto_rule_count }} categor{{ 'y' if auto_rule_count == 1 else 'ies' }}
+        below {{ 'was' if auto_rule_count == 1 else 'were' }} written that way —
+        they are marked <span class="ds-badge ds-badge--ai">Auto</span> and you
+        can edit or delete them like any other.
+        {% else %}
+        Nothing has needed it yet.
+        {% endif %}
+        {% else %}
+        I am not categorizing on my own. New transactions stay Uncategorized
+        until you add a rule or run an analysis.
+        {% endif %}
+      </p>
+      <form method="POST" class="rules-actions"
+            {% if auto_enabled %}onsubmit="return confirm('Stop automatic categorization{% if auto_rule_count %} and delete the {{ auto_rule_count }} categor{{ 'y' if auto_rule_count == 1 else 'ies' }} I wrote on my own{% endif %}?\n\nYour own rules are untouched.');"{% endif %}>
+        {{ csrf_field() }}
+        {% if auto_enabled %}
+        <input type="hidden" name="action" value="clear_auto">
+        <button type="submit" class="ds-btn ds-btn--sm ds-btn--secondary">
+          Stop categorizing for me
+        </button>
+        {% else %}
+        <input type="hidden" name="action" value="set_auto">
+        <input type="hidden" name="enabled" value="on">
+        <button type="submit" class="ds-btn ds-btn--sm ds-btn--secondary">
+          Categorize for me automatically
+        </button>
+        {% endif %}
+      </form>
+    </div>
+
     {% if rules %}
     <div class="ds-table-wrap ds-scroll">
       <table id="rulesTable" class="ds-table ds-table--hover">
@@ -186,7 +230,18 @@
                 <path d="M7 2a2 2 0 1 0 0 4 2 2 0 0 0 0-4zm6 0a2 2 0 1 0 0 4 2 2 0 0 0 0-4zM7 8a2 2 0 1 0 0 4 2 2 0 0 0 0-4zm6 0a2 2 0 1 0 0 4 2 2 0 0 0 0-4zm-6 6a2 2 0 1 0 0 4 2 2 0 0 0 0-4zm6 0a2 2 0 1 0 0 4 2 2 0 0 0 0-4z"/>
               </svg>
             </td>
-            <td class="rules-cell--category">{{ category }}</td>
+            <td class="rules-cell--category">
+              {{ category }}
+              {# Labelled, not hidden. [UAT round 1] Dough writes rules on its
+                 own after a sync now, and a rule that appeared overnight
+                 looking exactly like one the user typed is what would make
+                 that untrustworthy. The badge is only on categories where
+                 *every* keyword is Dough's — see rules_service.sources. #}
+              {% if rule_sources.get(category) == 'ai' %}
+              <span class="ds-badge ds-badge--ai rules-auto"
+                    title="Dough wrote this rule automatically after a sync. Edit or delete it like any other.">Auto</span>
+              {% endif %}
+            </td>
             <td class="rules-cell--keywords">
               <div class="rules-keywords">
                 {% for keyword in keywords %}

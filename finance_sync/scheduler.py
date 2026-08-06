@@ -24,6 +24,23 @@ That leaves two cases, and they bind the household from different places:
   runs each one in its own scope. One household's broken bank must not stop the
   others from syncing, so failures are contained per household exactly as they
   already are per connection.
+
+Automatic categorization  [UAT round 1]
+---------------------------------------
+A sync that **imported transactions** hands off to ``_categorize``, which asks
+``dough/services/auto_categorize.py`` to derive category rules from whatever
+just arrived uncategorized and apply them. It lives here for the same reason
+the sync loop does: it needs an app context, a tenant scope and a thread that
+is not a request, and this class is the only thing in the codebase that owns
+all three. The service itself stays synchronous and thread-unaware.
+
+Three properties are load-bearing and are tested in
+``tests/test_auto_categorize.py``: it runs **after** ``_busy`` is released, so
+an LLM round trip never blocks an unrelated bank's refresh; it **never
+raises**, so a model outage cannot retroactively fail a sync that succeeded;
+and it fires only when transactions actually arrived, so a description the
+model cannot place does not get re-analyzed — and re-billed — on every refresh
+and twice a day forever.
 """
 
 from __future__ import annotations
@@ -57,6 +74,12 @@ class SyncScheduler:
             "last_trigger": None,
             "last_status": None,
             "next_scheduled": None,
+            # Automatic categorization, reported separately from the sync so
+            # the UI can say which of the two it is waiting on. [UAT round 1]
+            # It runs after the sync's lock is released, so "sync finished,
+            # still categorizing" is a real state the page has to render.
+            "categorizing": False,
+            "last_categorization": None,
         }
 
     # -- lifecycle ------------------------------------------------------------
@@ -162,6 +185,7 @@ class SyncScheduler:
         def _work(pre_acquired: bool) -> None:
             if not pre_acquired:
                 self._busy.acquire()  # queued: wait for the in-flight sync
+            imported = 0
             with self._state_lock:
                 self._state["running"] = True
                 self._state["last_started"] = datetime.utcnow().isoformat()
@@ -173,8 +197,11 @@ class SyncScheduler:
                         if connection_id is not None:
                             result = engine.sync_connection(connection_id,
                                                             trigger=trigger)
+                            imported = result.transactions_added
                         else:
                             result = engine.sync_all(trigger=trigger)
+                            imported = sum(r.transactions_added
+                                           for r in result.results)
                         with self._state_lock:
                             self._state["last_status"] = result.status
             except Exception:
@@ -186,6 +213,27 @@ class SyncScheduler:
                     self._state["running"] = False
                     self._state["last_finished"] = datetime.utcnow().isoformat()
                 self._busy.release()
+            # After the lock, deliberately. Categorizing is model calls over a
+            # network and can take longer than the sync that triggered it;
+            # holding `_busy` for it would make an unrelated bank's refresh
+            # queue behind an LLM round trip.
+            #
+            # Gated on transactions actually arriving, not on the ledger having
+            # something uncategorized in it. The difference is a billing loop:
+            # a description the model cannot place stays `Uncategorized`
+            # forever, so an "is anything uncategorized?" gate re-sends that
+            # same unplaceable description on every manual refresh *and* twice
+            # a day from the scheduled loop, paying for an identical prompt
+            # that cannot make progress. Nothing new arriving means there is
+            # nothing new to read.
+            #
+            # A failed sync is skipped for the same reason -- it imported
+            # nothing -- and `imported` is 0 on that path anyway.
+            if imported > 0:
+                self._categorize(household_id)
+            else:
+                logger.debug("No new transactions for household %s; "
+                             "skipping automatic categorization", household_id)
 
         pre_acquired = self._busy.acquire(blocking=False)
         if not pre_acquired and not queue:
@@ -196,6 +244,66 @@ class SyncScheduler:
             threading.Thread(target=_work, args=(pre_acquired,),
                              name=f"finance-sync-{trigger}", daemon=True).start()
         return True
+
+    # -- automatic categorization ------------------------------------------------
+
+    def _categorize(self, household_id: int) -> None:
+        """Derive and apply category rules for whatever the sync just imported.
+
+        Called only when a sync actually added transactions — see the gate in
+        `_work` for why "anything uncategorized" is the wrong condition.
+
+        ## Why this lives in the scheduler  [UAT round 1]
+
+        The analysis itself is `dough/services/auto_categorize.py`, which is
+        synchronous and knows nothing about threads, apps or households — the
+        same constraint every other service in that package is written under.
+        What it needs and cannot have is a caller: an app context, a tenant
+        scope, and a thread that is not a request. This class already owns all
+        three for exactly this reason, so the trigger belongs here rather than
+        inside `SyncEngine` (which must stay institution-agnostic and offline)
+        or inside a route (there is no request behind a scheduled sync).
+
+        ## It never raises
+
+        Categorization is an enhancement to a sync that has already succeeded.
+        A model outage, a malformed reply or a rate limit must leave the freshly
+        imported transactions exactly where they are — uncategorized, which is
+        the state they would have been in anyway — and must never mark the sync
+        as failed. Every failure path here is a log line.
+        """
+        from dough.services import auto_categorize
+
+        with self._state_lock:
+            self._state["categorizing"] = True
+        try:
+            with self.app.app_context():
+                with tenant_scope(household_id):
+                    result = auto_categorize.run_once()
+            if result.skipped:
+                logger.info("Auto-categorization skipped for household %s: %s",
+                            household_id, result.reason)
+            else:
+                logger.info("Auto-categorization for household %s: %d rules, "
+                            "%d transactions categorized, %d still uncategorized",
+                            household_id, result.rules_added,
+                            result.transactions_categorized,
+                            result.remaining_uncategorized)
+            with self._state_lock:
+                self._state["last_categorization"] = {
+                    "at": datetime.utcnow().isoformat(),
+                    "rules_added": result.rules_added,
+                    "transactions_categorized": result.transactions_categorized,
+                    "remaining_uncategorized": result.remaining_uncategorized,
+                    "partial": result.partial,
+                    "skipped": result.skipped,
+                }
+        except Exception:
+            logger.exception("Auto-categorization crashed for household %s",
+                             household_id)
+        finally:
+            with self._state_lock:
+                self._state["categorizing"] = False
 
     def status(self) -> dict:
         with self._state_lock:
