@@ -27,17 +27,20 @@ That leaves two cases, and they bind the household from different places:
 
 Automatic categorization  [UAT round 1]
 ---------------------------------------
-Every completed sync hands off to ``_categorize``, which asks
+A sync that **imported transactions** hands off to ``_categorize``, which asks
 ``dough/services/auto_categorize.py`` to derive category rules from whatever
 just arrived uncategorized and apply them. It lives here for the same reason
 the sync loop does: it needs an app context, a tenant scope and a thread that
 is not a request, and this class is the only thing in the codebase that owns
 all three. The service itself stays synchronous and thread-unaware.
 
-Two properties are load-bearing and are tested in
+Three properties are load-bearing and are tested in
 ``tests/test_auto_categorize.py``: it runs **after** ``_busy`` is released, so
-an LLM round trip never blocks an unrelated bank's refresh, and it **never
-raises**, so a model outage cannot retroactively fail a sync that succeeded.
+an LLM round trip never blocks an unrelated bank's refresh; it **never
+raises**, so a model outage cannot retroactively fail a sync that succeeded;
+and it fires only when transactions actually arrived, so a description the
+model cannot place does not get re-analyzed — and re-billed — on every refresh
+and twice a day forever.
 """
 
 from __future__ import annotations
@@ -182,6 +185,7 @@ class SyncScheduler:
         def _work(pre_acquired: bool) -> None:
             if not pre_acquired:
                 self._busy.acquire()  # queued: wait for the in-flight sync
+            imported = 0
             with self._state_lock:
                 self._state["running"] = True
                 self._state["last_started"] = datetime.utcnow().isoformat()
@@ -193,8 +197,11 @@ class SyncScheduler:
                         if connection_id is not None:
                             result = engine.sync_connection(connection_id,
                                                             trigger=trigger)
+                            imported = result.transactions_added
                         else:
                             result = engine.sync_all(trigger=trigger)
+                            imported = sum(r.transactions_added
+                                           for r in result.results)
                         with self._state_lock:
                             self._state["last_status"] = result.status
             except Exception:
@@ -209,12 +216,24 @@ class SyncScheduler:
             # After the lock, deliberately. Categorizing is model calls over a
             # network and can take longer than the sync that triggered it;
             # holding `_busy` for it would make an unrelated bank's refresh
-            # queue behind an LLM round trip. A sync that failed outright is
-            # skipped -- there is nothing new to read.
-            with self._state_lock:
-                sync_status = self._state["last_status"]
-            if sync_status != "error":
+            # queue behind an LLM round trip.
+            #
+            # Gated on transactions actually arriving, not on the ledger having
+            # something uncategorized in it. The difference is a billing loop:
+            # a description the model cannot place stays `Uncategorized`
+            # forever, so an "is anything uncategorized?" gate re-sends that
+            # same unplaceable description on every manual refresh *and* twice
+            # a day from the scheduled loop, paying for an identical prompt
+            # that cannot make progress. Nothing new arriving means there is
+            # nothing new to read.
+            #
+            # A failed sync is skipped for the same reason -- it imported
+            # nothing -- and `imported` is 0 on that path anyway.
+            if imported > 0:
                 self._categorize(household_id)
+            else:
+                logger.debug("No new transactions for household %s; "
+                             "skipping automatic categorization", household_id)
 
         pre_acquired = self._busy.acquire(blocking=False)
         if not pre_acquired and not queue:
@@ -230,6 +249,9 @@ class SyncScheduler:
 
     def _categorize(self, household_id: int) -> None:
         """Derive and apply category rules for whatever the sync just imported.
+
+        Called only when a sync actually added transactions — see the gate in
+        `_work` for why "anything uncategorized" is the wrong condition.
 
         ## Why this lives in the scheduler  [UAT round 1]
 

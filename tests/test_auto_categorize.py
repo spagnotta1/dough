@@ -262,6 +262,84 @@ def test_the_scheduler_reports_what_it_categorized(auto_app):
     assert done['last_categorization']['transactions_categorized'] == 1
 
 
+def _fake_engine(transactions_added):
+    """A SyncEngine stand-in that reports importing `transactions_added` rows."""
+    from finance_sync.engine import ConnectionSyncResult, EngineRunResult
+
+    class FakeEngine:
+        def sync_all(self, trigger='manual'):
+            return EngineRunResult(trigger=trigger, results=[
+                ConnectionSyncResult(connection_id=1, institution='chase',
+                                     status='success',
+                                     transactions_added=transactions_added)])
+
+        def sync_connection(self, connection_id, trigger='manual'):
+            return ConnectionSyncResult(connection_id=connection_id,
+                                        institution='chase', status='success',
+                                        transactions_added=transactions_added)
+
+    return FakeEngine
+
+
+def test_a_refresh_that_imports_nothing_never_reaches_the_model(auto_app,
+                                                               monkeypatch):
+    """The billing loop this gate exists to prevent.
+
+    A description the model cannot place stays `Uncategorized` forever. Gating
+    the pass on "is anything uncategorized?" would re-send that same
+    unplaceable description on every manual refresh and twice a day from the
+    scheduled loop — paying for an identical prompt that cannot make progress.
+
+    So the backlog here is deliberately non-empty: the pass must still decline,
+    because the *sync* brought in nothing new to read.
+    """
+    from finance_sync import scheduler as scheduler_module
+    from finance_sync.scheduler import get_scheduler
+
+    _ledger('SOME UNPLACEABLE THING')
+    _script(auto_app, _suggestions(('Shopping', 'UNPLACEABLE')))
+    monkeypatch.setattr(scheduler_module, 'SyncEngine', _fake_engine(0))
+
+    assert get_scheduler().run_sync(trigger='manual', wait=True) is True
+
+    assert auto_app.echo.requests == []
+    assert get_scheduler().status()['last_categorization'] is None
+
+
+def test_a_refresh_that_imports_transactions_hands_off(auto_app, monkeypatch):
+    from dough.services import rules_service
+    from finance_sync import scheduler as scheduler_module
+    from finance_sync.scheduler import get_scheduler
+
+    _ledger('WHOLE FOODS MKT 101')
+    _script(auto_app, _suggestions(('Groceries', 'WHOLE FOODS')))
+    monkeypatch.setattr(scheduler_module, 'SyncEngine', _fake_engine(4))
+
+    get_scheduler().run_sync(trigger='manual', wait=True)
+
+    assert rules_service.sources() == {'Groceries': 'ai'}
+    assert get_scheduler().status()['last_categorization'][
+        'transactions_categorized'] == 1
+
+
+def test_a_failed_sync_does_not_hand_off(auto_app, monkeypatch):
+    """It imported nothing, so there is nothing new to read."""
+    from finance_sync import scheduler as scheduler_module
+    from finance_sync.scheduler import get_scheduler
+
+    class ExplodingEngine:
+        def sync_all(self, trigger='manual'):
+            raise RuntimeError('every bank is down')
+
+    _ledger('WHOLE FOODS MKT 101')
+    _script(auto_app, _suggestions(('Groceries', 'WHOLE FOODS')))
+    monkeypatch.setattr(scheduler_module, 'SyncEngine', ExplodingEngine)
+
+    get_scheduler().run_sync(trigger='manual', wait=True)
+
+    assert auto_app.echo.requests == []
+
+
 def test_a_crash_inside_categorization_never_escapes(auto_app, monkeypatch):
     """It runs after a sync that already succeeded; it must not undo that."""
     from dough.services import auto_categorize
