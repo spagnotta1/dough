@@ -244,23 +244,18 @@
 
     /* ── Category spending trend (stacked) ────────────────────────────
        Color comes from the stable category map, never the loop index, so
-       filtering the dashboard does not repaint the surviving series.
-
-       Datasets are stacked in palette-slot order so that touching segments
-       always hold adjacent slots — the only pairs the palette was validated
-       on. See CheckCharts.orderBySlot for why that matters. */
+       filtering the dashboard does not repaint the surviving series. */
     B.categoryTrendChart = function () {
       var trend = data.categoryTrend || { months: [], series: {} };
       return withValueLabels('categoryTrendChart', {
         type: 'bar',
         data: {
           labels: (trend.months || []).map(CheckCharts.monthLabel),
-          datasets: CheckCharts.orderBySlot(Object.keys(trend.series || {})).map(function (cat) {
-            var color = CheckCharts.forCategory(cat);
+          datasets: CheckCharts.foldOverflow(trend.months, trend.series).map(function (s) {
             return {
-              label: cat,
-              data: trend.series[cat],
-              backgroundColor: color,
+              label: s.label,
+              data: s.data,
+              backgroundColor: s.color,
               /* 2px of surface between stacked segments, so adjacent bands
                  read as separate even when their hues are close. */
               borderColor: t.surface,

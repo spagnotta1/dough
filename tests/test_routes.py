@@ -381,3 +381,53 @@ def test_the_dashboard_window_includes_its_own_start_date(client):
         assert description in listed
     assert 'Before the window' not in listed
     assert data['categoryStats'].keys() == {'Groceries', 'Uncategorized', 'Shopping'}
+
+
+def test_the_palette_ranks_spending_categories_ahead_of_income_and_transfers(client):
+    """The charts that use this palette are spending charts. [UAT round 1]
+
+    Reported from the running app: "Spending by category over time" drew three
+    of its six series in the identical overflow gray. The palette is eight
+    hues wide and `allCategories` decides who gets one — but it ranked on
+    gross `abs(amount)` over every row, so `Income` and `Transfer`, the two
+    largest movers in almost any ledger and the two a spending chart can never
+    draw, took the first two slots. A quarter of the palette went to
+    categories guaranteed not to appear, pushing real series past the end of
+    it and into the shared neutral.
+
+    The head of this list must therefore be the biggest *spenders*. Income and
+    transfers still appear — the breakdown grid needs a stable identity for
+    them — but behind every category that spends.
+    """
+    import json
+    import re
+    from datetime import date
+    from models import db, Transaction
+
+    # Income and Transfer dwarf every real spending category, which is exactly
+    # the shape that used to hand them the first two hues.
+    rows = [
+        ("PAYCHECK", 9000.00, "Income"),
+        ("MOVE TO SAVINGS", -8000.00, "Transfer"),
+        ("AJI SUSHI", -300.00, "Food"),
+        ("SHELL", -200.00, "Gas"),
+        ("NETFLIX", -100.00, "Subscriptions"),
+    ]
+    for description, amount, category in rows:
+        db.session.add(Transaction(account_name="Checking", date=date(2026, 3, 5),
+                                   description=description, amount=amount,
+                                   category=category))
+    db.session.commit()
+
+    html = client.get("/?start_date=2026-03-01&end_date=2026-03-31").get_data(as_text=True)
+    match = re.search(
+        r'<script id="dashData" type="application/json">(.*?)</script>', html, re.S)
+    categories = json.loads(match.group(1))["allCategories"]
+
+    spenders = ["Food", "Gas", "Subscriptions"]
+    assert categories[:3] == spenders, (
+        "the biggest spenders must hold the first palette slots, got "
+        f"{categories}")
+    # Present, but behind every spender — they still need a stable color
+    # elsewhere on the page, just not one a spending chart was going to use.
+    assert set(categories[3:]) == {"Income", "Transfer"}

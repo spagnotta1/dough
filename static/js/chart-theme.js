@@ -347,6 +347,61 @@
     return head;
   }
 
+  /* ── Fold overflow series into one "Other" band ───────────────────────
+     The stacked-chart counterpart to topN, and the same idea: past the
+     palette's eight slots there is no honest way to keep drawing separate
+     bands, so stop drawing them separately.
+
+     This was reported from the running app. "Spending by category over time"
+     mapped every series it was given, and three of six — Insurance,
+     Entertainment and Uncategorized — all held slots past the eighth and so
+     came out the identical OVERFLOW gray. Nothing in the chart could tell
+     them apart; the legend named three things and the bars showed one.
+
+     Folding rather than generating a ninth hue, for the reason stated at the
+     top of this file: a ninth color is not distinguishable from the eight
+     validated ones, so drawing four grays and five hues only relocates the
+     ambiguity. One gray band labelled "Other" means exactly one thing, and
+     the stack still reconciles to the same total.
+
+     `hasOwnColor` is the predicate, so this agrees with the category chips by
+     construction: a category showing a colored chip elsewhere on the page
+     always keeps its own band here, and one that does not is inside "Other"
+     in both places.
+
+     Named series come back in slot order — touching segments must hold
+     consecutive slots, which is the only configuration the palette was
+     validated on (see orderBySlot). "Other" is appended last so it never
+     lands in the middle of that validated run.
+
+     Takes `months` only to size the accumulator: a folded band needs a zero
+     at every position, including months where no tail category spent. */
+  function foldOverflow(months, series) {
+    var length = (months || []).length;
+    var data = series || {};
+    var named = [];
+    var other = null;
+
+    orderBySlot(Object.keys(data)).forEach(function (name) {
+      var values = data[name] || [];
+      if (hasOwnColor(name)) {
+        named.push({ label: name, data: values, color: forCategory(name) });
+        return;
+      }
+      if (!other) {
+        var zeros = [];
+        for (var j = 0; j < length; j++) zeros.push(0);
+        // forCategory on an unregistered name returns the same neutral, so
+        // the band reads as the overflow it is.
+        other = { label: 'Other', data: zeros, color: forCategory('Other') };
+      }
+      for (var i = 0; i < length; i++) other.data[i] += (values[i] || 0);
+    });
+
+    if (other) named.push(other);
+    return named;
+  }
+
   global.CheckCharts = {
     CATEGORICAL: CATEGORICAL,
     SEQUENTIAL: SEQUENTIAL,
@@ -358,6 +413,7 @@
     hasOwnColor: hasOwnColor,
     slotOf: slotOf,
     orderBySlot: orderBySlot,
+    foldOverflow: foldOverflow,
     money: money,
     moneyExact: moneyExact,
     moneyShort: moneyShort,
