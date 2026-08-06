@@ -381,3 +381,134 @@ def test_the_dashboard_window_includes_its_own_start_date(client):
         assert description in listed
     assert 'Before the window' not in listed
     assert data['categoryStats'].keys() == {'Groceries', 'Uncategorized', 'Shopping'}
+
+
+def test_the_palette_ranks_spending_categories_ahead_of_income_and_transfers(client):
+    """The charts that use this palette are spending charts. [UAT round 1]
+
+    Reported from the running app: "Spending by category over time" drew three
+    of its six series in the identical overflow gray. The palette is eight
+    hues wide and `allCategories` decides who gets one — but it ranked on
+    gross `abs(amount)` over every row, so `Income` and `Transfer`, the two
+    largest movers in almost any ledger and the two a spending chart can never
+    draw, took the first two slots. A quarter of the palette went to
+    categories guaranteed not to appear, pushing real series past the end of
+    it and into the shared neutral.
+
+    The head of this list must therefore be the biggest *spenders*. Income and
+    transfers still appear — the breakdown grid needs a stable identity for
+    them — but behind every category that spends.
+    """
+    import json
+    import re
+    from datetime import date
+    from models import db, Transaction
+
+    # Income and Transfer dwarf every real spending category, which is exactly
+    # the shape that used to hand them the first two hues.
+    rows = [
+        ("PAYCHECK", 9000.00, "Income"),
+        ("MOVE TO SAVINGS", -8000.00, "Transfer"),
+        ("AJI SUSHI", -300.00, "Food"),
+        ("SHELL", -200.00, "Gas"),
+        ("NETFLIX", -100.00, "Subscriptions"),
+    ]
+    for description, amount, category in rows:
+        db.session.add(Transaction(account_name="Checking", date=date(2026, 3, 5),
+                                   description=description, amount=amount,
+                                   category=category))
+    db.session.commit()
+
+    html = client.get("/?start_date=2026-03-01&end_date=2026-03-31").get_data(as_text=True)
+    match = re.search(
+        r'<script id="dashData" type="application/json">(.*?)</script>', html, re.S)
+    categories = json.loads(match.group(1))["allCategories"]
+
+    spenders = ["Food", "Gas", "Subscriptions"]
+    assert categories[:3] == spenders, (
+        "the biggest spenders must hold the first palette slots, got "
+        f"{categories}")
+    # Present, but behind every spender — they still need a stable color
+    # elsewhere on the page, just not one a spending chart was going to use.
+    assert set(categories[3:]) == {"Income", "Transfer"}
+
+
+def test_a_default_window_with_no_data_snaps_to_the_newest_month(client):
+    """Reported as "none of the visualizations are appearing". [UAT round 1]
+
+    The dashboard defaults to month-to-date. A household whose newest
+    transaction predates the 1st therefore got an empty window, and every
+    panel drew an empty box — the ordinary state of this application in the
+    first days of a month, and for anyone whose last sync is a few days old.
+    """
+    import json
+    import re
+    from datetime import date, timedelta
+    from models import db, Transaction
+
+    # Comfortably before the 1st of whatever month the suite runs in.
+    stale = date.today().replace(day=1) - timedelta(days=20)
+    db.session.add(Transaction(account_name="Checking", date=stale,
+                               description="AJI SUSHI", amount=-77.31,
+                               category="Food"))
+    db.session.commit()
+
+    html = client.get("/").get_data(as_text=True)
+    data = json.loads(re.search(
+        r'<script id="dashData" type="application/json">(.*?)</script>',
+        html, re.S).group(1))
+
+    assert data["categoryTrend"]["months"] == [stale.strftime("%Y-%m")], (
+        "the default window must fall back to the newest month holding data")
+    assert data["categoryStats"], "the fallback window must carry the charts"
+
+
+def test_an_explicitly_requested_empty_window_is_left_alone(client):
+    """"No transactions between these dates" is a true and useful answer.
+
+    Relocating someone who typed a date range, or followed a link to one,
+    would make the date inputs disagree with what is on screen. Only the
+    unasked-for default gets rescued.
+    """
+    import json
+    import re
+    from datetime import date, timedelta
+    from models import db, Transaction
+
+    stale = date.today().replace(day=1) - timedelta(days=20)
+    db.session.add(Transaction(account_name="Checking", date=stale,
+                               description="AJI SUSHI", amount=-77.31,
+                               category="Food"))
+    db.session.commit()
+
+    empty_start = date.today().replace(day=1)
+    html = client.get(f"/?start_date={empty_start}&end_date={date.today()}"
+                      ).get_data(as_text=True)
+    data = json.loads(re.search(
+        r'<script id="dashData" type="application/json">(.*?)</script>',
+        html, re.S).group(1))
+
+    assert data["categoryTrend"]["months"] == []
+    assert "No transactions in" in html, (
+        "an explicitly empty window must say so rather than silently moving")
+
+
+def test_the_fallback_does_nothing_when_the_current_month_has_data(client):
+    """Month-to-date stays the default whenever it holds anything."""
+    import json
+    import re
+    from datetime import date
+    from models import db, Transaction
+
+    today = date.today()
+    db.session.add(Transaction(account_name="Checking", date=today,
+                               description="AJI SUSHI", amount=-77.31,
+                               category="Food"))
+    db.session.commit()
+
+    html = client.get("/").get_data(as_text=True)
+    data = json.loads(re.search(
+        r'<script id="dashData" type="application/json">(.*?)</script>',
+        html, re.S).group(1))
+
+    assert data["categoryTrend"]["months"] == [today.strftime("%Y-%m")]

@@ -135,6 +135,46 @@ def dashboard():
         start_date = datetime.strptime(start_date_str, '%Y-%m-%d').date()
         end_date = datetime.strptime(end_date_str, '%Y-%m-%d').date()
 
+    # A default window that lands on nothing snaps to the newest month that
+    # has data.  [UAT round 1]
+    #
+    # Reported as "none of the data visualizations are appearing", and the
+    # dashboard was working exactly as written: the default window is
+    # month-to-date, the newest transaction was six days older than the 1st,
+    # so every series came back empty and every panel drew an empty box. It is
+    # the ordinary state of this application on the early days of a month, and
+    # for any household whose last sync is more than a few days old — which is
+    # every household that connected an institution and then waited.
+    #
+    # Month-to-date stays the default because it is the right answer whenever
+    # the current month has anything in it; this only rescues the case where it
+    # does not.
+    #
+    # **Only when the dates were not asked for.** A window someone typed, or
+    # followed a link to, must answer for itself — "no transactions between
+    # these dates" is true and useful, and silently relocating them to a
+    # different month would make the date inputs lie about what is on screen.
+    # `request.args` rather than the resolved value is what draws that line:
+    # session-restored dates are the app's memory, not a choice being made now,
+    # so a household stuck on an empty month gets rescued on its next visit
+    # instead of having to find "Clear filters".
+    if not (request.args.get('start_date') or request.args.get('end_date')):
+        window = Transaction.query.filter(
+            Transaction.date.between(start_date, end_date))
+        if window.first() is None:
+            newest = db.session.query(func.max(Transaction.date)).scalar()
+            # `func.max` over a Date column comes back as a date from SQLite,
+            # but a string from a raw text-typed row; normalise rather than
+            # trusting the driver, because the failure would be a TypeError on
+            # the dashboard rather than anything visible in a test.
+            if isinstance(newest, str):
+                newest = datetime.strptime(newest[:10], '%Y-%m-%d').date()
+            if newest is not None and newest < start_date:
+                end_date = newest
+                start_date = newest.replace(day=1)
+                start_date_str = start_date.strftime('%Y-%m-%d')
+                end_date_str = end_date.strftime('%Y-%m-%d')
+
     session['start_date'] = start_date_str
     session['end_date'] = end_date_str
     session['account'] = account_filter
@@ -402,20 +442,49 @@ def dashboard():
         income=total_income, outgo=total_outgo, prev_outgo=prev_outgo,
         net_worth=nw['net_worth'], health=health)
 
-    # Every category the account has ever used, ranked by lifetime volume.
-    # The client walks this list to assign palette slots, so the categories
-    # that actually reach a chart are the ones holding distinct hues and
-    # the long tail shares the neutral.
+    # Every category the account has ever used, ranked so that the ones which
+    # actually reach a chart hold the eight distinct hues and the long tail
+    # shares the neutral. The client walks this list to assign palette slots.
     #
     # Ranked on the WHOLE history, never the filtered window: that is what
-    # lets the mapping stay fixed while a filter changes which categories
-    # are on screen. Alphabetical ordering was worse — it handed the eight
-    # hues to whichever categories started with early letters, which put
-    # three of the six charted series on the same gray.
-    all_categories = [row[0] for row in db.session.query(
+    # lets the mapping stay fixed while a filter changes which categories are
+    # on screen. Alphabetical ordering was worse — it handed the eight hues to
+    # whichever categories started with early letters.
+    #
+    # ## Ranked by SPENDING, not by gross volume  [UAT round 1]
+    #
+    # Ranking on `abs(amount)` over every row was the next version of the same
+    # bug, and it was reported from the running app: "Spending by category over
+    # time" drew three of its six series in the identical overflow gray.
+    #
+    # The charts that use this palette are spending charts. They filter to
+    # `amount < 0` and, on the combined view, drop transfers. But the ranking
+    # counted every row, so `Income` and `Transfer` — the two largest movers in
+    # almost any ledger, and the two that a spending chart can never draw —
+    # took the first two slots. A quarter of a palette that is only eight wide
+    # went to categories guaranteed not to appear, pushing three real series
+    # past the end of it and into the shared neutral.
+    #
+    # So the ranking now uses the same measure the charts select on: outbound
+    # money, transfers excluded. Non-spending categories keep a slot, ordered
+    # after every spender, because `Income` still needs a stable identity in
+    # the breakdown grid — it just has no claim on a hue a spending chart needs.
+    _transfer_names = ['transfer', 'transfers']
+    spend_rank = [row[0] for row in db.session.query(
+        Transaction.category, func.sum(func.abs(Transaction.amount)).label('vol')
+    ).filter(Transaction.category.isnot(None), Transaction.amount < 0,
+             ~func.lower(Transaction.category).in_(_transfer_names))
+     .group_by(Transaction.category)
+     .order_by(func.sum(func.abs(Transaction.amount)).desc()).all()]
+
+    rest_rank = [row[0] for row in db.session.query(
         Transaction.category, func.sum(func.abs(Transaction.amount)).label('vol')
     ).filter(Transaction.category.isnot(None))
-     .group_by(Transaction.category).order_by(func.sum(func.abs(Transaction.amount)).desc()).all()]
+     .group_by(Transaction.category)
+     .order_by(func.sum(func.abs(Transaction.amount)).desc()).all()]
+
+    _seen = set(spend_rank)
+    all_categories = spend_rank + [c for c in rest_rank if c not in _seen]
 
     # A dashboard with nothing on it has two different causes, and they want
     # opposite advice. An empty *window* is a filter question — widen the dates.
