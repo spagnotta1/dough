@@ -431,3 +431,84 @@ def test_the_palette_ranks_spending_categories_ahead_of_income_and_transfers(cli
     # Present, but behind every spender — they still need a stable color
     # elsewhere on the page, just not one a spending chart was going to use.
     assert set(categories[3:]) == {"Income", "Transfer"}
+
+
+def test_a_default_window_with_no_data_snaps_to_the_newest_month(client):
+    """Reported as "none of the visualizations are appearing". [UAT round 1]
+
+    The dashboard defaults to month-to-date. A household whose newest
+    transaction predates the 1st therefore got an empty window, and every
+    panel drew an empty box — the ordinary state of this application in the
+    first days of a month, and for anyone whose last sync is a few days old.
+    """
+    import json
+    import re
+    from datetime import date, timedelta
+    from models import db, Transaction
+
+    # Comfortably before the 1st of whatever month the suite runs in.
+    stale = date.today().replace(day=1) - timedelta(days=20)
+    db.session.add(Transaction(account_name="Checking", date=stale,
+                               description="AJI SUSHI", amount=-77.31,
+                               category="Food"))
+    db.session.commit()
+
+    html = client.get("/").get_data(as_text=True)
+    data = json.loads(re.search(
+        r'<script id="dashData" type="application/json">(.*?)</script>',
+        html, re.S).group(1))
+
+    assert data["categoryTrend"]["months"] == [stale.strftime("%Y-%m")], (
+        "the default window must fall back to the newest month holding data")
+    assert data["categoryStats"], "the fallback window must carry the charts"
+
+
+def test_an_explicitly_requested_empty_window_is_left_alone(client):
+    """"No transactions between these dates" is a true and useful answer.
+
+    Relocating someone who typed a date range, or followed a link to one,
+    would make the date inputs disagree with what is on screen. Only the
+    unasked-for default gets rescued.
+    """
+    import json
+    import re
+    from datetime import date, timedelta
+    from models import db, Transaction
+
+    stale = date.today().replace(day=1) - timedelta(days=20)
+    db.session.add(Transaction(account_name="Checking", date=stale,
+                               description="AJI SUSHI", amount=-77.31,
+                               category="Food"))
+    db.session.commit()
+
+    empty_start = date.today().replace(day=1)
+    html = client.get(f"/?start_date={empty_start}&end_date={date.today()}"
+                      ).get_data(as_text=True)
+    data = json.loads(re.search(
+        r'<script id="dashData" type="application/json">(.*?)</script>',
+        html, re.S).group(1))
+
+    assert data["categoryTrend"]["months"] == []
+    assert "No transactions in" in html, (
+        "an explicitly empty window must say so rather than silently moving")
+
+
+def test_the_fallback_does_nothing_when_the_current_month_has_data(client):
+    """Month-to-date stays the default whenever it holds anything."""
+    import json
+    import re
+    from datetime import date
+    from models import db, Transaction
+
+    today = date.today()
+    db.session.add(Transaction(account_name="Checking", date=today,
+                               description="AJI SUSHI", amount=-77.31,
+                               category="Food"))
+    db.session.commit()
+
+    html = client.get("/").get_data(as_text=True)
+    data = json.loads(re.search(
+        r'<script id="dashData" type="application/json">(.*?)</script>',
+        html, re.S).group(1))
+
+    assert data["categoryTrend"]["months"] == [today.strftime("%Y-%m")]

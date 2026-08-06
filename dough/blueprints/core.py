@@ -135,6 +135,46 @@ def dashboard():
         start_date = datetime.strptime(start_date_str, '%Y-%m-%d').date()
         end_date = datetime.strptime(end_date_str, '%Y-%m-%d').date()
 
+    # A default window that lands on nothing snaps to the newest month that
+    # has data.  [UAT round 1]
+    #
+    # Reported as "none of the data visualizations are appearing", and the
+    # dashboard was working exactly as written: the default window is
+    # month-to-date, the newest transaction was six days older than the 1st,
+    # so every series came back empty and every panel drew an empty box. It is
+    # the ordinary state of this application on the early days of a month, and
+    # for any household whose last sync is more than a few days old — which is
+    # every household that connected an institution and then waited.
+    #
+    # Month-to-date stays the default because it is the right answer whenever
+    # the current month has anything in it; this only rescues the case where it
+    # does not.
+    #
+    # **Only when the dates were not asked for.** A window someone typed, or
+    # followed a link to, must answer for itself — "no transactions between
+    # these dates" is true and useful, and silently relocating them to a
+    # different month would make the date inputs lie about what is on screen.
+    # `request.args` rather than the resolved value is what draws that line:
+    # session-restored dates are the app's memory, not a choice being made now,
+    # so a household stuck on an empty month gets rescued on its next visit
+    # instead of having to find "Clear filters".
+    if not (request.args.get('start_date') or request.args.get('end_date')):
+        window = Transaction.query.filter(
+            Transaction.date.between(start_date, end_date))
+        if window.first() is None:
+            newest = db.session.query(func.max(Transaction.date)).scalar()
+            # `func.max` over a Date column comes back as a date from SQLite,
+            # but a string from a raw text-typed row; normalise rather than
+            # trusting the driver, because the failure would be a TypeError on
+            # the dashboard rather than anything visible in a test.
+            if isinstance(newest, str):
+                newest = datetime.strptime(newest[:10], '%Y-%m-%d').date()
+            if newest is not None and newest < start_date:
+                end_date = newest
+                start_date = newest.replace(day=1)
+                start_date_str = start_date.strftime('%Y-%m-%d')
+                end_date_str = end_date.strftime('%Y-%m-%d')
+
     session['start_date'] = start_date_str
     session['end_date'] = end_date_str
     session['account'] = account_filter
