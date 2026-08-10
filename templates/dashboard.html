@@ -403,106 +403,7 @@
   </section>
 
   {# ══════════════════════════════════════════════════════════════════════
-     LAYER 2 — Dough's Insight
-     The conversational centre of the app. The numbers above are already on
-     screen; this is where Dough explains them and says what to do about it.
-     Everything intelligent in the product is attributed to him, so this
-     card is the dashboard's half of that one voice.
-     ══════════════════════════════════════════════════════════════════════ #}
-  <section class="dash-copilot ds-card ds-card--hero ds-card--wash-ai ds-rise"
-           style="--ds-delay:340ms" aria-labelledby="copilot-h">
-    <div class="dash-copilot__head">
-      <span class="dash-copilot__mark dough-avatar" aria-hidden="true">
-        <span data-dough="reviewing" data-dough-size="36" data-dough-tight></span>
-      </span>
-      <h2 class="dash-copilot__title" id="copilot-h">Dough's Insight</h2>
-      <a href="/chat" class="ds-btn ds-btn--ghost ds-btn--sm dash-copilot__full">
-        Ask Dough
-        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 17 17 7"/><path d="M8 7h9v9"/></svg>
-      </a>
-    </div>
-
-    <!-- Briefing: the deterministic part renders instantly, the written
-         narrative arrives from the model a moment later. -->
-    <div class="dash-copilot__body">
-      <p class="dash-copilot__lede">
-        {{ period_label }} versus <span class="dash-copilot__prev">{{ compare_label }}</span>.
-      </p>
-
-      <ul class="dash-brief" id="dashBrief">
-        {% for change in [
-          ('Spending', outgo_delta, False),
-          ('Income', income_delta, True),
-          ('Net cash flow', net_delta, True)
-        ] %}
-        {% set label, val, higher_good = change %}
-        <li class="dash-brief__item">
-          <span class="dash-brief__bullet {{ 'is-good' if ((val >= 0) == higher_good) else 'is-bad' }}"
-                aria-hidden="true">{{ '▲' if val > 0 else '▼' if val < 0 else '—' }}</span>
-          <span>{{ label }}
-            {% if val == 0 %}unchanged{% else %}{{ 'up' if val > 0 else 'down' }}
-            <b class="ds-num">{{ val|abs|money }}</b>{% endif %}
-          </span>
-        </li>
-        {% endfor %}
-      </ul>
-
-      <!-- Model-written narrative + opportunities -->
-      <div class="dash-copilot__ai" id="copilotNarrative" aria-live="polite">
-        <div class="dash-copilot__loading" id="copilotLoading">
-          {# Dough is visibly doing the work rather than a bare skeleton —
-             the wait is the moment the character is most useful. The text
-             carries the state for screen readers and reduced-motion. #}
-          <div class="dough-working">
-            <span data-dough="searching" data-dough-size="42"></span>
-            <span class="dough-working__label">Dough is digging through your numbers…</span>
-          </div>
-          <span class="ds-skeleton ds-skeleton--text" style="width:92%"></span>
-          <span class="ds-skeleton ds-skeleton--text" style="width:74%"></span>
-        </div>
-      </div>
-
-      <div class="dash-opps" id="copilotOpps" hidden></div>
-
-      <!-- Answer surface for an inline question -->
-      <div class="dash-answer" id="copilotAnswer" hidden>
-        <div class="dash-answer__q" id="copilotAnswerQ"></div>
-        <div class="dash-answer__a" id="copilotAnswerA" aria-live="polite"></div>
-        <div class="dash-answer__foot">
-          <button type="button" class="ds-btn ds-btn--ghost ds-btn--sm" id="copilotAnswerClose">Dismiss</button>
-          <a href="/chat" class="ds-btn ds-btn--ghost ds-btn--sm">Keep talking to Dough →</a>
-        </div>
-      </div>
-    </div>
-
-    <!-- Ask -->
-    <form class="dash-ask" id="copilotForm">
-      <label class="ds-sr" for="copilotInput">Ask Dough about your finances</label>
-      <input type="text" id="copilotInput" class="dash-ask__input ds-control__input" autocomplete="off"
-             placeholder="Ask Dough anything about your money…">
-      <button type="submit" class="ds-btn ds-btn--primary ds-btn--sm dash-ask__send" aria-label="Send question">
-        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 19V5"/><path d="m5 12 7-7 7 7"/></svg>
-      </button>
-    </form>
-
-    <div class="dash-suggest" id="copilotSuggest" role="group" aria-label="Suggested questions">
-      {# Seeded from the page's own data so the first suggestions are always
-         relevant; replaced by the model's own once the briefing lands. #}
-      {% set seed = [] %}
-      {% if attention and attention[0].severity in ('critical','warning') %}
-        {% set _ = seed.append('Why ' ~ (attention[0].title|lower) ~ '?') %}
-      {% endif %}
-      {% set _ = seed.append('Where did my money go this period?') %}
-      {% set _ = seed.append('How can I cut spending?') %}
-      {% set _ = seed.append('Compare this month to last month') %}
-      {% for q in seed[:4] %}
-      <button type="button" class="ds-chip ds-chip--ai" data-ask="{{ q }}">{{ q }}</button>
-      {% endfor %}
-    </div>
-  </section>
-
-  {# ══════════════════════════════════════════════════════════════════════
-     LAYER 3 — Attention center
+     LAYER 2 — Attention center
      One ranked list, replacing the alert strips that used to be scattered
      down the page. Severity is carried by an icon and a word, never by
      color alone.
@@ -510,7 +411,7 @@
   {% set actionable = attention|rejectattr('severity','equalto','positive')|list %}
   {% set wins = attention|selectattr('severity','equalto','positive')|list %}
 
-  <section class="dash-attention ds-rise" style="--ds-delay:380ms" aria-labelledby="attention-h">
+  <section class="dash-attention ds-rise" style="--ds-delay:340ms" aria-labelledby="attention-h">
     <div class="ds-section__head">
       <div>
         <h2 class="ds-section__title" id="attention-h">
@@ -570,11 +471,11 @@
   </section>
 
   {# ══════════════════════════════════════════════════════════════════════
-     LAYER 4 — Outlook
+     LAYER 3 — Outlook
      Most finance apps only look backwards. This is the signature section:
      where the balance is heading, what is due, and what it means.
      ══════════════════════════════════════════════════════════════════════ #}
-  <section class="dash-outlook ds-rise" style="--ds-delay:420ms" aria-labelledby="outlook-h">
+  <section class="dash-outlook ds-rise" style="--ds-delay:380ms" aria-labelledby="outlook-h">
     <div class="ds-section__head">
       <div>
         <h2 class="ds-section__title" id="outlook-h">The next {{ forecast.days }} days</h2>
@@ -659,7 +560,7 @@
   </section>
 
   {# ══════════════════════════════════════════════════════════════════════
-     LAYER 5 — Budgets
+     LAYER 4 — Budgets
      Cards rather than table rows: a budget is a status, and a status wants
      a shape, not a number in a cell.
      ══════════════════════════════════════════════════════════════════════ #}
@@ -727,7 +628,7 @@
   {% endif %}
 
   {# ══════════════════════════════════════════════════════════════════════
-     LAYER 6 — Deep analytics
+     LAYER 5 — Deep analytics
      Collapsed by default. Every panel can be collapsed, pinned, hidden and
      reordered; the arrangement is remembered per browser.
      ══════════════════════════════════════════════════════════════════════ #}
@@ -906,6 +807,105 @@
     <div class="dash-hidden-tray" id="hiddenTray" hidden>
       <p class="ds-eyebrow">Hidden panels</p>
       <div class="ds-row ds-row--wrap" id="hiddenTrayItems"></div>
+    </div>
+  </section>
+
+  {# ══════════════════════════════════════════════════════════════════════
+     LAYER 6 — Dough's Insight
+     The conversational close of the page. Everything above is what the
+     numbers say; this is where Dough explains them and says what to do
+     about it. It sits last because UAT users read the attention list first
+     — the narrative is the follow-up, not the opening.
+     ══════════════════════════════════════════════════════════════════════ #}
+  <section class="dash-copilot ds-card ds-card--hero ds-card--wash-ai ds-rise"
+           style="--ds-delay:460ms" aria-labelledby="copilot-h">
+    <div class="dash-copilot__head">
+      <span class="dash-copilot__mark dough-avatar" aria-hidden="true">
+        <span data-dough="reviewing" data-dough-size="36" data-dough-tight></span>
+      </span>
+      <h2 class="dash-copilot__title" id="copilot-h">Dough's Insight</h2>
+      <a href="/chat" class="ds-btn ds-btn--ghost ds-btn--sm dash-copilot__full">
+        Ask Dough
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 17 17 7"/><path d="M8 7h9v9"/></svg>
+      </a>
+    </div>
+
+    <!-- Briefing: the deterministic part renders instantly, the written
+         narrative arrives from the model a moment later. -->
+    <div class="dash-copilot__body">
+      <p class="dash-copilot__lede">
+        {{ period_label }} versus <span class="dash-copilot__prev">{{ compare_label }}</span>.
+      </p>
+
+      <ul class="dash-brief" id="dashBrief">
+        {% for change in [
+          ('Spending', outgo_delta, False),
+          ('Income', income_delta, True),
+          ('Net cash flow', net_delta, True)
+        ] %}
+        {% set label, val, higher_good = change %}
+        <li class="dash-brief__item">
+          <span class="dash-brief__bullet {{ 'is-good' if ((val >= 0) == higher_good) else 'is-bad' }}"
+                aria-hidden="true">{{ '▲' if val > 0 else '▼' if val < 0 else '—' }}</span>
+          <span>{{ label }}
+            {% if val == 0 %}unchanged{% else %}{{ 'up' if val > 0 else 'down' }}
+            <b class="ds-num">{{ val|abs|money }}</b>{% endif %}
+          </span>
+        </li>
+        {% endfor %}
+      </ul>
+
+      <!-- Model-written narrative + opportunities -->
+      <div class="dash-copilot__ai" id="copilotNarrative" aria-live="polite">
+        <div class="dash-copilot__loading" id="copilotLoading">
+          {# Dough is visibly doing the work rather than a bare skeleton —
+             the wait is the moment the character is most useful. The text
+             carries the state for screen readers and reduced-motion. #}
+          <div class="dough-working">
+            <span data-dough="searching" data-dough-size="42"></span>
+            <span class="dough-working__label">Dough is digging through your numbers…</span>
+          </div>
+          <span class="ds-skeleton ds-skeleton--text" style="width:92%"></span>
+          <span class="ds-skeleton ds-skeleton--text" style="width:74%"></span>
+        </div>
+      </div>
+
+      <div class="dash-opps" id="copilotOpps" hidden></div>
+
+      <!-- Answer surface for an inline question -->
+      <div class="dash-answer" id="copilotAnswer" hidden>
+        <div class="dash-answer__q" id="copilotAnswerQ"></div>
+        <div class="dash-answer__a" id="copilotAnswerA" aria-live="polite"></div>
+        <div class="dash-answer__foot">
+          <button type="button" class="ds-btn ds-btn--ghost ds-btn--sm" id="copilotAnswerClose">Dismiss</button>
+          <a href="/chat" class="ds-btn ds-btn--ghost ds-btn--sm">Keep talking to Dough →</a>
+        </div>
+      </div>
+    </div>
+
+    <!-- Ask -->
+    <form class="dash-ask" id="copilotForm">
+      <label class="ds-sr" for="copilotInput">Ask Dough about your finances</label>
+      <input type="text" id="copilotInput" class="dash-ask__input ds-control__input" autocomplete="off"
+             placeholder="Ask Dough anything about your money…">
+      <button type="submit" class="ds-btn ds-btn--primary ds-btn--sm dash-ask__send" aria-label="Send question">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 19V5"/><path d="m5 12 7-7 7 7"/></svg>
+      </button>
+    </form>
+
+    <div class="dash-suggest" id="copilotSuggest" role="group" aria-label="Suggested questions">
+      {# Seeded from the page's own data so the first suggestions are always
+         relevant; replaced by the model's own once the briefing lands. #}
+      {% set seed = [] %}
+      {% if attention and attention[0].severity in ('critical','warning') %}
+        {% set _ = seed.append('Why ' ~ (attention[0].title|lower) ~ '?') %}
+      {% endif %}
+      {% set _ = seed.append('Where did my money go this period?') %}
+      {% set _ = seed.append('How can I cut spending?') %}
+      {% set _ = seed.append('Compare this month to last month') %}
+      {% for q in seed[:4] %}
+      <button type="button" class="ds-chip ds-chip--ai" data-ask="{{ q }}">{{ q }}</button>
+      {% endfor %}
     </div>
   </section>
 
