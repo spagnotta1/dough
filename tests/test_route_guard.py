@@ -84,9 +84,19 @@ PASSWORD = 'hunter2boat'
 #:
 #: They are also the safest possible public routes: two templates, no query, no
 #: database access, and no request input reaches either one.
+# `finance_sync.api_plaid_webhook` is the one entry here that is neither a
+# login flow, a health probe nor a marketing page.  [UAT round 1] Plaid POSTs
+# it to say a linked Item has new data — including the one signal that tells us
+# an account's transaction history has finished importing — and Plaid has no
+# session with us to present. It authenticates instead with an ES256 signature
+# over the request body, verified fail-closed in
+# `finance_sync/plaid_webhook.py`; `@public` waives the session, not the
+# credential. See tests/test_plaid_webhook.py, which pins that an unsigned or
+# tampered request gets 401 and changes nothing.
 PUBLIC_ENDPOINTS = {'api_v1_auth.login', 'auth.forgot_password', 'auth.join',
                     'auth.login', 'auth.register', 'auth.reset_password',
                     'auth.setup', 'auth.verify_email', 'core.dashboard',
+                    'finance_sync.api_plaid_webhook',
                     'health.live', 'health.ready', 'legal.privacy',
                     'legal.terms', 'static'}
 
@@ -228,6 +238,18 @@ def test_public_endpoint_set_is_minimal(guard_app):
     be public to do their job, since both are read by somebody deciding whether
     to sign up and Plaid's review fetches the privacy URL anonymously.
 
+    `finance_sync.api_plaid_webhook` is the exception to the shape of this list
+    and the one worth pausing on.  [UAT round 1] It is not a login flow, a probe
+    or a page -- it is a mutating endpoint that starts syncs and rewrites
+    connection status, and it is `@public` because the caller is Plaid's
+    servers, which have no session with us. Unlike every other entry it is
+    therefore not "safe because it does nothing": it is safe because it carries
+    its own credential, an ES256 signature over the exact request body that
+    `finance_sync/plaid_webhook.py` verifies fail-closed before the handler
+    runs. An anonymous request that is merely *unsigned* never reaches the
+    handler at all. It is also the one entry here that is `@csrf_exempt`, argued
+    separately in tests/test_csrf.py.
+
     `@public` suppresses the *login redirect*. It suppresses nothing else. It
     does not disable tenancy (an anonymous request binds no household, so a
     scoped query on that path raises rather than leaking), it does not disable
@@ -243,6 +265,7 @@ def test_public_endpoint_set_is_minimal(guard_app):
                                  'auth.join', 'auth.login', 'auth.register',
                                  'auth.reset_password', 'auth.setup',
                                  'auth.verify_email', 'core.dashboard',
+                                 'finance_sync.api_plaid_webhook',
                                  'health.live', 'health.ready', 'legal.privacy',
                                  'legal.terms', 'static'}
     actual = {r.endpoint for r in guard_app.url_map.iter_rules()} & PUBLIC_ENDPOINTS

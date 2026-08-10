@@ -276,6 +276,24 @@ class BaseConfig:
     # credential as half a credential.
     PLAID_SECRET = _plaid_secret()
     PLAID_ENV = os.environ.get('PLAID_ENV', 'sandbox')
+    # Absolute https URL of `/api/plaid/webhook`, e.g.
+    # https://dough.example.com/api/plaid/webhook.
+    #
+    # Optional, and the app works without it -- but not well. Plaid finishes an
+    # Item's historical backfill minutes to hours after Link closes, and this is
+    # the only way it can tell us. Unset, the backfill watcher's fixed retry
+    # schedule is all that reclaims the missing history, and a slow institution
+    # can outlast it. Set, the retries almost never fire.
+    #
+    # Not read by the adapter through `_env_setting`: unlike the credentials,
+    # this is one URL per deployment, not one per Plaid environment.
+    PLAID_WEBHOOK_URL = os.environ.get('PLAID_WEBHOOK_URL', '')
+
+    # The retry threads in `finance_sync/plaid_backfill.py` that reclaim an
+    # Item's history when the webhook does not arrive. On by default, and the
+    # only reason to switch it off is a deployment that has decided one month
+    # of transactions is enough -- see that module for what the retries are for.
+    PLAID_BACKFILL_ENABLED = _bool('PLAID_BACKFILL_ENABLED', True)
 
     SYNC_AUTO_ENABLED = _bool('SYNC_AUTO_ENABLED', True)
     SYNC_INTERVAL_HOURS = float(os.environ.get('SYNC_INTERVAL_HOURS', 12))
@@ -484,6 +502,13 @@ class TestingConfig(BaseConfig):
     AUTO_UPGRADE_DB = False
     SYNC_AUTO_ENABLED = False
     SYNC_SYNCHRONOUS = True
+    # No backfill watcher threads under test, for the reason SYNC_AUTO_ENABLED
+    # is off: a watcher sleeps for a minute before doing anything, so leaving it
+    # on would attach a thread to most Plaid tests that outlives the test and
+    # then syncs against a database that has been torn down.
+    # tests/test_plaid_backfill.py turns it on with a schedule measured in
+    # milliseconds, which is the only way the loop gets exercised.
+    PLAID_BACKFILL_ENABLED = False
     # No backup thread under test. The suite's database is `sqlite://` or a
     # tmp_path file, so `backup_target` would decline anyway -- this says so at
     # the level of intent rather than relying on that.

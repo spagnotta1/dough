@@ -76,6 +76,13 @@ class PlaidAdapter(FinancialInstitutionAdapter):
     supports_holdings = True
     accent_color = "#000000"
 
+    # Set by _fetch_transactions_raw when Plaid answers PRODUCT_NOT_READY: the
+    # sync succeeded but returned nothing because the first pull is still
+    # running. A class-level default is safe because the engine builds a fresh
+    # adapter per sync (`SyncEngine._build_adapter`), so this never carries
+    # over from one run to the next.
+    transactions_not_ready = False
+
     # -- Plaid Link handshake (not the base OAuth authorization_url/connect) --
 
     def create_link_token(self, client_user_id: str) -> str:
@@ -101,8 +108,34 @@ class PlaidAdapter(FinancialInstitutionAdapter):
         redirect_uri = self._env_setting("PLAID_REDIRECT_URI")
         if redirect_uri:
             payload["redirect_uri"] = redirect_uri
+        # Registers the Item for webhooks at creation time — the only moment
+        # Plaid lets us do it without a separate call. Without it Plaid has no
+        # way to tell us the 730-day backfill above has landed, and the only
+        # thing that reclaims the history is the retry schedule in
+        # plaid_backfill.py.
+        webhook = self.webhook_url()
+        if webhook:
+            payload["webhook"] = webhook
         data = self._plaid_call("link/token/create", payload)
         return data["link_token"]
+
+    @staticmethod
+    def webhook_url() -> str:
+        """Where Plaid should POST this deployment's Item updates (or "")."""
+        return os.environ.get("PLAID_WEBHOOK_URL", "").strip()
+
+    def update_webhook(self, url: str) -> None:
+        """Point an *already linked* Item at `url`.
+
+        `create_link_token` covers every Item linked from now on. This covers
+        the ones linked before the deployment had a webhook — including, in
+        practice, every connection the first round of testers made. Without it
+        the fix would only reach people who re-link.
+        """
+        self._plaid_call("item/webhook/update", {
+            "access_token": self.credentials["access_token"],
+            "webhook": url,
+        })
 
     def connect_with_public_token(self, public_token: str) -> Dict[str, Any]:
         """Exchange a Link `public_token` for a stored access token + item id."""
@@ -132,16 +165,36 @@ class PlaidAdapter(FinancialInstitutionAdapter):
         # transactions/sync is paginated (up to `count` transactions per page,
         # `has_more` signals another page at `next_cursor`) — drain every page
         # so a fresh connection's full backlog lands in one sync.
+        #
+        # `has_more: false` means "nothing more is ready right now", **not**
+        # "this Item's history is complete". Plaid keeps backfilling after the
+        # exchange returns, and the `days_requested` window below only says how
+        # far back it will eventually reach — see `finance_sync/plaid_backfill.py`
+        # for the half of this that decides when to come back and ask again.
         merged: Dict[str, Any] = {"added": [], "modified": [], "removed": []}
         while True:
             if not self.is_live:
                 data = self.sandbox.sync_transactions(cursor)
             else:
-                data = self._plaid_call("transactions/sync", {
-                    "access_token": self.credentials["access_token"],
-                    "cursor": cursor or "",
-                    "count": 500,
-                })
+                try:
+                    data = self._plaid_call("transactions/sync", {
+                        "access_token": self.credentials["access_token"],
+                        "cursor": cursor or "",
+                        "count": 500,
+                    })
+                except AuthenticationError as exc:
+                    if getattr(exc, "plaid_error_code", None) != "PRODUCT_NOT_READY":
+                        raise
+                    # The Item exists and the token is good; Plaid simply has
+                    # not finished its first pull. Failing the sync here marks
+                    # a perfectly healthy connection `error` and shows the user
+                    # a scary message about a bank that is fine — and the retry
+                    # that fixes it is already scheduled. Report nothing new
+                    # instead, and leave the cursor untouched so the next
+                    # attempt asks the same question.
+                    self.transactions_not_ready = True
+                    return {"added": [], "modified": [], "removed": [],
+                            "next_cursor": cursor}
             for key in merged:
                 merged[key].extend(data.get(key) or [])
             cursor = data.get("next_cursor", cursor)

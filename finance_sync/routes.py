@@ -18,7 +18,7 @@ from flask import (
     url_for,
 )
 
-from dough.auth import current_user
+from dough.auth import csrf_exempt, current_user, public
 from dough.services import audit
 from dough.tenancy import current_household, find_owned
 from models import (
@@ -31,6 +31,7 @@ from models import (
     SyncRun,
 )
 
+from . import plaid_backfill, plaid_webhook
 from .adapters import get_adapter_class
 from .exceptions import SyncError, UnsupportedInstitutionError
 from .repository import SyncRepository
@@ -247,7 +248,49 @@ def api_plaid_exchange():
     scheduler = get_scheduler()
     if scheduler:
         scheduler.run_sync(trigger="connect", connection_id=connection.id, queue=True)
+    # The connect sync above gets the user something to look at immediately; it
+    # does *not* get them their history. Plaid is still backfilling at this
+    # point and will answer `has_more: false` to a question it has not finished
+    # -- which is how one UAT tester ended up with one month of a promised two
+    # years. The watcher is what comes back for the rest.  [UAT round 1]
+    #
+    # `_get_current_object()`, not `current_app`: the watcher runs on its own
+    # thread, and the proxy resolves against *that* thread's app context, which
+    # does not exist. It has to be handed the real application.
+    plaid_backfill.watch(current_app._get_current_object(), connection.id,
+                         connection.household_id)
     return jsonify(connection.to_dict()), 201
+
+
+@sync_bp.route("/api/plaid/webhook", methods=["POST"])
+@public
+@csrf_exempt
+def api_plaid_webhook():
+    """Plaid's notification that an Item has changed.
+
+    `@public` and `@csrf_exempt` because the caller is Plaid's servers: there is
+    no session to require and no token to carry. What replaces both is the
+    signature check below -- see `finance_sync/plaid_webhook.py`, which is
+    fail-closed, and `tests/test_csrf.py`, where this exemption is argued for
+    alongside the only other one.
+
+    Always 200 once verified. Plaid retries a non-2xx, and every failure past
+    this point (an unknown Item, a webhook type we do not act on, a sync that
+    errors) is one that redelivery cannot fix -- retrying it just means handling
+    the same dead event five more times.
+    """
+    if not plaid_webhook.verify(request.get_data(),
+                                request.headers.get(plaid_webhook.HEADER)):
+        # Deliberately terse. This is an internet-facing endpoint and the
+        # response is the one thing an attacker probing it can read; which of
+        # the several checks in `verify` refused is in the log, not the body.
+        return jsonify({"error": "Invalid signature"}), 401
+    payload = request.get_json(silent=True) or {}
+    result = plaid_backfill.handle_webhook(current_app._get_current_object(), payload)
+    current_app.logger.info("Plaid webhook %s/%s: %s",
+                            payload.get("webhook_type"),
+                            payload.get("webhook_code"), result)
+    return jsonify({"ok": True})
 
 
 @sync_bp.route("/api/connections/<int:connection_id>", methods=["DELETE"])
@@ -261,6 +304,10 @@ def api_delete_connection(connection_id: int):
         _service.disconnect(connection_id)
     except SyncError as exc:
         return jsonify({"error": str(exc)}), 404
+    # Before the audit record and after the row is gone: a backfill watcher
+    # sleeping on this connection would otherwise wake up an hour from now and
+    # sync an id that no longer exists.
+    plaid_backfill.stop_watching(connection_id)
     audit.record(EVENT_CONNECTION_REMOVED, entity_type="connection",
                  entity_id=connection_id, metadata=was)
     return jsonify({"ok": True})

@@ -49,6 +49,23 @@
 }
 .conn-row__error { color: var(--danger-ink); }
 
+/* Backfill progress. [UAT round 1] Sits under the meta line and wraps, because
+   it is a sentence explaining a wait rather than a status word -- the point is
+   that a half-imported connection reads as a known state instead of a bug.
+   max-width so it does not stretch across a wide screen into an unreadable
+   single line. */
+.conn-row__history {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  max-width: 52ch;
+  font-size: var(--f-xs);
+  color: var(--ink-faint);
+  margin: 4px 0 0;
+}
+.conn-row__history .ds-spin { flex: none; margin-top: 2px; }
+.conn-row__history--warn { color: var(--warn-ink); }
+
 /* ── Synced accounts table ────────────────────────────────────────────── */
 
 .conn-mask { color: var(--ink-faint); }

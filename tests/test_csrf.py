@@ -256,14 +256,35 @@ def test_no_unsafe_route_accepts_a_missing_token(csrf_app, signed_in):
         f'  {m} {p} -> {code} ({ep})' for m, p, ep, code in leaked)
 
 
-def test_the_csrf_exempt_set_is_exactly_the_api_login(csrf_app):
-    """One exemption, and it had to be argued for.  [Phase 10]
+def test_the_csrf_exempt_set_is_exactly_the_api_login_and_the_plaid_webhook(csrf_app):
+    """Two exemptions, and each had to be argued for.  [Phase 10, UAT round 1]
 
     This was `== set()` from Phase 6 to Phase 9, pinning the set at zero so an
     exemption could not be added as a quick way to make a failing test pass.
     Phase 10 spends it, once, on `api_v1_auth.login`.
 
-    **Why that view and no other.** `@csrf_exempt` was written for "machine
+    **`finance_sync.api_plaid_webhook`, the second.**  [UAT round 1] The caller
+    is Plaid's servers announcing that a linked Item has new data — most
+    importantly that its historical backfill has finished, which is the only
+    authoritative signal that a connection's transaction history is actually
+    complete. There is no browser in this request and no session behind it, so
+    there is nothing a CSRF token could be bound to.
+
+    The safety argument is the same shape as the login's, and it has to be made
+    separately because this endpoint does not accept a password. What protects
+    it is that it *has* its own credential: every accepted request carries an
+    ES256 signature over the exact request body, verified against Plaid's
+    published key. `finance_sync/plaid_webhook.py` is fail-closed on every path
+    — no header, wrong algorithm, unfetchable key, bad signature, stale
+    timestamp and mismatched body hash all refuse — so an unsigned cross-site
+    POST reaches nothing. That is a strictly stronger check than a CSRF token,
+    which only proves the request came from our own page.
+
+    What it is *not* is a precedent for "webhooks are exempt". The exemption is
+    paid for by the signature verification, and a second webhook without one
+    would not qualify.
+
+    **Why `api_v1_auth.login`, the first.** `@csrf_exempt` was written for "machine
     callers that authenticate some other way", and the API login is the one
     route that cannot participate in CSRF even in principle: there is no session
     yet to bind a token to, because obtaining a credential is what the endpoint
@@ -285,7 +306,7 @@ def test_the_csrf_exempt_set_is_exactly_the_api_login(csrf_app):
     """
     exempt = {endpoint for endpoint, view in csrf_app.view_functions.items()
               if getattr(view, '_dough_csrf_exempt', False)}
-    assert exempt == {'api_v1_auth.login'}
+    assert exempt == {'api_v1_auth.login', 'finance_sync.api_plaid_webhook'}
 
 
 def test_every_post_form_in_the_templates_carries_the_field():

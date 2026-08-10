@@ -1001,6 +1001,18 @@ class InstitutionConnection(TenantScopedMixin, db.Model):
     last_sync_at     = db.Column(db.DateTime, nullable=True)
     last_sync_status = db.Column(db.String(20), nullable=True)  # success | partial | error
     last_error       = db.Column(db.Text, nullable=True)
+    # How much of this connection's *history* has arrived, which is a different
+    # question from whether the last sync worked -- and the one UAT round 1
+    # found nobody could answer. An aggregator keeps backfilling for minutes to
+    # hours after linking, so a connection can be `connected`, `last_sync_status
+    # = success`, and still be holding one month of a promised two years.
+    #   importing -- the provider is still backfilling; more is coming.
+    #   complete  -- the full requested window has arrived.
+    #   partial   -- we stopped waiting without confirmation. Not an error:
+    #                the data present is sound, there may just be less of it.
+    #   NULL      -- not applicable (adapters that hand over everything at once)
+    #                or predates this column.
+    history_status   = db.Column(db.String(12), nullable=True)
     created_at       = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
     updated_at       = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -1024,6 +1036,7 @@ class InstitutionConnection(TenantScopedMixin, db.Model):
             'status': self.status,
             'last_sync_at': self.last_sync_at.strftime('%Y-%m-%d %H:%M:%S') if self.last_sync_at else None,
             'last_sync_status': self.last_sync_status,
+            'history_status': self.history_status,
             'last_error': self.last_error,
             'created_at': self.created_at.strftime('%Y-%m-%d %H:%M:%S'),
             'account_count': len(self.accounts),

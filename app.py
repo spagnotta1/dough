@@ -58,6 +58,7 @@ from dough.services.networth import wealth_snapshot
 from dough.tenancy import TenantContextMissing, tenant_scope, unscoped
 from models import AppUser, Household, db
 from finance_sync.routes import sync_bp
+from finance_sync import plaid_backfill
 from finance_sync.scheduler import init_scheduler
 
 # The one-off stamp that adopts a database built by the old inline bootstrap.
@@ -708,6 +709,7 @@ def create_app(test_config=None, config_name=None):
                        autostart=False)
 
     install_backups(app)   # verified database snapshots on a schedule [10.6]
+    plaid_backfill.install(app)  # adopt pre-webhook Plaid items [UAT round 1]
     return app
 
 def _ensure_dev_cert(base_dir):
