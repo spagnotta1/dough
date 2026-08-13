@@ -108,7 +108,24 @@ def dashboard():
 
     start_date_str = request.args.get('start_date') or session.get('start_date')
     end_date_str = request.args.get('end_date') or session.get('end_date')
-    account_filter = request.args.get('account') or session.get('account', 'both')
+    # `or 'both'`, not `session.get('account', 'both')`, and it is the whole
+    # bug behind "I filtered the transactions list and the dashboard went
+    # blank".  [UAT round 1]
+    #
+    # Both pages share one session key for the account filter and spell
+    # "everything" differently: this page says 'both', the transactions filter
+    # form says nothing at all — its "All Accounts" option has value="", which
+    # `sticky_filter` turns into None and stores. So every submission of that
+    # form — including the date presets, which submit the whole form — left
+    # `session['account'] = None`, the key was *present*, and the default
+    # never applied. `account_filter != 'both'` was then true, and the page
+    # queried `account_name == None`, which matches nothing anywhere.
+    #
+    # It read as a date bug because the dates are what the reader had just
+    # touched, and the account select gave nothing away: with the value None
+    # no <option> is selected, so the browser shows the first one and the
+    # panel says "Both accounts" while the query says otherwise.
+    account_filter = request.args.get('account') or session.get('account') or 'both'
 
     # `date`, never `datetime`, and it is a fix rather than tidying — the same
     # one `services/transactions.build_transaction_query` carries, which is why

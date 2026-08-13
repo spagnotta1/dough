@@ -198,6 +198,38 @@ def test_an_empty_window_over_a_stocked_ledger_still_gets_filter_advice(client):
     assert "Link an account and I'll take it from there" not in html
 
 
+def test_filtering_the_transaction_list_does_not_blank_the_dashboard(client):
+    """Reported as "I filter by This Month on transactions, then the dashboard
+    says there are no transactions".  [UAT round 1]
+
+    It was never about the dates. The two pages share `session['account']` and
+    disagree about how to spell "everything": the dashboard says 'both', and
+    the transactions filter form's "All Accounts" option has value="", which
+    `sticky_filter` stores as None. Every submission of that form — the date
+    preset chips submit the whole form — planted that None, and the dashboard
+    then asked for `account_name IS NULL`, which no row can satisfy.
+    """
+    from datetime import date
+
+    from models import Transaction, db
+
+    db.session.add(Transaction(account_name="Checking", date=date(2026, 3, 5),
+                               description="AJI SUSHI", amount=-77.31, category="Food"))
+    db.session.commit()
+
+    # Exactly what the filter form sends: every field, account left on "All".
+    client.get("/transactions?account=&category=&start_date=2026-03-01"
+               "&end_date=2026-03-31&type=&search=")
+
+    html = client.get("/").get_data(as_text=True)
+
+    assert "No transactions in" not in html
+    assert "-77.31" in html
+    # And the panel's account select agrees with the query it just ran, rather
+    # than showing "Both accounts" only because nothing else was selected.
+    assert '<option value="both" selected>Both accounts</option>' in html
+
+
 def test_a_connection_awaiting_its_first_sync_is_not_asked_to_connect_again(client):
     """Linked, but the sync has not landed: the ledger is still empty and the
     page still has nothing to show. Repeating the invitation there reads as the
