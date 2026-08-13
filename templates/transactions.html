@@ -378,7 +378,16 @@ if (window.innerWidth <= 640) {
 // ── Date presets ──────────────────────────────────────────────────────────────
 function applyDatePreset(preset) {
     var today = new Date(), y = today.getFullYear(), m = today.getMonth();
-    var fmt = function(d) { return d.toISOString().split('T')[0]; };
+    // Local calendar fields, not toISOString(). These dates are built with
+    // `new Date(y, m, 1)` — local midnight — and toISOString() converts to
+    // UTC first, so anywhere west of Greenwich "This Month" submitted the
+    // last day of the *previous* month, and "Last Year" started on Dec 31.
+    // Same formatter as presetRange() in static/js/dashboard.js.
+    var fmt = function(d) {
+        return d.getFullYear() + '-' +
+               String(d.getMonth() + 1).padStart(2, '0') + '-' +
+               String(d.getDate()).padStart(2, '0');
+    };
     var start, end = new Date(today);
     if (preset === 'this_month')  { start = new Date(y, m, 1); }
     else if (preset === 'last_month')  { start = new Date(y, m - 1, 1); end = new Date(y, m, 0); }
