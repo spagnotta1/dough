@@ -764,8 +764,13 @@
 
       {# ── Ranked categories ── #}
       <section class="ds-card ds-card--flush dash-panel" data-panel="ranked">
-        {{ panel_head('ranked', 'Top categories', 'Ranked by amount') }}
+        {{ panel_head('ranked', 'Top categories', 'Ranked by amount · click a bar for its transactions') }}
         <div class="dash-panel__body" id="panel-body-ranked">
+          {# A canvas cannot be tabbed into, so the drill-down on these bars is
+             pointer-only. The keyboard and screen-reader equivalent is not
+             missing, it is the "Spending by category" table above: every row
+             already links its inbound and outbound totals to the same filtered
+             transaction list these bars open. #}
           <div class="dash-split">
             <div class="dash-split__half">
               <div class="dash-split__head">
@@ -775,7 +780,7 @@
                 </div>
               </div>
               <div class="dash-chart dash-chart--short"><canvas id="incomeChart" role="img"
-                   aria-label="Income by category, ranked"></canvas></div>
+                   aria-label="Income by category, ranked. Click a bar to see that category's transactions."></canvas></div>
             </div>
             <div class="dash-split__half">
               <div class="dash-split__head">
@@ -785,7 +790,7 @@
                 </div>
               </div>
               <div class="dash-chart dash-chart--short"><canvas id="outgoChart" role="img"
-                   aria-label="Spending by category, ranked"></canvas></div>
+                   aria-label="Spending by category, ranked. Click a bar to see that category's transactions."></canvas></div>
             </div>
           </div>
         </div>
@@ -933,6 +938,11 @@
 
 </div>
 
+{# `drill` is the dashboard's own filter state, handed to the charts so a click
+   on a bar can open the transaction list showing exactly the rows that bar was
+   drawn from. Server-rendered rather than read back off the URL: the SPA router
+   leaves the address bar on whatever the last GET form set, and a preset period
+   never writes a query string at all. #}
 <script id="dashData" type="application/json">
 {{ {
   'monthlyIncome': monthly_income,
@@ -943,7 +953,13 @@
   'budgetMap': chart_budget_map,
   'periodMonths': period_months,
   'allCategories': all_categories,
-  'forecast': forecast
+  'forecast': forecast,
+  'drill': {
+    'url': url_for('transactions.index'),
+    'startDate': start_date,
+    'endDate': end_date,
+    'account': account_filter
+  }
 }|tojson }}
 </script>
 <script src="{{ url_for('static', filename='js/dashboard.js') }}"></script>

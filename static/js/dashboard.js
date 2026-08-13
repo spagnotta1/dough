@@ -319,11 +319,56 @@
       }, { negatives: negative });
     };
 
+    /* ── Drill-down ───────────────────────────────────────────────────
+       A bar is a filtered slice of the ledger, so clicking one opens that
+       slice in the transaction list. The URL carries the dashboard's own
+       period and account alongside the category, because the transaction
+       list's filters are sticky in the session: sending only `category`
+       would land on that category crossed with whatever range the user last
+       looked at over there, showing a different number than the bar did.
+
+       The filter state comes from the server-rendered payload rather than
+       from location.search — the SPA router leaves the address bar on the
+       last GET form's query string, and a preset period never writes one. */
+    function drillUrl(category, direction) {
+      var d = data.drill;
+      if (!d || !d.url || !category) return null;
+      var q = [];
+      function add(k, v) {
+        if (v) q.push(encodeURIComponent(k) + '=' + encodeURIComponent(v));
+      }
+      add('start_date', d.startDate);
+      add('end_date', d.endDate);
+      add('account', d.account);
+      add('category', category);
+      add('type', direction);
+      return d.url + (q.length ? '?' + q.join('&') : '');
+    }
+
+    /* Same route an ordinary in-app link takes, so a drill-down animates and
+       lands in history like the rest of the product. The hard load is the
+       fallback for when the router isn't present. */
+    function navigate(url) {
+      // These builders also back the enlarged chart in the focus modal, and
+      // that modal locks body scroll. The lock lives on <body>, which an SPA
+      // swap does not replace — leaving it set would strand the transaction
+      // list unscrollable.
+      var modal = document.getElementById('focusModal');
+      if (modal && !modal.hidden) closeFocus();
+      if (typeof window.spaNavigate === 'function') window.spaNavigate(url);
+      else window.location.href = url;
+    }
+
     /* ── Ranked category bars ─────────────────────────────────────────
        Horizontal bars, not a donut: past about six slices a donut becomes a
        legend-matching exercise, and length is read far more accurately than
-       angle. Single hue, because rank is already encoded by position. */
-    function rankedBars(id, field, color) {
+       angle. Single hue, because rank is already encoded by position.
+
+       Bars drill down on click. "Other" does not: it is the folded tail of
+       several categories and the transaction filter takes one category at a
+       time, so any URL built for it would show less than the bar it came
+       from. It stays un-clickable rather than quietly under-reporting. */
+    function rankedBars(id, field, color, direction) {
       return function () {
         var stats = data.categoryStats || {};
         var pairs = Object.keys(stats).map(function (cat) {
@@ -348,6 +393,20 @@
           options: CheckCharts.base({
             indexAxis: 'y',
             interaction: { mode: 'nearest', intersect: true },
+            onClick: function (_evt, els) {
+              var p = els && els.length ? top[els[0].index] : null;
+              if (!p || p.other) return;
+              var url = drillUrl(p.label, direction);
+              if (url) navigate(url);
+            },
+            /* The only affordance a canvas can offer — nothing here is a DOM
+               element that could carry :hover. Bars that do not drill keep
+               the default cursor, which is the honest signal. */
+            onHover: function (evt, els) {
+              var p = els && els.length ? top[els[0].index] : null;
+              var can = evt.native && evt.native.target;
+              if (can) can.style.cursor = (p && !p.other && drillUrl(p.label, direction)) ? 'pointer' : 'default';
+            },
             plugins: {
               legend: { display: false },
               tooltip: CheckCharts.tooltipFor(t, {
@@ -357,6 +416,11 @@
                     var total = ctx.dataset.data.reduce(function (s, v) { return s + v; }, 0);
                     var share = total ? Math.round(ctx.raw / total * 100) : 0;
                     return ' ' + money(ctx.raw) + '  ·  ' + share + '% of total';
+                  },
+                  footer: function (items) {
+                    var p = items && items.length ? top[items[0].dataIndex] : null;
+                    if (!p || p.other || !drillUrl(p.label, direction)) return '';
+                    return 'Click to see these transactions';
                   }
                 }
               })
@@ -381,8 +445,8 @@
         }, { horizontal: true, base: { right: 10 } });
       };
     }
-    B.incomeChart = rankedBars('incomeChart', 'inbound', P[2]);
-    B.outgoChart = rankedBars('outgoChart', 'outbound', P[1]);
+    B.incomeChart = rankedBars('incomeChart', 'inbound', P[2], 'inbound');
+    B.outgoChart = rankedBars('outgoChart', 'outbound', P[1], 'outgo');
 
     /* ── Budget vs. actual ────────────────────────────────────────────
        A bullet chart: the limit is a wide neutral track and the actual is a
