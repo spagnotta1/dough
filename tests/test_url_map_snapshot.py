@@ -65,6 +65,14 @@ EXPECTED_RULES = {
     ("/api/log/entries/<int:entry_id>", ("PUT",)),
     ("/api/net-worth", ("GET",)),
     ("/api/plaid/link-token", ("POST",)),
+    # The one route here with no session behind it. [UAT round 1] Plaid POSTs
+    # it to announce that a linked Item has new data -- above all that its
+    # historical backfill has finished, the signal that decides whether a user
+    # gets their full transaction history or the first month of it. Anonymous
+    # by necessity and authenticated by an ES256 signature over the request
+    # body instead; see tests/test_plaid_webhook.py, tests/test_route_guard.py
+    # and tests/test_csrf.py, which pin the three separate waivers that costs.
+    ("/api/plaid/webhook", ("POST",)),
     # ---------------------------------------------------------------------
     # The versioned API.  [Phase 10]
     #

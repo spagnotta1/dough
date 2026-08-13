@@ -268,6 +268,36 @@ The values carried over from `.env` point at localhost and will not work.
 Worth noticing that `PLAID_ENV` carries over as `production`, so this deployment
 talks to live Plaid, not the sandbox.
 
+## 8. Set `PLAID_WEBHOOK_URL`
+
+```
+railway variables --set PLAID_WEBHOOK_URL=https://<your-app>.up.railway.app/api/plaid/webhook
+```
+
+Skippable in the sense that the app boots and syncs without it, which is why it
+is worth being explicit about what skipping costs.
+
+Plaid does not finish fetching an Item's transaction history when Link closes.
+It returns the most recent ~30 days and keeps backfilling the requested two
+years in the background, for minutes at a small institution and considerably
+longer at some. This webhook is the only way it tells us that finished.
+
+Without it, `finance_sync/plaid_backfill.py` re-syncs each new connection on a
+fixed schedule that gives up after three hours and marks the connection
+`partial`. That is a backstop, not an equivalent: a slow bank outlasts it, and
+the user is left with a fraction of their history and a note saying so. UAT
+round 1 produced exactly that — two testers at the same bank, one with two years
+of transactions and one with a single month.
+
+Nothing else needs configuring. The endpoint is registered on every Item linked
+from then on, and existing Items are updated at the next startup
+(`plaid_backfill.install`). It is unauthenticated in the session sense and has
+to be, since Plaid has no session with us; each request carries an ES256
+signature over its own body, verified fail-closed before anything runs.
+
+Verify from the Plaid dashboard's webhook log after the next connect, or watch
+for `Plaid webhook TRANSACTIONS/...` in `railway logs`.
+
 ## Why one worker
 
 `Procfile` pins `--workers 1 --threads 4`. This is correctness, not thrift:

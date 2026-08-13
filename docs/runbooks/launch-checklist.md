@@ -127,6 +127,11 @@ is strangers rather than friends.
 - [ ] **Plaid production access granted.** `PLAID_ENV=production` with the
       matching secret. Their review requires a published privacy policy, which
       is why the item above comes first.
+- [ ] **`PLAID_WEBHOOK_URL` set** to `https://<host>/api/plaid/webhook`. Not
+      cosmetic: Plaid backfills an Item's history for minutes to hours after
+      linking, and this is the only signal that it finished. Unset, a slow bank
+      outlasts the retry schedule and the user keeps a fraction of their
+      history — the UAT round 1 report. See docs/deploy-railway.md §8.
 - [ ] **`ALLOW_REGISTRATION=1`** — the actual switch.
 
 ### Abuse, which is now somebody else's decision rather than yours

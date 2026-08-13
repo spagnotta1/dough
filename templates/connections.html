@@ -121,6 +121,28 @@
                 · <span class="conn-row__error">{{ c.last_error or c.status }}</span>
               {% endif %}
             </p>
+            {# History, which is a different question from whether the last sync
+               worked. [UAT round 1] A tester whose bank was still backfilling
+               saw "Last sync ... success" over one month of a promised two
+               years, concluded the import was finished and broken, and had no
+               way to tell that more was on its way. Only says something when
+               there is something to say -- a complete connection stays quiet. #}
+            {% if c.history_status == 'importing' %}
+            <p class="conn-row__history">
+              <svg class="ds-spin" width="12" height="12" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <circle opacity=".25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path opacity=".75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
+              </svg>
+              Still importing your older transactions — your bank sends these in
+              the background, so this can take a while. Nothing for you to do.
+            </p>
+            {% elif c.history_status == 'partial' %}
+            <p class="conn-row__history conn-row__history--warn">
+              Your bank stopped sending history before I had all of it, so some
+              older transactions may be missing. Everything here is accurate —
+              press Refresh to ask again.
+            </p>
+            {% endif %}
           </div>
         </div>
         <div class="ds-row">
@@ -301,7 +323,14 @@ function connectionsApp() {
                             return;
                         }
                         sessionStorage.removeItem('plaid_link_token');
-                        showToast(name + ' connected — first sync started.', 'success');
+                        // "recent transactions first", not "sync started".
+                        // [UAT round 1] The first sync only gets what the bank
+                        // has already handed over -- often a month -- and the
+                        // rest arrives over the following minutes. Saying so
+                        // here is what stops a short ledger reading as a
+                        // failed import; the row itself keeps the user posted.
+                        showToast(name + ' connected — pulling in your recent transactions now, ' +
+                                  'with older history to follow.', 'success');
                         self.pollUntilIdle();
                     },
                     onExit: (err) => {

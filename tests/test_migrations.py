@@ -40,7 +40,7 @@ from models import db  # noqa: E402
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 MIGRATIONS_DIR = os.path.join(REPO_ROOT, 'migrations')
 
-HEAD = '20260806_11_rulesrc'
+HEAD = '20260810_12_histstat'
 #: Revisions that several tests below target directly rather than through
 #: `head`. They exist to characterise *that* revision, and running the chain
 #: past it would mean asserting on a schema further along than the property

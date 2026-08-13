@@ -81,6 +81,61 @@ def test_exchange_creates_connection_and_linking_a_second_item_adds_another_row(
     assert {c.display_name for c in connections} == {"Chase", "Fidelity"}
 
 
+def test_exchange_starts_a_backfill_watcher(client, monkeypatch):
+    """Linking is not the end of the import.  [UAT round 1]
+
+    The connect sync fires immediately and gets whatever Plaid has ready, which
+    moments after linking is typically the initial ~30 days — a tester whose
+    bank was slower than most ended up with exactly that and no more. The
+    watcher is what comes back for the rest, so the exchange has to start one
+    every time; a connection nobody re-syncs keeps whatever the race gave it.
+    """
+    monkeypatch.setenv("PLAID_CLIENT_ID", "cid")
+    monkeypatch.setenv("PLAID_SECRET", "secret")
+    with patch("finance_sync.adapters.plaid_adapter.requests.post") as mock_post:
+        mock_post.side_effect = _plaid_side_effect("item-1")
+        with patch("finance_sync.plaid_backfill.watch") as watch:
+            resp = client.post("/api/connections/plaid/exchange",
+                               json={"public_token": "pt-1",
+                                     "institution_name": "Tompkins Mahopac"})
+    assert resp.status_code == 201, resp.get_json()
+    watch.assert_called_once()
+    connection = InstitutionConnection.query.filter_by(item_id="item-1").one()
+    assert watch.call_args.args[1] == connection.id
+
+
+def test_link_token_asks_for_two_years_and_registers_the_webhook(client, monkeypatch):
+    """Both halves of "get the whole history" are set at Item creation.
+
+    `days_requested` is what Plaid will eventually fetch; `webhook` is the only
+    way it can tell us it has finished fetching it. Neither can be added to an
+    Item later through Link, so a regression here is silent and only shows up
+    as a short ledger weeks afterwards.
+    """
+    monkeypatch.setenv("PLAID_CLIENT_ID", "cid")
+    monkeypatch.setenv("PLAID_SECRET", "secret")
+    monkeypatch.setenv("PLAID_WEBHOOK_URL", "https://dough.example.com/api/plaid/webhook")
+    with patch("finance_sync.adapters.plaid_adapter.requests.post") as mock_post:
+        mock_post.side_effect = _plaid_side_effect("item-1")
+        assert client.post("/api/plaid/link-token").status_code == 200
+    sent = mock_post.call_args.kwargs["json"]
+    assert sent["transactions"]["days_requested"] == 730
+    assert sent["webhook"] == "https://dough.example.com/api/plaid/webhook"
+
+
+def test_link_token_omits_the_webhook_when_none_is_configured(client, monkeypatch):
+    """A local install has no publicly reachable URL. Sending an empty one would
+    have Plaid reject the whole link-token call, taking the connect flow down
+    with it — the backfill watcher covers this case instead."""
+    monkeypatch.setenv("PLAID_CLIENT_ID", "cid")
+    monkeypatch.setenv("PLAID_SECRET", "secret")
+    monkeypatch.delenv("PLAID_WEBHOOK_URL", raising=False)
+    with patch("finance_sync.adapters.plaid_adapter.requests.post") as mock_post:
+        mock_post.side_effect = _plaid_side_effect("item-1")
+        assert client.post("/api/plaid/link-token").status_code == 200
+    assert "webhook" not in mock_post.call_args.kwargs["json"]
+
+
 def test_exchange_missing_public_token_400(client, monkeypatch):
     monkeypatch.setenv("PLAID_CLIENT_ID", "cid")
     monkeypatch.setenv("PLAID_SECRET", "secret")
