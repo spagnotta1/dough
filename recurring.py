@@ -16,6 +16,15 @@ Splits recurring outflows into two kinds:
   amount* at a tight monthly interval at least three times — the signature of
   an automated billing system, not a human ordering "the usual".
 
+Which tier a transaction lands in is decided by the *words* in the household's
+own category name, not by an exact match against a fixed list — categories are
+free text, and 'Education' or 'Insurance' name the same obligation as
+'Student Loan' or 'Insurance Payment'.
+
+Payees get renamed by their import source over time, so groups are merged
+across wordings and each group is labelled with the wording on its most recent
+charge — the name the next charge will arrive under.
+
 Groups whose most recent hit is older than ``RECENCY_DAYS`` (measured against
 the newest transaction in the data, not the wall clock) are treated as
 cancelled/paid off and excluded. Groups the user has manually dismissed
@@ -26,11 +35,30 @@ excluded — human-in-the-loop wins over any heuristic.
 import re
 from datetime import timedelta
 
-BILL_CATEGORIES = {'Student Loan', 'Auto Loan', 'Credit Card', 'Insurance Payment',
-                   'Utilities', 'Rent', 'Mortgage'}
-SUBSCRIPTION_CATEGORIES = {'Subscriptions'}
+# Categories are free text the household names itself — there is no fixed list
+# to match against. Someone who files their student-loan servicers under
+# 'Education' and their auto policy under 'Insurance' means exactly what the
+# person who typed 'Student Loan' and 'Insurance Payment' meant, and an
+# exact-string set silently disagreed: their loan payments fell past the bill
+# tier into the strict tier and surfaced as *subscriptions*. So classify on the
+# words in the category name instead.
+#
+# Whole words, not substrings: 'rent' as a substring also matches 'Parenting'.
+BILL_CATEGORY_WORDS = {
+    'loan', 'loans', 'mortgage', 'mortgages', 'rent', 'lease',
+    'insurance', 'premium', 'premiums', 'utility', 'utilities',
+    'bill', 'bills', 'debt', 'education', 'tuition',
+    'childcare', 'daycare', 'hoa',
+}
+# Phrases whose individual words are too generic to list on their own.
+BILL_CATEGORY_PHRASES = ('credit card', 'car payment', 'student debt')
+
+SUBSCRIPTION_CATEGORY_WORDS = {'subscription', 'subscriptions',
+                               'membership', 'memberships', 'streaming'}
+
 # Money movement, not spending — never a bill or subscription.
-EXCLUDED_CATEGORIES = {'Transfer', 'Income', 'Investments'}
+EXCLUDED_CATEGORY_WORDS = {'transfer', 'transfers', 'income',
+                           'investment', 'investments'}
 
 RECENCY_DAYS = 183  # ~6 months
 
@@ -40,6 +68,25 @@ _AVG_MONTH_DAYS = 30.44
 def normalize_description(description):
     """Strip digits and collapse whitespace so 'INVOICE 1234' == 'INVOICE 5678'."""
     return re.sub(r'\s+', ' ', re.sub(r'\d+', '', description or '')).strip().lower()
+
+
+def _category_words(category):
+    return set(re.findall(r'[a-z]+', (category or '').lower()))
+
+
+def is_bill_category(category):
+    """Whether a household's category name describes an obligatory payment."""
+    name = (category or '').lower()
+    return (any(phrase in name for phrase in BILL_CATEGORY_PHRASES)
+            or bool(BILL_CATEGORY_WORDS & _category_words(category)))
+
+
+def is_subscription_category(category):
+    return bool(SUBSCRIPTION_CATEGORY_WORDS & _category_words(category))
+
+
+def is_excluded_category(category):
+    return bool(EXCLUDED_CATEGORY_WORDS & _category_words(category))
 
 
 def _related(a, b):
@@ -74,11 +121,29 @@ def _merge_related(groups):
     return clusters
 
 
+def _latest(txns):
+    """The transaction whose wording should name the group.
+
+    A merged group spans more than one wording of the same payee, and the
+    current one is whatever the newest charge is called — a row must not stay
+    labelled with an import format the bank stopped sending. Ties on the same
+    date go to the wording used most often that day rather than to whichever
+    order the merge happened to append in.
+    """
+    newest = max(t['date'] for t in txns)
+    same_day = [t for t in txns if t['date'] == newest]
+    counts = {}
+    for t in same_day:
+        counts[t['description']] = counts.get(t['description'], 0) + 1
+    winner = max(counts, key=lambda d: (counts[d], d))
+    return next(t for t in same_day if t['description'] == winner)
+
+
 def _summarize(keys, txns, monthly_amount):
     txns = sorted(txns, key=lambda t: t['date'])
     gaps = [(txns[i + 1]['date'] - txns[i]['date']).days for i in range(len(txns) - 1)]
     gap = _median(gaps)
-    latest = txns[-1]
+    latest = _latest(txns)
     return {
         'description': latest['description'],
         'desc_keys': sorted(keys),
@@ -106,7 +171,7 @@ def detect_recurring(txns, dismissed_keys=()):
     dismissed_keys = [k for k in dismissed_keys if k]
 
     expenses = [t for t in txns
-                if t['amount'] < 0 and t['category'] not in EXCLUDED_CATEGORIES]
+                if t['amount'] < 0 and not is_excluded_category(t['category'])]
     if not expenses:
         return {'bills': [], 'subscriptions': []}
 
@@ -121,13 +186,20 @@ def detect_recurring(txns, dismissed_keys=()):
         key = normalize_description(t['description'])
         if not key:
             continue
-        if t['category'] in BILL_CATEGORIES:
+        if is_bill_category(t['category']):
             bill_groups.setdefault(key, []).append(t)
-        elif t['category'] in SUBSCRIPTION_CATEGORIES:
+        elif is_subscription_category(t['category']):
             sub_groups.setdefault(key, []).append(t)
         else:
-            # Strict tier: only identical charge amounts can group together.
-            other_groups.setdefault((key, round(t['amount'], 2)), []).append(t)
+            # Strict tier: only identical charge amounts can group together,
+            # so bucket by amount first and merge renamed payees *within* a
+            # bucket. Keying groups on (description, amount) directly — as this
+            # did before — skipped the merge entirely, so a payee whose import
+            # wording changed ('Withdrawal from FIRSTMARK PAYMENTS' in 2025,
+            # 'FIRSTMARK' in 2026) listed twice: one stale row frozen at the
+            # old name and one short row under the new one.
+            other_groups.setdefault(round(t['amount'], 2), {}) \
+                        .setdefault(key, []).append(t)
 
     bills, subscriptions = [], []
 
@@ -160,18 +232,19 @@ def detect_recurring(txns, dismissed_keys=()):
         # The current price is what renews, so charge = most recent amount.
         subscriptions.append(_summarize(keys, grp, grp[-1]['amount']))
 
-    for (key, amount), grp in other_groups.items():
-        if len(grp) < 3 or is_dismissed([key]):
-            continue
-        grp.sort(key=lambda t: t['date'])
-        if grp[-1]['date'] < cutoff:
-            continue
-        gaps = [(grp[i + 1]['date'] - grp[i]['date']).days for i in range(len(grp) - 1)]
-        if not 25 <= _median(gaps) <= 35:
-            continue
-        if not all(18 <= g <= 45 for g in gaps):
-            continue
-        subscriptions.append(_summarize({key}, grp, amount))
+    for amount, groups in other_groups.items():
+        for keys, grp in _merge_related(groups):
+            if len(grp) < 3 or is_dismissed(keys):
+                continue
+            grp.sort(key=lambda t: t['date'])
+            if grp[-1]['date'] < cutoff:
+                continue
+            gaps = [(grp[i + 1]['date'] - grp[i]['date']).days for i in range(len(grp) - 1)]
+            if not 25 <= _median(gaps) <= 35:
+                continue
+            if not all(18 <= g <= 45 for g in gaps):
+                continue
+            subscriptions.append(_summarize(keys, grp, amount))
 
     bills.sort(key=lambda g: g['monthly_amount'])
     subscriptions.sort(key=lambda g: g['monthly_amount'])

@@ -111,6 +111,59 @@ def test_source_format_change_merges_into_one_group():
     assert out['bills'][0]['description'] == 'FIRSTMARK'
 
 
+def test_household_named_bill_categories_are_bills_not_subscriptions():
+    # Categories are free text. A household that files its loan servicers under
+    # 'Education' and its auto policy under 'Insurance' means the same thing as
+    # 'Student Loan' / 'Insurance Payment' — these belong in Monthly Bills, not
+    # in Subscriptions.
+    start = TODAY - timedelta(days=300)
+    txns = list(ANCHOR)
+    txns += _monthly('FIRSTMARK', -487.17, 'Education', start, 10)
+    txns += _monthly('PROG ADVANCED', -207.83, 'Insurance', start, 10)
+    out = detect_recurring(txns)
+    assert sorted(g['description'] for g in out['bills']) == ['FIRSTMARK', 'PROG ADVANCED']
+    assert out['subscriptions'] == []
+
+
+def test_bill_category_matching_does_not_overreach():
+    # 'Parenting' contains 'rent' as a substring but is not a bill category —
+    # matching is on whole words.
+    txns = ANCHOR + _monthly('TARGET STORE', -62.14, 'Parenting',
+                             TODAY - timedelta(days=150), 5)
+    assert detect_recurring(txns)['bills'] == []
+
+
+def test_renamed_payee_outside_bill_categories_is_one_group():
+    # The strict tier requires identical amounts, but must still merge a payee
+    # whose import wording changed — otherwise one charge lists twice, once
+    # frozen at the stale name.
+    start = TODAY - timedelta(days=270)
+    txns = list(ANCHOR)
+    txns += _monthly('Withdrawal from CRUNCHYROLL COM 998', -9.99, 'Shopping', start, 6)
+    txns += _monthly('CRUNCHYROLL COM', -9.99, 'Shopping',
+                     start + timedelta(days=180), 3)
+    out = detect_recurring(txns)
+    assert len(out['subscriptions']) == 1
+    group = out['subscriptions'][0]
+    assert group['occurrences'] == 9
+    assert group['description'] == 'CRUNCHYROLL COM'
+
+
+def test_group_is_named_by_its_most_recent_charge():
+    # Both wordings land on the same day; the newest date decides the name, and
+    # the stale wording must not win on merge order.
+    start = TODAY - timedelta(days=300)
+    txns = list(ANCHOR)
+    txns += _monthly('Withdrawal from First Tech FCU ExtrnlTfr', -749.27,
+                     'Student Loan', start, 6)
+    txns += _monthly('First Tech FCU', -749.27, 'Student Loan',
+                     start + timedelta(days=180), 4)
+    out = detect_recurring(txns)
+    assert len(out['bills']) == 1
+    assert out['bills'][0]['description'] == 'First Tech FCU'
+    assert out['bills'][0]['occurrences'] == 10
+
+
 def test_irregular_bill_category_payments_still_included():
     # Category rules are the primary evidence for bills: two semester bursar
     # payments ~4 months apart are still student loan payments.
