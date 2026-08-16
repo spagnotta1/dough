@@ -64,13 +64,27 @@
 .ins-factor__name { font-weight: 600; }
 .ins-factor__score { font-variant-numeric: tabular-nums; opacity: 0.8; }
 
+/* The badge and the number travel together on the right of the row, so the
+   name can take whatever width it needs on the left. */
+.ins-factor__status {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  flex: none;
+}
+
 .ins-factor__bar { margin: 0.4rem 0 0.35rem; }
 
-.ins-factor--good .ds-progress__fill   { background: var(--ok-mark, var(--accent)); }
-.ins-factor--ok .ds-progress__fill     { background: var(--accent); }
-.ins-factor--poor .ds-progress__fill   { background: var(--danger-mark, var(--accent)); }
+.ins-factor--good .ds-progress__fill   { background: var(--ok-mark); }
+.ins-factor--ok .ds-progress__fill     { background: var(--warn-mark); }
+.ins-factor--poor .ds-progress__fill   { background: var(--danger-mark); }
+/* Not a colour with a meaning — a factor with no data behind it, drawn from
+   the foreground so it follows all 16 themes. It used to name #9aa0a6 behind
+   an undefined `--muted`, which is to say it named #9aa0a6. */
 .ins-factor--unknown .ds-progress__fill,
-.ins-factor--unset .ds-progress__fill  { background: var(--muted, #9aa0a6); }
+.ins-factor--unset .ds-progress__fill  {
+  background: color-mix(in srgb, var(--fg) 32%, transparent);
+}
 
 .ins-caveat { margin-top: 1rem; opacity: 0.75; }
 

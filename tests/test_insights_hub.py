@@ -119,6 +119,44 @@ def test_the_hub_renders_on_a_ledger_with_nothing_interesting(app_no_auth):
     assert 'Nothing stands out' in response.get_data(as_text=True)
 
 
+# ── Financial health reads as a status, not as four numbers ─────────────────
+#
+# The bar itself is asserted in tests/browser/test_progress_bars.py, because
+# whether it paints is a property of the rendered box rather than of the markup.
+# What is checkable here is that the status reaches the reader in a word as well
+# as in a colour.
+
+def test_each_factor_is_badged_with_the_word_for_its_status(populated):
+    body = _get(populated).get_data(as_text=True)
+
+    assert 'ins-factor__status' in body
+    assert any(word in body for word in
+               ('Strong', 'Fair', 'Needs work', 'No data'))
+
+
+def test_the_badge_tone_follows_the_factor_status(populated):
+    """A good factor gets the ok badge, a poor one the danger badge."""
+    import re
+
+    body = _get(populated).get_data(as_text=True)
+    pairs = re.findall(
+        r'ins-factor ins-factor--(\w+).*?ds-badge ds-badge--(\w+)', body, re.S)
+
+    assert pairs, 'no factor rows to check'
+    tones = {'good': 'ok', 'ok': 'warn', 'poor': 'danger', 'unknown': 'info'}
+    for status, tone in pairs:
+        assert tone == tones[status], (
+            f'a {status} factor is badged {tone}')
+
+
+def test_the_bar_is_decorative_because_the_text_already_says_it(populated):
+    """Score and status are both text, so announcing the bar repeats them."""
+    body = _get(populated).get_data(as_text=True)
+    start = body.index('ins-factor__bar')
+    assert 'aria-hidden="true"' in body[start - 120:start + 120]
+    assert 'out of 100' in body          # carried by the score instead
+
+
 def test_an_empty_ledger_is_sent_to_upload_rather_than_an_empty_page(app_no_auth):
     response = _get(app_no_auth)
     assert response.status_code == 302

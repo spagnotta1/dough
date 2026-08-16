@@ -454,7 +454,16 @@ html[data-scheme="dark"] {
    Progress
    ══════════════════════════════════════════════════════════════════════════ */
 
+/* `display: block` on both, and it is load-bearing rather than tidiness.
+   Callers write the track and the fill as either a <div> or a <span> — both
+   read fine in a template — and a <span> is inline, where a percentage width
+   and a percentage height have nothing to resolve against. The fill then
+   computes to the 100% background colour it was given and paints a 0x0 box.
+   That is what emptied the Financial health bars on /insights and the goal
+   bars on /goals: the colour was right in the computed style the whole time,
+   and no pixel of it was ever on screen. */
 .ds-progress {
+  display: block;
   position: relative;
   height: 6px;
   border-radius: var(--r-full);
@@ -463,6 +472,7 @@ html[data-scheme="dark"] {
 }
 .ds-progress--tall { height: 9px; }
 .ds-progress__fill {
+  display: block;
   height: 100%;
   border-radius: inherit;
   background: var(--ok-mark);
