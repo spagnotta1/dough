@@ -47,15 +47,29 @@
       </p>
     </div>
 
+    {# A bar carries the score at a glance; the badge next to it says the same
+       thing in a word. Both, because a bar alone leaves the reader measuring
+       a stripe against nothing, and colour alone is not a status anybody can
+       read on a greyscale screen or with a red/green deficiency. The bar is
+       `aria-hidden` for that reason — every fact in it is in the text beside
+       it, and announcing it again only lengthens the row. #}
+    {% set tones = {'good': 'ok', 'ok': 'warn', 'poor': 'danger',
+                    'unknown': 'info', 'unset': 'info'} %}
+    {% set words = {'good': 'Strong', 'ok': 'Fair', 'poor': 'Needs work',
+                    'unknown': 'No data', 'unset': 'Not measured'} %}
     <ul class="ins-factors">
       {% for factor in health.factors if factor.weight %}
       <li class="ins-factor ins-factor--{{ factor.status }}">
         <div class="ins-factor__row">
           <span class="ins-factor__name">{{ factor.label }}</span>
-          <span class="ds-num ins-factor__score">{{ factor.score }}</span>
+          <span class="ins-factor__status">
+            <span class="ds-badge ds-badge--{{ tones.get(factor.status, 'info') }}">
+              {{ words.get(factor.status, 'No data') }}
+            </span>
+            <span class="ds-num ins-factor__score">{{ factor.score }}<span class="ds-sr"> out of 100</span></span>
+          </span>
         </div>
-        <div class="ds-progress ins-factor__bar" role="img"
-             aria-label="{{ factor.label }}: {{ factor.score }} out of 100">
+        <div class="ds-progress ins-factor__bar" aria-hidden="true">
           <span class="ds-progress__fill" style="width: {{ factor.score }}%"></span>
         </div>
         <p class="ds-meta">{{ factor.detail }}</p>
