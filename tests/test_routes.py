@@ -1,5 +1,7 @@
 """HTTP API and page rendering for the sync layer."""
 
+import re
+
 from models import FinancialAccount, Holding, InstitutionConnection, Transaction
 
 
@@ -141,12 +143,11 @@ def test_dashboard_category_cascading_filter(client):
     html = client.get(f"/?{window}&category=Food").get_data(as_text=True)
     assert "-77.31" in html
     assert "-130.5" not in html and "-150.5" not in html
-    # The active filter appears as a removable chip in the filter panel. It
-    # carries a hidden input so the selection composes with the rest of the
-    # form instead of navigating the moment it changes.
-    assert 'data-cat="Food"' in html
-    assert '<input type="hidden" name="category" value="Food">' in html
-    assert 'data-remove-cat="Food"' in html
+    # The active filter appears as a removable chip under the filter bar, and
+    # the box that set it is still ticked inside "+ Filters" — the panel and
+    # the chip are two views of one form field, so they cannot disagree.
+    assert '<span class="dash-chip__val">Food</span>' in html
+    assert re.search(r'name="category" value="Food"\s+checked', html)
     assert ">Gas</a>" in html                           # grid row still clickable
     assert "category=Food&amp;category=Gas" in html \
         or "category=Food&category=Gas" in html         # row link adds Gas to the selection
@@ -155,12 +156,12 @@ def test_dashboard_category_cascading_filter(client):
     html = client.get(f"/?{window}&category=Food&category=Gas").get_data(as_text=True)
     assert "-130.5" in html
     assert "-150.5" not in html
-    assert 'data-cat="Food"' in html and 'data-cat="Gas"' in html
+    assert '<span class="dash-chip__val">Food</span>' in html
+    assert '<span class="dash-chip__val">Gas</span>' in html
 
-    # No category params → no chips, and the category row stays collapsed.
+    # No category params → no category chip.
     html = client.get(f"/?{window}").get_data(as_text=True)
-    assert 'data-cat="Food"' not in html
-    assert 'id="catRow" hidden' in html
+    assert '<span class="dash-chip__val">Food</span>' not in html
 
 
 def test_a_first_run_dashboard_asks_for_a_connection_not_a_file(client):
@@ -225,9 +226,12 @@ def test_filtering_the_transaction_list_does_not_blank_the_dashboard(client):
 
     assert "No transactions in" not in html
     assert "-77.31" in html
-    # And the panel's account select agrees with the query it just ran, rather
-    # than showing "Both accounts" only because nothing else was selected.
-    assert '<option value="both" selected>Both accounts</option>' in html
+    # And the account control agrees with the query it just ran, rather than
+    # reading "all" only because nothing else happened to be selected. The
+    # control is a radio group now rather than a <select>, and "All accounts"
+    # is the default, so it also must not appear as an applied filter chip.
+    assert re.search(r'name="account" value="both"\s+checked', html)
+    assert 'dash-chip__key">Account' not in html
 
 
 def test_a_connection_awaiting_its_first_sync_is_not_asked_to_connect_again(client):

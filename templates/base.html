@@ -1173,6 +1173,11 @@
     return _navPaths.some(function(p){ return p === path; });
   }
 
+  //: The url — path and query, never the #fragment — that the currently
+  //: swapped-in <main> belongs to. Read by the popstate handler below to tell
+  //: a real history traversal from a fragment-only one.
+  var _spaUrl = location.pathname + location.search;
+
   function _updateNav(url) {
     var path = url.split('?')[0];
     // #primary-nav rather than every nav <a>: the brand link is a nav <a>
@@ -1223,6 +1228,7 @@
 
           document.title = doc.title;
           if (push !== false) history.pushState({url: url}, '', url);
+          _spaUrl = url.split('#')[0];
           _updateNav(url);
           window.scrollTo(0, 0);
         } catch(e) { window.location.href = url; _barDone(); return; }
@@ -1301,8 +1307,18 @@
     if (href !== window.location.pathname) spaNavigate(href);
   });
 
+  // Chromium fires popstate for same-document fragment navigation as well as
+  // for Back and Forward, so without this check every in-page anchor ran a
+  // full spaNavigate: it re-fetched the page the visitor was already on,
+  // replaced <main> underneath them and finished with scrollTo(0, 0) — which
+  // landed on the target and then scrolled straight back to the top. That is
+  // what took out the landing page's own Product / Security / FAQ links; they
+  // are the only in-page anchors in the product, so nothing else showed it.
   window.addEventListener('popstate', function(e) {
-    spaNavigate(location.pathname + location.search, false);
+    var url = location.pathname + location.search;
+    if (url === _spaUrl) return;   // only the #fragment moved
+    _spaUrl = url;
+    spaNavigate(url, false);
   });
 
   // Seed history with the FULL url, query string included. Replacing it with

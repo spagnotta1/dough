@@ -122,6 +122,49 @@ def test_the_landing_page_offers_a_way_in(page):
     page.wait_for_url(lambda url: '/login' in url, timeout=10_000)
 
 
+@pytest.mark.parametrize('label, section', [('Product', 'product'),
+                                             ('Security', 'security'),
+                                             ('FAQ', 'faq')])
+def test_the_landing_nav_anchors_reach_their_sections(page, label, section):
+    """The three in-page anchors, which the SPA layer used to undo.
+
+    Chromium fires `popstate` for same-document fragment navigation as well as
+    for Back and Forward. base.html's handler took every one of them as a real
+    history traversal: it re-fetched `/`, replaced <main>, and finished with
+    `scrollTo(0, 0)` — so the browser jumped to the section and was scrolled
+    back to the top a moment later. Both halves of that are why this asserts on
+    the *scroll position* rather than on `location.hash`; the hash was always
+    correct, which is exactly what made the bug hard to see.
+
+    Desktop viewport on purpose: `.lp-nav__links` is display:none below 52rem.
+    """
+    _sign_out(page)
+    page.set_viewport_size({'width': 1280, 'height': 900})
+    visit(page, '/')
+
+    target = page.evaluate(
+        f"Math.round(document.getElementById('{section}')"
+        ".getBoundingClientRect().top + window.scrollY)")
+    assert target > 900, (
+        f'#{section} is already in the first viewport, so scrolling to it '
+        f'would prove nothing')
+
+    page.locator('.lp-nav__links a', has_text=label).first.click()
+    # Generous: a re-fetch-and-swap took ~200ms to undo the jump, so a check
+    # that runs immediately passes even when the bug is present.
+    page.wait_for_timeout(800)
+
+    assert abs(page.evaluate('window.scrollY') - target) < 4, (
+        f'{label} left the page at {page.evaluate("window.scrollY")}px; '
+        f'#{section} is at {target}px')
+    # The section's heading has to clear the sticky nav, not sit under it.
+    nav_bottom = page.evaluate("document.querySelector('nav').getBoundingClientRect().bottom")
+    heading_top = page.evaluate(
+        f"document.querySelector('#{section} h2').getBoundingClientRect().top")
+    assert heading_top > nav_bottom, (
+        f'the {label} heading landed under the sticky nav')
+
+
 def test_the_landing_page_shows_no_signed_in_navigation(page):
     """Every nav destination needs a session.
 

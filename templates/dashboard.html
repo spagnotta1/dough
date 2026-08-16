@@ -59,6 +59,12 @@
      focusable="false">{{ paths.get(name, paths['dot'])|safe }}</svg>
 {%- endmacro %}
 
+{% macro caret() %}
+<svg class="dash-trigger__caret" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+     stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"
+     focusable="false"><path d="m6 9 6 6 6-6"/></svg>
+{%- endmacro %}
+
 {% macro chart_tools(chart_id, title) %}
 <button type="button" class="ds-btn ds-btn--icon" data-values="{{ chart_id }}"
         aria-pressed="false" aria-label="Show values on {{ title }}" title="Show values">
@@ -101,9 +107,9 @@
 <div class="dash" id="dash">
 
   {# ══════════════════════════════════════════════════════════════════════
-     Header — greeting, one contextual line, and the period control.
-     The filter is collapsed behind a button: it is a tool, not a headline,
-     and it used to be the first thing on the page.
+     Header — greeting and one contextual line. The filtering controls are
+     the compact bar below it: they are supporting tools, not a headline,
+     and they used to be the first thing on the page.
      ══════════════════════════════════════════════════════════════════════ #}
   <header class="dash-header ds-rise">
     <div class="dash-header__greet">
@@ -123,82 +129,186 @@
       </p>
       {% endif %}
     </div>
-
-    <div class="dash-header__tools">
-      <span class="dash-period" id="dashPeriodLabel">{{ period_label }}</span>
-      <button type="button" class="ds-btn ds-btn--secondary ds-btn--sm" id="dashFilterToggle"
-              aria-expanded="false" aria-controls="dashFilterPanel">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-             stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M3 5h18"/><path d="M6.5 12h11"/><path d="M10 19h4"/></svg>
-        Filter
-        {% if category_filter %}<span class="ds-badge ds-badge--pill dash-filter-count">{{ category_filter|length }}</span>{% endif %}
-      </button>
-    </div>
   </header>
 
-  {# ── Filter panel ──
-     Composable: nothing here reloads the page on its own. Pick a range, an
-     account and a category, then Apply once. The panel also stays open across
-     that reload — it used to shut on every change, so building a two-part
-     filter meant reopening it between each one. #}
-  <div class="dash-filter" id="dashFilterPanel" hidden>
-    <form id="dashFilterForm" method="GET" class="dash-filter__form">
-      <div class="dash-filter__row">
-        <span class="dash-filter__legend" id="rangeLegend">Range</span>
-        <div class="dash-filter__group" role="group" aria-labelledby="rangeLegend">
-          {% for lbl, ps in [('This Month','this_month'), ('Last Month','last_month'),
-                             ('Last 3 Mo','last_3mo'), ('Last 6 Mo','last_6mo'),
-                             ('YTD','ytd'), ('Last Year','last_year')] %}
-          <button type="button" class="ds-chip" data-preset="{{ ps }}" aria-pressed="false">{{ lbl }}</button>
-          {% endfor %}
-        </div>
-      </div>
+  {# ══════════════════════════════════════════════════════════════════════
+     Filter bar — three compact controls and the filters they have applied.
 
-      <div class="dash-filter__row">
-        <span class="dash-filter__legend" id="datesLegend">Dates</span>
-        <div class="dash-filter__group dash-filter__group--fields" role="group" aria-labelledby="datesLegend">
-          <label class="dash-filter__label" for="start_date">From</label>
-          <input type="date" name="start_date" id="start_date" value="{{ start_date }}" class="dash-input ds-input">
-          <label class="dash-filter__label" for="end_date">To</label>
-          <input type="date" name="end_date" id="end_date" value="{{ end_date }}" class="dash-input ds-input">
-          <label class="dash-filter__label" for="account">Account</label>
-          <select name="account" id="account" class="dash-input ds-select">
-            <option value="both" {% if account_filter=='both' %}selected{% endif %}>Both accounts</option>
-            <option value="Checking" {% if account_filter=='Checking' %}selected{% endif %}>Checking</option>
-            <option value="Savings" {% if account_filter=='Savings' %}selected{% endif %}>Savings</option>
-          </select>
-        </div>
-      </div>
+     One `<form method="GET">` is the whole of the filter state: the date
+     inputs, the account radio and the category checkboxes are its fields,
+     and submitting it is the only way a filter is ever applied. That is what
+     keeps the controls from drifting apart — there is nowhere else for the
+     state to live, and the page that comes back renders every control from
+     the query it just answered.
 
-      {# Categories live in the form as removable chips. Removing one used to
-         be a link that navigated immediately; it now just drops the hidden
-         input, so it composes with everything else above. #}
-      <div class="dash-filter__row" id="catRow" {% if not category_filter %}hidden{% endif %}>
-        <span class="dash-filter__legend" id="catLegend">Categories</span>
-        <div class="dash-filter__group" role="group" aria-labelledby="catLegend" id="catChips">
-          {% for cat in category_filter %}
-          <span class="ds-chip ds-chip--active dash-catchip" data-cat="{{ cat }}">
-            {{ cat }}
-            <button type="button" class="dash-catchip__x" data-remove-cat="{{ cat }}"
-                    aria-label="Remove the {{ cat }} category filter">✕</button>
-            <input type="hidden" name="category" value="{{ cat }}">
-          </span>
-          {% endfor %}
-        </div>
-      </div>
+     The popovers are `<details>` rather than JS-driven panels: the open/close
+     state, the keyboard behaviour and the accessible name come from the
+     element. dashboard.js adds only what the element does not have — Escape,
+     click-away, one-open-at-a-time, and applying a preset without a trip
+     through Apply.
 
-      <div class="dash-filter__actions">
-        <button type="submit" class="ds-btn ds-btn--primary ds-btn--sm" id="filterApply">
-          Apply
-          <span class="dash-filter__dirty" id="filterDirty" hidden aria-hidden="true"></span>
-        </button>
-        <a href="{{ url_for('transactions.clear_filters', next=url_for('core.dashboard')) }}"
-           class="ds-btn ds-btn--ghost ds-btn--sm">Reset all</a>
-        <span class="dash-filter__hint" id="filterHint" role="status"></span>
-        <span class="dash-filter__spacer"></span>
-        <button type="button" class="ds-btn ds-btn--ghost ds-btn--sm" id="filterClose">Done</button>
-      </div>
+     Progressive disclosure, in order of how often each is wanted: the date
+     and the account are one click each; everything else is behind "+ Filters"
+     and composes there behind a single Apply, so building a three-part filter
+     costs one page load rather than three.
+     ══════════════════════════════════════════════════════════════════════ #}
+  {% set date_active = not date_is_default %}
+  {% set account_active = account_filter != 'both' %}
+  <div class="dash-filters ds-rise" id="dashFilters">
+    <form id="dashFilterForm" method="GET" action="{{ url_for('core.dashboard') }}"
+          class="dash-filters__bar" aria-label="Filter the dashboard">
+
+      {# ── Date ── #}
+      <details class="dash-menu" id="dateMenu">
+        <summary class="dash-trigger {{ 'is-on' if date_active }}" id="dateTrigger">
+          {{ icon('calendar', 14) }}
+          <span class="ds-sr">Date range:</span>
+          <span class="dash-trigger__value" data-date-label>{{ period_label }}</span>
+          {{ caret() }}
+        </summary>
+        <div class="dash-menu__pop">
+          <div class="dash-menu__opts" role="group" aria-label="Date presets">
+            {% for lbl, ps in [('This Month','this_month'), ('Last Month','last_month'),
+                               ('Last 3 Months','last_3mo'), ('Last 6 Months','last_6mo'),
+                               ('YTD','ytd'), ('Last Year','last_year')] %}
+            <button type="button" class="dash-opt" data-preset="{{ ps }}" aria-pressed="false">
+              <span class="dash-opt__tick" aria-hidden="true">{{ icon('check', 13) }}</span>
+              <span class="dash-opt__label">{{ lbl }}</span>
+            </button>
+            {% endfor %}
+          </div>
+
+          {# The date fields stay in the form whether or not this is open — a
+             preset writes its range into them, and a `hidden` container still
+             submits what it contains. Only the calendar is disclosed here;
+             the value behind it is never conditional. #}
+          <details class="dash-custom" id="customRange">
+            <summary class="dash-opt dash-opt--more">
+              <span class="dash-opt__label">Custom range</span>
+              {{ caret() }}
+            </summary>
+            <div class="dash-custom__body">
+              <label class="dash-menu__label" for="start_date">From</label>
+              <input type="date" name="start_date" id="start_date" value="{{ start_date }}"
+                     class="dash-input ds-input">
+              <label class="dash-menu__label" for="end_date">To</label>
+              <input type="date" name="end_date" id="end_date" value="{{ end_date }}"
+                     class="dash-input ds-input">
+              <div class="dash-custom__actions">
+                <button type="submit" class="ds-btn ds-btn--primary ds-btn--sm">Apply</button>
+              </div>
+            </div>
+          </details>
+        </div>
+      </details>
+
+      {# ── Account ──
+         Radio inputs, not buttons: the group, the arrow keys and the "one of
+         these" announcement are the element's, and the value reaches the
+         server whether or not any script ran. #}
+      <details class="dash-menu" id="accountMenu">
+        <summary class="dash-trigger {{ 'is-on' if account_active }}" id="accountTrigger">
+          {{ icon('wallet', 14) }}
+          <span class="ds-sr">Account:</span>
+          <span class="dash-trigger__value">{{ 'All accounts' if account_filter == 'both' else account_filter }}</span>
+          {{ caret() }}
+        </summary>
+        <div class="dash-menu__pop">
+          <fieldset class="dash-menu__opts">
+            <legend class="ds-sr">Account</legend>
+            <label class="dash-opt dash-opt--choice">
+              <input type="radio" name="account" value="both" {% if not account_active %}checked{% endif %}>
+              <span class="dash-opt__label">All accounts</span>
+            </label>
+            {% for name in account_options %}
+            <label class="dash-opt dash-opt--choice">
+              <input type="radio" name="account" value="{{ name }}" {% if account_filter == name %}checked{% endif %}>
+              <span class="dash-opt__label">{{ name }}</span>
+            </label>
+            {% endfor %}
+          </fieldset>
+        </div>
+      </details>
+
+      {# ── Everything else ──
+         Only the dimensions this page's query actually understands. Category
+         is one of them; amount, merchant and direction are the ledger's
+         filters, not the dashboard's, and offering them here would be a
+         control that quietly does nothing. #}
+      <details class="dash-menu dash-menu--wide" id="moreMenu">
+        <summary class="dash-trigger dash-trigger--more {{ 'is-on' if category_filter }}" id="moreTrigger">
+          <span aria-hidden="true">+</span>
+          <span class="dash-trigger__value">Filters</span>
+          {% if category_filter %}<span class="ds-badge ds-badge--pill dash-filter-count">{{ category_filter|length }}</span>{% endif %}
+        </summary>
+        <div class="dash-menu__pop dash-menu__pop--wide">
+          <p class="dash-menu__legend" id="catLegend">Category</p>
+          {% if all_categories %}
+          <div class="dash-menu__opts dash-menu__opts--scroll" role="group" aria-labelledby="catLegend">
+            {% for cat in all_categories %}
+            <label class="dash-opt dash-opt--choice">
+              <input type="checkbox" name="category" value="{{ cat }}"
+                     {% if cat in category_filter %}checked{% endif %}>
+              <span class="dash-opt__label">{{ cat }}</span>
+            </label>
+            {% endfor %}
+          </div>
+          {% else %}
+          <p class="dash-menu__empty">Nothing is categorised yet.</p>
+          {% endif %}
+          <div class="dash-menu__foot">
+            <button type="button" class="ds-btn ds-btn--ghost ds-btn--sm" id="moreClear">Clear</button>
+            <button type="submit" class="ds-btn ds-btn--primary ds-btn--sm">Apply</button>
+          </div>
+        </div>
+      </details>
+
+      {# The window as resolved, which is not always the window as asked for:
+         an empty default month snaps to the newest one with data. The control
+         above says which filter is on; this says what is on screen. #}
+      <span class="dash-period" id="dashPeriodLabel">{{ period_label }}</span>
     </form>
+
+    {# ── Applied filters ──
+       Only what somebody chose. Month-to-date and "All accounts" are the
+       absence of a filter, and a chip offering to remove the state the page
+       is already in is a control with nothing to do. Each ✕ is a link to the
+       same page minus that one filter, so removing one keeps the others and
+       needs no script to do it. #}
+    {% if date_active or account_active or category_filter %}
+    <div class="dash-chips" role="group" aria-label="Applied filters">
+      {% if date_active %}
+      <span class="dash-chip">
+        <span class="dash-chip__key">Dates</span>
+        <span class="dash-chip__val" data-date-label>{{ period_label }}</span>
+        <a class="dash-chip__x" aria-label="Remove the date filter"
+           href="{{ url_for('core.dashboard', start_date=default_start, end_date=default_end,
+                            account=account_filter, category=category_filter) }}">✕</a>
+      </span>
+      {% endif %}
+      {% if account_active %}
+      <span class="dash-chip">
+        <span class="dash-chip__key">Account</span>
+        <span class="dash-chip__val">{{ account_filter }}</span>
+        <a class="dash-chip__x" aria-label="Remove the {{ account_filter }} account filter"
+           href="{{ url_for('core.dashboard', start_date=start_date, end_date=end_date,
+                            account='both', category=category_filter) }}">✕</a>
+      </span>
+      {% endif %}
+      {% for cat in category_filter %}
+      <span class="dash-chip">
+        <span class="dash-chip__key">Category</span>
+        <span class="dash-chip__val">{{ cat }}</span>
+        <a class="dash-chip__x" aria-label="Remove the {{ cat }} category filter"
+           href="{{ url_for('core.dashboard', start_date=start_date, end_date=end_date,
+                            account=account_filter,
+                            category=category_filter|reject('equalto', cat)|list) }}">✕</a>
+      </span>
+      {% endfor %}
+      <a class="dash-chips__clear" id="dashClearAll"
+         href="{{ url_for('transactions.clear_filters', next=url_for('core.dashboard')) }}">Clear all</a>
+    </div>
+    {% endif %}
   </div>
 
   {# An empty page has two causes and they need opposite answers — see the

@@ -38,6 +38,7 @@ from flask import (Blueprint, current_app, redirect, render_template, request,
 from sqlalchemy import func
 
 from dough.auth import public
+from dough.services.accounts import ledger_account_names
 from dough.services.networth import compute_net_worth, portfolio_snapshot
 from dough.services.recurring_service import detect_recurring_full
 
@@ -143,8 +144,24 @@ def dashboard():
     # period, the balance history, both monthly trends, the category trend —
     # so the whole dashboard was reading a window one day short, and
     # disagreeing with the transactions page about the same dates.
+
+    # One reading of the clock for the whole view. Three things below are
+    # relative to today — the default window, whether the window on screen
+    # *is* that default, and where the date chip's ✕ leads — and two calls a
+    # few microseconds apart can straddle midnight into three different
+    # answers. That is a bug that only ever happens in production.
+    today_date = date.today()
+
+    # Whether the window on screen is one somebody chose. The filter bar shows a
+    # removable chip per *applied* filter and hides "Clear all" when there are
+    # none, and month-to-date is the absence of a date filter rather than a date
+    # filter that happens to say August — a chip for it would offer to remove
+    # the state it is already in. Captured here because two lines below the two
+    # cases are indistinguishable: both end up holding a pair of ISO strings.
+    date_is_default = not (start_date_str and end_date_str)
+
     if not start_date_str or not end_date_str:
-        end_date = date.today()
+        end_date = today_date
         start_date = end_date.replace(day=1)
         start_date_str = start_date.strftime('%Y-%m-%d')
         end_date_str = end_date.strftime('%Y-%m-%d')
@@ -191,6 +208,15 @@ def dashboard():
                 start_date = newest.replace(day=1)
                 start_date_str = start_date.strftime('%Y-%m-%d')
                 end_date_str = end_date.strftime('%Y-%m-%d')
+
+    # A window that *is* month-to-date is the default however it arrived. The
+    # "This Month" preset submits the dates explicitly, like every other
+    # preset, and a chip appearing for it would say the page is filtered to
+    # the state it opens in. Judged on the value rather than on where it came
+    # from, which is also what keeps a link somebody shared from reading
+    # differently to the page they shared it from.
+    if start_date == today_date.replace(day=1) and end_date == today_date:
+        date_is_default = True
 
     session['start_date'] = start_date_str
     session['end_date'] = end_date_str
@@ -523,8 +549,31 @@ def dashboard():
                                .filter(InstitutionConnection.status != 'disconnected')
                                .first())
 
+    # The accounts the filter bar offers. Read from the ledger rather than
+    # written into the template: the account control listed a hardcoded
+    # "Checking" and "Savings" for as long as it existed, which is two names
+    # this household may not have and no name for the ones it does — a Visa
+    # sitting in every chart with no way to filter to it.
+    #
+    # `account_name` is what this page filters on, so the ledger's own distinct
+    # names are exactly the set of values that can match anything. The active
+    # filter is unioned in so a window whose account has since gone quiet still
+    # shows the truth rather than falling back to the first option.
+    account_options = ledger_account_names()
+    if account_filter != 'both' and account_filter not in account_options:
+        account_options = sorted(account_options + [account_filter])
+
     return render_template('dashboard.html',
                            all_categories=all_categories,
+                           account_options=account_options,
+                           date_is_default=date_is_default,
+                           # Where "remove the date filter" goes. The default
+                           # window spelled out rather than left off the link:
+                           # the dates are sticky in the session, so a link
+                           # that simply omits them restores the very window
+                           # it is removing.
+                           default_start=today_date.replace(day=1).strftime('%Y-%m-%d'),
+                           default_end=today_date.strftime('%Y-%m-%d'),
                            period_label=period_label,
                            compare_label=compare_label,
                            has_data=bool(transactions),
