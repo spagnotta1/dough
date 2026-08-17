@@ -27,6 +27,169 @@
 .bud-summary__spent { font-size: var(--f-xl); font-weight: var(--w-bold); color: var(--ink-strong); }
 .bud-summary__of { font-size: var(--f-xs); color: var(--ink-faint); }
 
+/* ── The income anchor and safe-to-spend ──────────────────────────────────
+   Two columns on a wide screen, because they are one thought: here is what
+   comes in, and here is what is left of it. The safe-to-spend side is given a
+   sunken panel rather than a card of its own — it is a conclusion drawn from
+   the figures beside it, not a separate claim. */
+.bud-anchor {
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) minmax(240px, .65fr);
+  gap: var(--sp-6);
+  align-items: start;
+}
+.bud-anchor__main { display: flex; flex-direction: column; gap: var(--sp-3); min-width: 0; }
+.bud-anchor__figures { display: flex; align-items: baseline; gap: var(--sp-2); margin: 0; flex-wrap: wrap; }
+.bud-anchor__income { font-size: var(--f-xl); font-weight: var(--w-bold); color: var(--ink-strong); }
+.bud-anchor__basis { font-size: var(--f-xs); color: var(--ink-faint); }
+.bud-anchor__bar { margin: var(--sp-1) 0; }
+
+.bud-anchor__legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-6);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.bud-anchor__legend li { display: flex; flex-direction: column; gap: 2px; }
+.bud-anchor__legend b { font-size: var(--f-lg); color: var(--ink-strong); }
+.bud-anchor__note { max-width: 62ch; margin: 0; }
+
+/* One name for "this number is the wrong side of zero", used by the anchor,
+   the safe-to-spend figure and the over-committed note. */
+.is-over { color: var(--danger-ink); }
+
+.bud-safe {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  padding: var(--sp-4);
+  border-radius: var(--r-md);
+  background: var(--surface-sunken);
+  border: 1px solid var(--hairline);
+}
+.bud-safe__amount {
+  font-size: var(--f-xl);
+  font-weight: var(--w-bold);
+  color: var(--ink-strong);
+  margin: 0;
+}
+.bud-safe__sub { margin: 0 0 var(--sp-2); }
+.bud-safe__work { margin: 0; padding-top: var(--sp-2); border-top: 1px solid var(--hairline); }
+.bud-safe__line {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--sp-3);
+  font-size: var(--f-xs);
+  color: var(--ink-muted);
+  padding: 2px 0;
+}
+.bud-safe__line dt { min-width: 0; }
+.bud-safe__line dd { margin: 0; color: var(--ink-body); white-space: nowrap; }
+
+/* ── Where a budget is heading ──────────────────────────────────────────── */
+.bud-project {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+  margin: var(--sp-2) 0 0;
+  font-size: var(--f-xs);
+  color: var(--ink-muted);
+}
+.bud-project b { font-size: var(--f-sm); color: var(--ink-body); }
+.bud-project--warn b   { color: var(--warn-ink); }
+.bud-project--danger b { color: var(--danger-ink); }
+.bud-project__label { text-transform: uppercase; letter-spacing: .06em; font-size: var(--f-micro); color: var(--ink-faint); }
+.bud-project__early { font-size: var(--f-micro); }
+.bud-fixed { margin: var(--sp-1) 0 0; }
+
+/* ── Not yet planned ────────────────────────────────────────────────────── */
+.bud-unplanned__list { list-style: none; margin: var(--sp-4) 0 0; padding: 0; }
+.bud-unplanned__row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1.1fr) auto;
+  align-items: center;
+  gap: var(--sp-3);
+  padding: var(--sp-3) 0;
+  border-top: 1px solid var(--hairline);
+}
+.bud-unplanned__row:first-child { border-top: 0; }
+.bud-unplanned__cat { font-weight: var(--w-medium); color: var(--ink-strong); min-width: 0; }
+.bud-unplanned__spent { color: var(--ink-body); white-space: nowrap; }
+.bud-unplanned__basis { min-width: 0; }
+.bud-unplanned__act { justify-self: end; }
+
+/* ── The builder ────────────────────────────────────────────────────────── */
+.bud-builder[open] .bud-builder__summary { margin-bottom: var(--sp-4); }
+.bud-builder__summary {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--sp-3);
+  cursor: pointer;
+  list-style: none;
+}
+.bud-builder__heading { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.bud-builder__chevron {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  margin-top: 7px;
+  border-right: 2px solid var(--ink-faint);
+  border-bottom: 2px solid var(--ink-faint);
+  transform: rotate(-45deg);
+  transition: transform var(--dur-2) var(--ease-out);
+}
+.bud-builder[open] .bud-builder__chevron { transform: rotate(45deg); }
+.bud-builder__summary:hover .bud-builder__chevron { border-color: var(--ink-body); }
+.bud-builder__summary::-webkit-details-marker { display: none; }
+/* The design system's focus treatment, not an outline of this page's own —
+   `--focus-ring` is what every other focusable thing in the app wears. */
+.bud-builder__summary:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+  border-radius: var(--r-sm);
+}
+
+.bud-frame {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--sp-4);
+  padding: var(--sp-4);
+  border-radius: var(--r-md);
+  background: var(--surface-sunken);
+}
+.bud-frame__bucket { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.bud-frame__bucket .ds-eyebrow { text-transform: capitalize; }
+.bud-frame__bucket b { font-size: var(--f-lg); color: var(--ink-strong); }
+.bud-frame__note { max-width: 62ch; margin: var(--sp-3) 0 var(--sp-5); }
+
+.bud-builder__list { list-style: none; margin: 0; padding: 0; }
+.bud-builder__row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr) 130px;
+  align-items: center;
+  gap: var(--sp-3);
+  padding: var(--sp-3) 0;
+  border-top: 1px solid var(--hairline);
+}
+.bud-builder__row:first-child { border-top: 0; }
+.bud-builder__pick { display: flex; align-items: center; gap: var(--sp-2); min-width: 0; cursor: pointer; }
+.bud-builder__cat { font-weight: var(--w-medium); color: var(--ink-strong); }
+.bud-builder__basis { min-width: 0; }
+.bud-builder__amount .dash-input { width: 100%; min-height: 36px; }
+.bud-builder__actions {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-4);
+  flex-wrap: wrap;
+  margin-top: var(--sp-5);
+  padding-top: var(--sp-4);
+  border-top: 1px solid var(--hairline);
+}
+.bud-builder__actions .ds-meta { max-width: 52ch; margin: 0; }
+
 .bud-actions {
   display: flex;
   align-items: center;
@@ -67,10 +230,26 @@
 @media (max-width: 860px) {
   .bud-add__form { grid-template-columns: 1fr 1fr; }
   .bud-add__form .ds-btn { grid-column: 1 / -1; }
+  .bud-anchor { grid-template-columns: minmax(0, 1fr); }
+  .bud-frame { grid-template-columns: minmax(0, 1fr); gap: var(--sp-3); }
 }
 @media (max-width: 640px) {
   .bud-add__form { grid-template-columns: 1fr; }
   .bud-add__form .ds-btn { width: 100%; }
   .bud-head { align-items: flex-start; }
   .bud-summary { width: 100%; }
+  .bud-anchor__legend { gap: var(--sp-4); }
+  /* Both list rows stop being tables and become stacked records: at this
+     width the four-column grid squeezed the category name to two characters
+     and pushed the action button off the edge. */
+  .bud-unplanned__row,
+  .bud-builder__row {
+    grid-template-columns: minmax(0, 1fr) auto;
+    row-gap: var(--sp-2);
+  }
+  .bud-unplanned__basis,
+  .bud-builder__basis { grid-column: 1 / -1; }
+  .bud-unplanned__act { grid-column: 1 / -1; justify-self: start; }
+  .bud-builder__amount { grid-column: 1 / -1; }
+  .bud-builder__amount .dash-input { max-width: 160px; }
 }

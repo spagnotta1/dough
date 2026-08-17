@@ -38,6 +38,7 @@ from flask import (Blueprint, current_app, redirect, render_template, request,
 from sqlalchemy import func
 
 from dough.auth import public
+from dough.services import budgets as budget_service
 from dough.services.accounts import ledger_account_names
 from dough.services.networth import compute_net_worth, portfolio_snapshot
 from dough.services.recurring_service import detect_recurring_full
@@ -346,20 +347,19 @@ def dashboard():
     period_months = max(1.0, period_days / 30.44)
 
     # --- Budget alerts (B2) ---
-    budget_alerts = []
-    for cat, limit in budget_map.items():
-        cat_stats = category_stats.get(cat, {})
-        spent = max(0, cat_stats.get('outbound', 0) - cat_stats.get('inbound', 0))
-        monthly_avg = spent / period_months
-        if limit > 0 and spent > 0:
-            pct = (monthly_avg / limit) * 100
-            if pct >= 100:
-                budget_alerts.append({'category': cat, 'pct': round(pct), 'level': 'over',
-                                      'spent': spent, 'monthly_avg': round(monthly_avg, 2), 'limit': limit})
-            elif pct >= 80:
-                budget_alerts.append({'category': cat, 'pct': round(pct), 'level': 'warning',
-                                      'spent': spent, 'monthly_avg': round(monthly_avg, 2), 'limit': limit})
-    budget_alerts.sort(key=lambda x: x['pct'], reverse=True)
+    # From `dough/services/budgets.py`, which is where the Budgets page reads
+    # them. This used to be computed here instead: spend across whatever window
+    # the reader had selected, divided into a monthly average, banded at 80/100.
+    # That is a different question from the one the Budgets page answers, and
+    # the two surfaces gave different answers to "am I over?" in the same words
+    # — a household looking at "last 90 days" was told about a different set of
+    # budgets than the page listing those same budgets showed.
+    #
+    # A budget is monthly by definition, so these are month-to-date and do not
+    # move with the dashboard's window or its account filter. A limit set
+    # against one account is still evaluated against that account; the filter
+    # chosen for a chart is not a reason to stop reporting an overrun.
+    budget_alerts = budget_service.alerts()
 
     # --- Spending insights (D1) ---
     insights = []
@@ -383,8 +383,12 @@ def dashboard():
                     if max(0, category_stats.get(c, {}).get('outbound', 0) - category_stats.get(c, {}).get('inbound', 0)) / period_months < lim * 0.5]
     if over_budget:
         count = len(over_budget)
+        # "This month", not "this period": the alerts stopped following the
+        # dashboard's window when they moved to the budget service, and a line
+        # that still said "period" beside a quarter-long filter would be
+        # describing a calculation nobody performed.
         insights.insert(0, {'text': f"{count} budget{'s' if count != 1 else ''} "
-                                    f"exceeded this period.", 'positive': False})
+                                    f"exceeded this month.", 'positive': False})
     if under_budget:
         insights.append({'text': f"Well within budget in: {', '.join(under_budget[:3])}.", 'positive': True})
 

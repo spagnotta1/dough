@@ -3,11 +3,26 @@
 {% block title %}Budgets · Dough{% endblock %}
 
 {#
-  Budgets — cards, not rows.
+  Budgets — a plan, not a scoreboard.
 
   A budget is a status ("am I over?"), and a status wants a shape. The old
   page listed category / account / limit and left the reader to go and find
   out what they had actually spent, which is the one thing they came for.
+
+  What the cards alone could not say, and the three sections above and below
+  them now do:
+
+  * A limit means nothing without the income it is drawn against. The anchor
+    is the first thing on the page for that reason — a plan promising $9,000
+    against $4,200 of take-home should never render as calm green cards.
+  * Spending outside a budget was invisible here, because this page loops over
+    budgets. "Not yet planned" is that money, with a one-tap limit beside it.
+  * The first budget is the hard one. The builder proposes limits from the
+    household's own months rather than handing somebody a blank dropdown and
+    asking them to guess.
+
+  Every figure comes from `dough/services/budgets.py`. There is no arithmetic
+  in this file beyond bar widths.
 #}
 
 {% block content %}
@@ -19,7 +34,7 @@
   <header class="ds-section__head bud-head ds-rise">
     <div>
       <h1 class="bud-title">Budgets</h1>
-      <p class="ds-section__sub">Spending against your limits for {{ month_label }}</p>
+      <p class="ds-section__sub">Your plan for {{ month_label }}</p>
     </div>
     {% if budgets %}
     <div class="bud-summary">
@@ -38,6 +53,95 @@
     {% endif %}
   </header>
 
+  {# ── The income anchor ─────────────────────────────────────────────────
+     Budgeting starts at take-home pay — the amount that actually lands, not
+     gross — and this page never showed it. Without it "you have four budgets
+     totalling $3,150" is a fact with nothing to be measured against.
+
+     The basis is last complete month's income, and says so: on the 4th,
+     income-received-so-far is near zero for anyone paid monthly, and a plan
+     measured against that would report every household as catastrophically
+     over-committed once a month, every month. ─────────────────────────── #}
+  {% if plan.basis > 0 %}
+  <section class="ds-card bud-anchor ds-rise" style="--ds-delay:20ms"
+           aria-labelledby="anchor-h">
+    <div class="bud-anchor__main">
+      <h2 class="ds-eyebrow" id="anchor-h">Every dollar coming in</h2>
+      <p class="bud-anchor__figures">
+        <b class="ds-num bud-anchor__income">{{ plan.basis|money }}</b>
+        <span class="bud-anchor__basis">
+          take-home {{ 'last month' if plan.basis_source == 'last_month' else 'so far this month' }}
+        </span>
+      </p>
+
+      {# Planned against income. Overflow past 100% is the whole reason this
+         bar exists, so it is banded rather than clamped silently. #}
+      <div class="ds-progress ds-progress--tall bud-anchor__bar" role="img"
+           aria-label="{{ plan.planned|money }} of {{ plan.basis|money }} take-home is planned{% if plan.over_committed %}, which is more than you earn{% endif %}">
+        <div class="ds-progress__fill {{ 'ds-progress__fill--danger' if plan.over_committed }}"
+             data-fill="{{ [plan.planned_pct or 0, 100]|min }}"></div>
+      </div>
+
+      <ul class="bud-anchor__legend">
+        <li><span class="ds-eyebrow">Planned</span>
+            <b class="ds-num">{{ plan.planned|money }}</b>
+            {% if plan.planned_pct is not none %}<span class="ds-meta">{{ plan.planned_pct|round|int }}%</span>{% endif %}</li>
+        <li><span class="ds-eyebrow">{{ 'Over by' if plan.over_committed else 'Unallocated' }}</span>
+            <b class="ds-num {{ 'is-over' if plan.over_committed }}">
+              {{ (plan.unallocated|abs)|money if plan.unallocated is not none else '—' }}</b></li>
+        {% if plan.unplanned_count %}
+        <li><span class="ds-eyebrow">Spent unplanned</span>
+            <b class="ds-num">{{ plan.unplanned_spend|money }}</b>
+            <span class="ds-meta">{{ plan.unplanned_count }} categor{{ 'y' if plan.unplanned_count == 1 else 'ies' }}</span></li>
+        {% endif %}
+      </ul>
+
+      {% if plan.over_committed %}
+      <p class="bud-anchor__note ds-meta is-over">
+        Your limits add up to more than you bring in. That isn't a failure —
+        it usually means a limit was set generously rather than measured. Worth
+        trimming the flexible ones until this sits under your take-home.
+      </p>
+      {% elif plan.unallocated and plan.unallocated > 0 %}
+      <p class="bud-anchor__note ds-meta">
+        {{ plan.unallocated|money }} of your take-home has no job yet. Giving it
+        one — even "savings" — is what turns a list of limits into a plan.
+      </p>
+      {% endif %}
+    </div>
+
+    {# ── Safe to spend ──
+       The single most useful number a budgeting page can show, and the one
+       Dough had every input for and never assembled. The arithmetic is listed
+       rather than summarised: a bottom line without its basis is one the
+       reader either over-trusts or ignores. #}
+    <div class="bud-safe">
+      <h3 class="ds-eyebrow">Safe to spend</h3>
+      <p class="bud-safe__amount ds-num {{ 'is-over' if plan.safe_to_spend.amount < 0 }}">
+        {{ plan.safe_to_spend.amount|money }}
+      </p>
+      <p class="ds-meta bud-safe__sub">
+        {% if plan.safe_to_spend.amount < 0 %}
+          Short, on this month's figures — worth a look before the next bill.
+        {% else %}
+          for the rest of {{ month_label.split(' ')[0] }}
+        {% endif %}
+      </p>
+      <dl class="bud-safe__work">
+        {% for part in plan.safe_to_spend.components %}
+        <div class="bud-safe__line">
+          <dt>{{ '−' if part.sign < 0 else '' }} {{ part.label }}</dt>
+          <dd class="ds-num">{{ part.amount|money }}</dd>
+        </div>
+        {% endfor %}
+      </dl>
+      {% if plan.safe_to_spend.confidence == 'low' %}
+      <p class="ds-meta">Early in the month — this will settle as bills land.</p>
+      {% endif %}
+    </div>
+  </section>
+  {% endif %}
+
   {# ── Dough's Budget Coach ──────────────────────────────────────────────
      The page already states every number; this is the one line that tells the
      user how to feel about them. Overspending is never scolded — the message
@@ -49,16 +153,33 @@
   {% set over = budget_status | selectattr('state', 'equalto', 'danger') | list %}
   {% set close = budget_status | selectattr('state', 'equalto', 'warn') | list %}
   {% set fine = budget_status | selectattr('state', 'equalto', 'ok') | list %}
+  {# Pacing to trouble but not there yet — the only group Dough can still help
+     with, and the reason the page stopped being purely retrospective. Read off
+     the projected band rather than the spent one, and deliberately excludes
+     anything already over: telling somebody a budget they have blown is "on
+     pace to go over" is the kind of line that gets a tool closed. #}
+  {% set heading_over = budget_status
+       | selectattr('projected_state', 'equalto', 'danger')
+       | rejectattr('state', 'equalto', 'danger') | list %}
   <div class="bud-coach ds-rise" style="--ds-delay:40ms">
     <span class="dough-avatar dough-avatar-lg" aria-hidden="true">
-      <span data-dough="{{ 'concerned' if over else 'proud' if fine|length == budget_status|length else 'happy' }}"
+      <span data-dough="{{ 'concerned' if over else 'proud' if fine|length == budget_status|length and not heading_over else 'happy' }}"
             data-dough-size="72" data-dough-tight></span>
     </span>
     <p class="dough-bubble">
-      {% if over %}
+      {% if plan and plan.over_committed %}
+        Before the categories — your limits add up to more than you bring in.
+        Everything below can look green and the month still won't balance, so
+        that's the one worth fixing first.
+      {% elif over %}
         We went a little over in {{ over|length }} categor{{ 'y' if over|length == 1 else 'ies' }}{% if fine %},
         though you stayed under in {{ fine|length }}{% endif %}. Let's see if we can
         make next month even better — I'll flag it earlier next time.
+      {% elif heading_over %}
+        Nothing has gone over yet, but at this pace
+        {{ heading_over|length }} categor{{ 'y is' if heading_over|length == 1 else 'ies are' }}
+        heading past the line before the month is out. There's still time to
+        change that, which is the whole reason I'm mentioning it now.
       {% elif close %}
         You're close to the line in {{ close|length }} categor{{ 'y' if close|length == 1 else 'ies' }},
         but nothing has gone over yet. Worth a glance before the month is out.
@@ -93,11 +214,40 @@
       {# The pace marker is what makes the bar readable mid-month: 70% spent
          is fine on the 25th and alarming on the 8th. #}
       <div class="ds-progress ds-progress--tall" role="img"
-           aria-label="{{ b.category }}: {{ s.pct|round|int }} percent of budget used, {{ month_progress }} percent through the month">
+           aria-label="{{ b.category }}: {{ s.pct|round|int }} percent of budget used, {{ month_progress }} percent through the month, on pace to finish at {{ s.projected|money }}">
         <div class="ds-progress__fill {{ 'ds-progress__fill--danger' if s.state=='danger' else 'ds-progress__fill--warn' if s.state=='warn' else '' }}"
              data-fill="{{ [s.pct, 100]|min }}"></div>
         <span class="ds-progress__pace" style="left:{{ month_progress }}%" title="Today"></span>
       </div>
+
+      {# ── Where this lands ──
+         The one forward-looking line on a card that was otherwise a report on
+         days already gone. Suppressed once a budget is already over, where a
+         projection adds nothing to a number the reader can see, and once the
+         projection agrees with the current band, where it would be a second
+         way of saying "fine". #}
+      {% if s.spent > 0 and not (s.state == 'danger' and s.projected_state == 'danger') %}
+      <p class="bud-project bud-project--{{ s.projected_state }}">
+        <span class="bud-project__label">At this pace</span>
+        <b class="ds-num">{{ s.projected|money }}</b>
+        <span class="bud-project__of">by month end</span>
+        {% if s.confidence == 'low' %}
+        <span class="ds-badge bud-project__early" title="Only a few days of spending so far">early days</span>
+        {% endif %}
+      </p>
+      {% endif %}
+
+      {# What this limit cannot decide its way out of. A budget that is almost
+         entirely bills is not one anybody can "do better" on, and saying so is
+         what stops the page nagging about the categories where advice cannot
+         land. `committed` is None when nothing computed it, which is not the
+         same as zero. #}
+      {% if s.committed is not none and s.committed > 0 %}
+      <p class="bud-fixed ds-meta">
+        {{ s.committed|money }} of this is recurring —
+        {{ s.flexible|money }} is yours to decide.
+      </p>
+      {% endif %}
 
       <p class="dash-budget__foot">
         <span class="dash-budget__left">
@@ -167,6 +317,149 @@
   </div>
   {% endif %}
 
+  {# ── Not yet planned ───────────────────────────────────────────────────
+     The money this page could not see. Budgets are the only thing the grid
+     above loops over, so a category with real spending and no limit did not
+     appear here at all — and the header's "$X of $Y budgeted" sat exactly
+     where a reader takes it for total spending.
+
+     Every row carries a one-tap limit drawn from this household's own median
+     month, because the gap between "you should budget this" and a budget
+     existing is a form somebody has to go and fill in. Transfers, income and
+     investment movement never reach this list; the service excludes them by
+     the household's own category wording. ─────────────────────────────── #}
+  {% if plan and plan.unplanned %}
+  <section class="ds-card bud-unplanned ds-rise" style="--ds-delay:80ms"
+           aria-labelledby="unplanned-h">
+    <div class="ds-section__head">
+      <div>
+        <h2 class="ds-card__title" id="unplanned-h">Not yet planned</h2>
+        <p class="ds-meta">
+          {{ plan.unplanned_spend|money }} went out this month in
+          {{ plan.unplanned_count }} categor{{ 'y' if plan.unplanned_count == 1 else 'ies' }}
+          with no limit against {{ 'it' if plan.unplanned_count == 1 else 'them' }}.
+          Nothing here is wrong — it's just money that hasn't been given a job yet.
+        </p>
+      </div>
+    </div>
+
+    <ul class="bud-unplanned__list">
+      {% for row in plan.unplanned %}
+      <li class="bud-unplanned__row">
+        <span class="bud-unplanned__cat">{{ row.category }}</span>
+        <span class="bud-unplanned__spent ds-num">{{ row.spent|money }}</span>
+        <span class="ds-meta bud-unplanned__basis">
+          {% if row.months_seen >= 2 %}
+            usually {{ row.median|money }}/mo
+          {% else %}
+            first month I've seen it
+          {% endif %}
+        </span>
+        <form method="POST" class="bud-inline bud-unplanned__act">
+          {{ csrf_field() }}
+          <input type="hidden" name="action" value="add">
+          <input type="hidden" name="category" value="{{ row.category }}">
+          <input type="hidden" name="account_name" value="both">
+          <input type="hidden" name="monthly_limit" value="{{ "%.2f"|format(row.suggested) }}">
+          <button type="submit" class="ds-btn ds-btn--secondary ds-btn--sm">
+            Budget at {{ row.suggested|money }}
+          </button>
+        </form>
+      </li>
+      {% endfor %}
+    </ul>
+  </section>
+  {% endif %}
+
+  {# ── The builder ───────────────────────────────────────────────────────
+     Getting started was the barrier: a blank dropdown and a number to guess.
+     Dough has months of this household's history and can propose the whole
+     plan — medians rounded up, so the first month is one they can actually
+     keep rather than one they break in the first week.
+
+     Open by default for somebody with no budgets, folded away once they have
+     some: an established household does not want a wizard at the top of every
+     visit, and a new one should not have to go looking for it. ─────────── #}
+  {% if suggestions %}
+  <details class="ds-card bud-builder ds-rise" style="--ds-delay:100ms"
+           {% if not budgets %}open{% endif %}>
+    {# The disclosure marker is drawn rather than left to the browser's: the
+       default triangle sits outside the flow and pulled the two lines apart.
+       Without something visible here a collapsed builder reads as a dead card,
+       which is how a feature ships and nobody finds it. #}
+    <summary class="bud-builder__summary">
+      <span class="bud-builder__chevron" aria-hidden="true"></span>
+      <span class="bud-builder__heading">
+        <span class="ds-card__title">
+          {% if budgets %}Build the rest of my plan{% else %}Build my plan from my history{% endif %}
+        </span>
+        <span class="ds-meta">
+          {{ suggestions|length }} categor{{ 'y' if suggestions|length == 1 else 'ies' }},
+          priced from your own months — every number editable before anything is saved
+        </span>
+      </span>
+    </summary>
+
+    {% if balanced.available %}
+    {# The 50/30/20 frame, priced — a shape to react to, never applied. The
+       split is a widely taught default, not a fact about anybody's life, and
+       the categories it sorts are free text this household wrote. #}
+    <div class="bud-frame" role="group" aria-label="A 50/30/20 shape for your take-home">
+      {% for bucket in balanced.buckets %}
+      <div class="bud-frame__bucket">
+        <span class="ds-eyebrow">{{ bucket.bucket }} · {{ bucket.target_pct }}%</span>
+        <b class="ds-num">{{ bucket.target|money }}</b>
+        {% if bucket.bucket != 'savings' %}
+        <span class="ds-meta">
+          you spend about {{ bucket.suggested_total|money }}
+          {%- if bucket.suggested_total > bucket.target %} — over this shape{% endif %}
+        </span>
+        {% else %}
+        <span class="ds-meta">the part a budget is for</span>
+        {% endif %}
+      </div>
+      {% endfor %}
+    </div>
+    <p class="ds-meta bud-frame__note">
+      A common starting shape, priced against your {{ balanced.basis|money }}
+      take-home. It's a frame to argue with, not a verdict — plenty of people
+      live well outside it.
+    </p>
+    {% endif %}
+
+    <form method="POST" class="bud-builder__form">
+      {{ csrf_field() }}
+      <input type="hidden" name="action" value="apply">
+      <ul class="bud-builder__list">
+        {% for hint in suggestions %}
+        <li class="bud-builder__row">
+          <label class="bud-builder__pick">
+            <input type="checkbox" name="pick" value="{{ hint.category }}" checked>
+            <span class="bud-builder__cat">{{ hint.category }}</span>
+          </label>
+          <span class="ds-meta bud-builder__basis">
+            median {{ hint.median|money }} · highest {{ hint.highest|money }} ·
+            seen in {{ hint.months_seen }} of {{ hint.months_examined }} months
+          </span>
+          <label class="bud-builder__amount">
+            <span class="ds-sr">Monthly limit for {{ hint.category }}</span>
+            <input type="number" name="limit_{{ hint.category }}" min="0" step="0.01"
+                   value="{{ "%.2f"|format(hint.suggested) }}" class="dash-input ds-input">
+          </label>
+        </li>
+        {% endfor %}
+      </ul>
+      <div class="bud-builder__actions">
+        <button type="submit" class="ds-btn ds-btn--primary">Save this plan</button>
+        <p class="ds-meta">
+          Every number is editable, and nothing is final — change any of them
+          whenever the month tells you something different.
+        </p>
+      </div>
+    </form>
+  </details>
+  {% endif %}
+
   {# ── Add a budget ── #}
   <section class="ds-card bud-add ds-rise" style="--ds-delay:120ms" aria-labelledby="add-budget-h">
     <h2 class="ds-card__title" id="add-budget-h">
@@ -210,9 +503,17 @@
   <div class="dough-empty bud-empty">
     <span data-dough="curious" data-dough-size="112"></span>
     <p class="dough-empty-title">No budgets yet</p>
-    <p class="dough-empty-body">Give me a category and a number, and I'll keep
-      an eye on it for you — I'll say something long before it becomes a
-      problem.</p>
+    <p class="dough-empty-body">
+      {% if suggestions %}
+        I've read back through your months and put a starting plan together
+        above — every number is a suggestion you can move. Budgeting isn't
+        about cutting back; it's about knowing what each dollar is for.
+      {% else %}
+        Give me a category and a number, and I'll keep an eye on it for you —
+        I'll say something long before it becomes a problem. Once there are a
+        couple of months in here, I can propose the whole plan myself.
+      {% endif %}
+    </p>
   </div>
   {% endif %}
 </div>

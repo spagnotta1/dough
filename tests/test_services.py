@@ -67,8 +67,18 @@ SERVICE_FUNCTIONS = {
                'create_transaction', 'update_transaction', 'delete_transaction',
                'bulk_update_category', 'bulk_delete', 'export_rows',
                'detect_columns'),
-    'budgets': ('serialize', 'list_budgets', 'upsert_budget', 'delete_budget',
-                'month_window', 'spend_by_category', 'status'),
+    # The limits, and the plan they sit inside. `project`, `income_for`,
+    # `unplanned`, `plan` and `suggested_limits` are what turned this page from
+    # a scoreboard for remembered categories into a budget: where each limit is
+    # heading, what the household actually earns, and the spending that had no
+    # limit against it at all. `project` moved here from `dough/ai/copilot.py`,
+    # where it was arithmetic sitting in the one package allowed to call a
+    # model — and where nothing reachable from a route ever called it.
+    'budgets': ('serialize', 'list_budgets', 'upsert_budget', 'upsert_many',
+                'delete_budget', 'month_window', 'spend_by_category', 'status',
+                'project', 'alerts', 'income_for', 'bills_due_remaining',
+                'committed_by_category', 'suggested_limits', 'unplanned',
+                'balanced_frame', 'plan'),
     'holdings': ('list_holdings', 'create_holding', 'update_holding',
                  'delete_holding'),
     'accounts': ('synced_accounts', 'connections', 'last_sync_at',

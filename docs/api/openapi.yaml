@@ -1825,6 +1825,34 @@ components:
             change_pct:
               type: [number, 'null']
               description: Null when there was no prior spend to compare against.
+            projected:
+              type: number
+              description: Month-end spend at the current pace. A budget 60%
+                used on the 10th is pacing well past its limit, and this is the
+                figure that says so while there is still a month left to act in.
+            projected_pct: { type: number }
+            projected_state:
+              type: string
+              enum: [ok, warn, danger]
+              description: The band applied to `projected` rather than to
+                `spent`, so a budget heading for trouble reads as trouble before
+                it arrives.
+            confidence:
+              type: string
+              enum: [low, moderate, high]
+              description: How far into the month the projection was made. Day
+                three arithmetic is not a forecast, and this says which it is.
+            committed:
+              type: [number, 'null']
+              description: How much of this limit is recurring bills, capped at
+                the limit. Null means nothing computed it — which is not the
+                same as zero, and must not render as "no bills". The API leaves
+                it null by design; recurring detection walks the whole ledger
+                and this endpoint does not make a client pay for that.
+            flexible:
+              type: [number, 'null']
+              description: The limit less `committed`. Null whenever `committed`
+                is null.
 
     BudgetStatus:
       type: object
@@ -1839,6 +1867,9 @@ components:
             budget means different things on the 5th and the 25th.
         total_budgeted: { type: number }
         total_spent: { type: number }
+        total_projected:
+          type: number
+          description: Where every budget together lands at the current pace.
 
     Account:
       type: object

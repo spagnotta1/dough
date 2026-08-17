@@ -92,6 +92,15 @@ The import graph stays a line: `ai_context` → {`proactive`, `health`, `periods
 `trends`, `anomalies`, `budgets`, `networth`} → `analytics` → `models`. Nothing
 imports upward, and `analytics` imports no sibling at all.
 
+`budgets` sits a little wider than the rest of that row: it reads `goals` for
+what the savings plan costs each month and `recurring_service` for what the
+bills do, because "safe to spend" is not a fact about budgets alone. Both are
+imported **inside the functions that need them** — `recurring_service` memoizes
+on `flask.g`, and `status()`, which `/api/v1/budgets` calls on every request,
+must not acquire a full-ledger scan by being in the same module as something
+that wants one. Neither import creates a cycle: `goals` reads only `analytics`,
+and `recurring_service` only `models` and `recurring`.
+
 **Nothing here talks to a model.** The orchestrator that coordinates these and
 then calls one is `dough/ai/copilot.py`, and it lives there rather than here
 precisely because of the "no LLM client" rule above — `dough/ai/` is the only
