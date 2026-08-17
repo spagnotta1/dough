@@ -1125,124 +1125,14 @@
   /* ══════════════════════════════════════════════════════════════════════
      Filter bar
 
-     The three controls are <details> elements, so open/close, the accessible
-     name, the expanded state and Enter/Space all come from the element. What
-     is added here is only what a disclosure does not have on its own: one
-     open at a time, Escape, click-away, and applying a preset or an account
-     without a trip through Apply.
-
-     Nothing here holds filter state. The form's own fields are the state —
-     the date inputs, the account radio, the category checkboxes — and the
-     page that comes back renders every control from the query it answered.
+     Not here any more. The bar is `.ds-filters` and its behaviour is
+     static/js/filter-bar.js, shared with the ledger and the recurring view —
+     one filter bar in the product rather than three that drift. The markup
+     in dashboard.html declares what it needs through data- attributes; there
+     is nothing for this file to wire up.
      ══════════════════════════════════════════════════════════════════════ */
 
-  function openMenus() {
-    return Array.prototype.slice.call(
-      document.querySelectorAll('#dashFilters .dash-menu[open]'));
-  }
-
-  function closeMenus(except) {
-    openMenus().forEach(function (menu) {
-      if (menu !== except) menu.open = false;
-    });
-  }
-
-  /* Applying a filter is a navigation, so it takes the same router every link
-     on the page takes: the panels transition instead of the window blinking
-     white, and the address bar ends up carrying the filter, which is what
-     makes a filtered dashboard something you can send to somebody.
-
-     FormData is the whole payload deliberately — it is the same set of
-     successful controls a native submit would send, including the date inputs
-     inside the collapsed custom-range disclosure, which still submit because
-     `hidden` hides a field rather than disabling it. */
-  function applyFilters(form) {
-    var query = new URLSearchParams(new FormData(form)).toString();
-    var url = form.getAttribute('action') || window.location.pathname;
-    var target = query ? url + '?' + query : url;
-    if (typeof window.spaNavigate === 'function') window.spaNavigate(target);
-    else window.location.href = target;
-  }
-
-  /* Which preset the window on screen corresponds to, applied to every place
-     that names it. The pill and the chip say the same thing because they are
-     written by the same pass — they used to be able to disagree, and a filter
-     bar whose two halves disagree is worse than one that says nothing.
-
-     Only ever an override: with no preset matching, the server's rendering of
-     the window stands, because "Aug 1 – Aug 14, 2026" is the true answer and
-     this function has no better one. */
-  function syncDateLabels() {
-    var start = document.getElementById('start_date');
-    var end = document.getElementById('end_date');
-    if (!start || !end) return;
-
-    var matched = null;
-    document.querySelectorAll('#dashFilters [data-preset]').forEach(function (btn) {
-      var range = presetRange(btn.getAttribute('data-preset'));
-      var hit = !!range && range.start === start.value && range.end === end.value;
-      btn.setAttribute('aria-pressed', hit ? 'true' : 'false');
-      if (hit && matched === null) matched = btn.textContent.trim();
-    });
-
-    if (matched) {
-      document.querySelectorAll('#dashFilters [data-date-label]').forEach(function (el) {
-        el.textContent = matched;
-      });
-    }
-    // A window nobody has a name for is one somebody typed, so the fields
-    // that produced it open with the menu rather than behind another click.
-    var custom = document.getElementById('customRange');
-    if (custom) custom.open = !matched;
-  }
-
-  function initFilters() {
-    var form = document.getElementById('dashFilterForm');
-    if (!form) return;
-
-    syncDateLabels();
-
-    form.addEventListener('submit', function (e) {
-      e.preventDefault();
-      applyFilters(form);
-    });
-
-    form.addEventListener('click', function (e) {
-      var preset = e.target.closest('[data-preset]');
-      if (!preset) return;
-      var range = presetRange(preset.getAttribute('data-preset'));
-      if (!range) return;
-      document.getElementById('start_date').value = range.start;
-      document.getElementById('end_date').value = range.end;
-      // A preset is a complete answer, so it applies on the spot. Composing
-      // several criteria before one refresh is what "+ Filters" is for.
-      applyFilters(form);
-    });
-
-    // Same for the account. A checkbox under "+ Filters" deliberately does
-    // not: that panel exists so three changes cost one request, not three.
-    form.addEventListener('change', function (e) {
-      if (e.target.name === 'account') applyFilters(form);
-    });
-
-    var clear = document.getElementById('moreClear');
-    if (clear) {
-      clear.addEventListener('click', function () {
-        form.querySelectorAll('#moreMenu input[type="checkbox"]').forEach(
-          function (box) { box.checked = false; });
-      });
-    }
-
-    document.querySelectorAll('#dashFilters .dash-menu').forEach(function (menu) {
-      menu.addEventListener('toggle', function () {
-        if (menu.open) closeMenus(menu);
-      });
-    });
-  }
-
   function initHeader() {
-    initFilters();
-
     var healthToggle = document.getElementById('healthToggle');
     var healthDetail = document.getElementById('healthDetail');
     if (healthToggle && healthDetail) {
@@ -1261,27 +1151,6 @@
         if (opener) { opener.setAttribute('aria-expanded', 'false'); opener.focus(); }
       });
     });
-  }
-
-  /* A preset's date range. Pure — it computes, it does not navigate, which is
-     what lets the same function both fill the inputs and decide which chip
-     should read as active. */
-  function presetRange(preset) {
-    var now = new Date(), y = now.getFullYear(), m = now.getMonth();
-    var fmt = function (d) {
-      return d.getFullYear() + '-' +
-             String(d.getMonth() + 1).padStart(2, '0') + '-' +
-             String(d.getDate()).padStart(2, '0');
-    };
-    var start, end = new Date(now);
-    if (preset === 'this_month') start = new Date(y, m, 1);
-    else if (preset === 'last_month') { start = new Date(y, m - 1, 1); end = new Date(y, m, 0); }
-    else if (preset === 'last_3mo') start = new Date(y, m - 3, now.getDate());
-    else if (preset === 'last_6mo') start = new Date(y, m - 6, now.getDate());
-    else if (preset === 'ytd') start = new Date(y, 0, 1);
-    else if (preset === 'last_year') { start = new Date(y - 1, 0, 1); end = new Date(y - 1, 11, 31); }
-    else return null;
-    return { start: fmt(start), end: fmt(end) };
   }
 
   /* ══════════════════════════════════════════════════════════════════════
@@ -1346,20 +1215,7 @@
       if (t) { t.setAttribute('aria-expanded', 'false'); t.focus(); }
       return;
     }
-    // Innermost first: the custom-range disclosure lives inside the date
-    // menu, and Escape closing both at once loses the reader's place.
-    var custom = document.getElementById('customRange');
-    if (custom && custom.open && custom.contains(document.activeElement)) {
-      custom.open = false;
-      custom.querySelector('summary').focus();
-      return;
-    }
-    var menu = openMenus()[0];
-    if (menu) {
-      menu.open = false;
-      var summary = menu.querySelector('summary');
-      if (summary) summary.focus();
-    }
+    // The filter popovers answer Escape themselves — see filter-bar.js.
   }
 
   /* Chart.js bakes colors in at draw time, so a theme switch needs a
@@ -1381,13 +1237,6 @@
   // once and guarded rather than re-added on every navigation.
   if (!window._dashListenersBound) {
     document.addEventListener('keydown', onKeydown);
-    // Click-away. A <details> stays open until something closes it, and a
-    // filter popover left hanging over the numbers is the one thing that
-    // would make these controls feel heavier than the panel they replaced.
-    document.addEventListener('click', function (e) {
-      if (e.target.closest && e.target.closest('#dashFilters .dash-menu')) return;
-      closeMenus();
-    });
     document.addEventListener('check:theme-changed', function () {
       if (document.getElementById('dashData')) onThemeChange();
     });

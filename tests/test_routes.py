@@ -94,7 +94,9 @@ def test_transaction_filters_can_be_cleared(client):
         "/transactions?account=&category=&direction=&start_date=&end_date=&search="
     )
     assert resp.status_code == 200
-    assert b'value="inbound" selected' not in resp.data
+    # The direction control is a radio group in the filter bar now rather than
+    # a <select>, so "chosen" reads as `checked` where it used to be `selected`.
+    assert not re.search(r'value="inbound"[^>]*\schecked', resp.get_data(as_text=True))
     with client.session_transaction() as sess:
         assert sess.get("direction") is None
         assert sess.get("category") is None
@@ -102,7 +104,7 @@ def test_transaction_filters_can_be_cleared(client):
     # Params absent entirely (e.g. pagination links) still keep session filters.
     client.get("/transactions?direction=outgo")
     resp = client.get("/transactions?page=1")
-    assert b'value="outgo"   selected' in resp.data
+    assert re.search(r'value="outgo"[^>]*\schecked', resp.get_data(as_text=True))
 
 
 def test_pages_render(client):
@@ -146,7 +148,7 @@ def test_dashboard_category_cascading_filter(client):
     # The active filter appears as a removable chip under the filter bar, and
     # the box that set it is still ticked inside "+ Filters" — the panel and
     # the chip are two views of one form field, so they cannot disagree.
-    assert '<span class="dash-chip__val">Food</span>' in html
+    assert '<span class="ds-filter-chip__val">Food</span>' in html
     assert re.search(r'name="category" value="Food"\s+checked', html)
     assert ">Gas</a>" in html                           # grid row still clickable
     assert "category=Food&amp;category=Gas" in html \
@@ -156,12 +158,12 @@ def test_dashboard_category_cascading_filter(client):
     html = client.get(f"/?{window}&category=Food&category=Gas").get_data(as_text=True)
     assert "-130.5" in html
     assert "-150.5" not in html
-    assert '<span class="dash-chip__val">Food</span>' in html
-    assert '<span class="dash-chip__val">Gas</span>' in html
+    assert '<span class="ds-filter-chip__val">Food</span>' in html
+    assert '<span class="ds-filter-chip__val">Gas</span>' in html
 
     # No category params → no category chip.
     html = client.get(f"/?{window}").get_data(as_text=True)
-    assert '<span class="dash-chip__val">Food</span>' not in html
+    assert '<span class="ds-filter-chip__val">Food</span>' not in html
 
 
 def test_a_first_run_dashboard_asks_for_a_connection_not_a_file(client):
@@ -230,8 +232,8 @@ def test_filtering_the_transaction_list_does_not_blank_the_dashboard(client):
     # reading "all" only because nothing else happened to be selected. The
     # control is a radio group now rather than a <select>, and "All accounts"
     # is the default, so it also must not appear as an applied filter chip.
-    assert re.search(r'name="account" value="both"\s+checked', html)
-    assert 'dash-chip__key">Account' not in html
+    assert re.search(r'name="account" value="both"[^>]*\schecked', html)
+    assert 'ds-filter-chip__key">Account' not in html
 
 
 def test_a_connection_awaiting_its_first_sync_is_not_asked_to_connect_again(client):

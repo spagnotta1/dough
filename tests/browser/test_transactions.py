@@ -14,7 +14,7 @@ on the page produces those query strings, which is a property of the markup and
 the browser's form serialisation rather than of the view.
 """
 
-from .conftest import TRANSACTION_COUNT, ledger
+from .conftest import TRANSACTION_COUNT, ledger, visit
 
 ROWS = 'table tbody tr'
 
@@ -31,14 +31,36 @@ def test_the_ledger_lists_the_seeded_transactions(signed_in):
     assert any('Netflix' in d for d in _descriptions(signed_in))
 
 
+def _open(page, menu):
+    """Open one of the filter bar's popovers.
+
+    Every control is a `<details>`, so this is a click on its `<summary>` and
+    then a wait for the element's own `open` attribute — no class to guess at.
+    """
+    page.click(f'{menu} > summary')
+    page.wait_for_selector(f'{menu}[open]')
+
+
+def _applied(page, text):
+    """Wait for a filter to be *on screen* as an applied chip.
+
+    Applying goes through `spaNavigate`, so the URL changes before the new
+    markup lands. Waiting on the chip waits for both — the query ran and the
+    page that came back is the one being read.
+    """
+    page.wait_for_selector(f'.ds-filter-chip:has-text("{text}")', timeout=5_000)
+
+
 def test_filtering_by_account_narrows_the_ledger(signed_in):
     page = signed_in
     ledger(page)
     before = page.locator(ROWS).count()
 
-    page.select_option('#account', 'Visa')
-    page.click('#txnFilterForm button[type="submit"]')
-    page.wait_for_load_state('load')
+    # The account applies on the spot — no Apply, which is the whole point of
+    # putting it on the bar rather than behind "+ Filters".
+    _open(page, '#accountMenu')
+    page.check('#accountMenu input[value="Visa"]')
+    _applied(page, 'Visa')
 
     after = page.locator(ROWS).count()
     assert 0 < after < before, f'filtering to one account changed nothing ({before} → {after})'
@@ -52,28 +74,93 @@ def test_searching_matches_on_the_description(signed_in):
     page = signed_in
     ledger(page)
 
+    # Search composes with the other advanced dimensions behind one Apply.
+    _open(page, '#moreMenu')
     page.fill('#search', 'Netflix')
-    page.click('#txnFilterForm button[type="submit"]')
-    page.wait_for_load_state('load')
+    page.click('#moreMenu button[type="submit"]')
+    _applied(page, 'Netflix')
 
     descriptions = _descriptions(page)
     assert descriptions, 'searching for a description that exists returned nothing'
     assert all('Netflix' in d for d in descriptions)
 
 
+def test_a_chip_removes_only_its_own_filter(signed_in):
+    """Two filters on, one chip dismissed, the other still applied.
+
+    This is what a single Clear button could never do, and it is the reason
+    the chips exist rather than a line of text saying what is on.
+    """
+    page = signed_in
+    ledger(page)
+
+    _open(page, '#accountMenu')
+    page.check('#accountMenu input[value="Visa"]')
+    _applied(page, 'Visa')
+
+    _open(page, '#moreMenu')
+    page.check('#moreMenu input[name="category"][value="Groceries"]')
+    page.click('#moreMenu button[type="submit"]')
+    _applied(page, 'Groceries')
+
+    page.locator('.ds-filter-chip', has_text='Groceries').locator('.ds-filter-chip__x').click()
+    page.wait_for_selector('.ds-filter-chip:has-text("Groceries")', state='detached')
+
+    assert page.locator('.ds-filter-chip', has_text='Visa').count() == 1, \
+        'removing the category chip took the account filter with it'
+
+
 def test_clearing_the_filters_restores_the_whole_ledger(signed_in):
     page = signed_in
     ledger(page)
 
-    page.select_option('#account', 'Visa')
-    page.click('#txnFilterForm button[type="submit"]')
-    page.wait_for_load_state('load')
+    _open(page, '#accountMenu')
+    page.check('#accountMenu input[value="Visa"]')
+    _applied(page, 'Visa')
     assert page.locator(ROWS).count() < TRANSACTION_COUNT
 
-    page.click('a:has-text("Clear")')
+    page.click('.ds-filter-chips__clear')
     page.wait_for_load_state('load')
     assert page.locator(ROWS).count() == TRANSACTION_COUNT, \
-        'Clear did not restore the unfiltered ledger'
+        'Clear all did not restore the unfiltered ledger'
+    assert page.locator('.ds-filter-chip').count() == 0, \
+        'the ledger says it is unfiltered and still shows filter chips'
+
+
+def test_a_window_that_matches_a_preset_is_named_by_it(signed_in):
+    """The pill says "This Month", not "Aug 1 – Aug 17, 2026".
+
+    The server renders the window it was given; filter-bar.js overrides the
+    label when the dates happen to be a preset, and only then. This is the one
+    behaviour on the bar that is not plain markup, so it is the one that can
+    break silently — and it broke for a while on a *soft* navigation, where
+    there is no DOMContentLoaded to hang the pass on.
+    """
+    from datetime import date
+
+    today = date.today()
+    first = today.replace(day=1)
+    visit(signed_in, f'/transactions?start_date={first}&end_date={today}')
+
+    label = signed_in.locator('#dateTrigger .ds-filter-trigger__value')
+    label.wait_for()
+    assert label.inner_text().strip() == 'This Month', \
+        'the date pill did not recognise its own window as This Month'
+
+
+def test_the_slash_shortcut_reaches_the_search_field(signed_in):
+    """`/` focuses search from anywhere on the page.
+
+    It has to open the popover to do it now: the field moved inside
+    "+ Filters", and focus() on a control in a closed <details> does nothing at
+    all — silently, which is the worst way for a shortcut to stop working.
+    """
+    page = signed_in
+    ledger(page)
+
+    page.keyboard.press('/')
+    page.wait_for_selector('#moreMenu[open]')
+    assert page.evaluate('document.activeElement && document.activeElement.id') == 'search'
 
 
 # ── The edit dialog ─────────────────────────────────────────────────────────

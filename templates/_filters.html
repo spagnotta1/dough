@@ -1,0 +1,38 @@
+{# ═══════════════════════════════════════════════════════════════════════════
+   Filter-bar macros — the two bits of markup every filter bar repeats.
+
+   The component is `.ds-filters` in design-system.css and its behaviour is
+   static/js/filter-bar.js. This file exists so the third page to grow a filter
+   bar does not arrive with its own hand-drawn caret at its own weight.
+
+   Usage:
+     {% from '_filters.html' import caret, ficon %}
+   ═══════════════════════════════════════════════════════════════════════════ #}
+
+{# The pill's own caret. Rotated by CSS when its <details> opens, which is why
+   it carries a class rather than being swapped for a second glyph. #}
+{% macro caret() %}
+<svg class="ds-filter-trigger__caret" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+     stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"
+     focusable="false"><path d="m6 9 6 6 6-6"/></svg>
+{%- endmacro %}
+
+{# The small set a filter pill can need. Deliberately small: an icon here is
+   there to make a pill findable at a glance, and a bar where every control has
+   a different picture is one where none of them registers. Unknown names draw
+   nothing rather than a placeholder — a pill reads fine on its label alone. #}
+{% macro ficon(name, size=14) %}
+{%- set paths = {
+  'calendar': '<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M8 3v4M16 3v4M3 11h18"/>',
+  'wallet':   '<path d="M3 7a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2"/><path d="M3 7v10a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-6a2 2 0 0 0-2-2H5a2 2 0 0 1-2-2z"/><circle cx="17" cy="14" r="1"/>',
+  'tag':      '<path d="M12.586 2.586A2 2 0 0 0 11.172 2H4a2 2 0 0 0-2 2v7.172a2 2 0 0 0 .586 1.414l8.704 8.704a2.426 2.426 0 0 0 3.42 0l6.58-6.58a2.426 2.426 0 0 0 0-3.42z"/><circle cx="7.5" cy="7.5" r="1.5" fill="currentColor" stroke="none"/>',
+  'flow':     '<path d="M7 17V7m0 0L4 10m3-3 3 3"/><path d="M17 7v10m0 0 3-3m-3 3-3-3"/>',
+  'search':   '<circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/>',
+  'check':    '<path d="m5 13 4 4L19 7"/>'
+} -%}
+{%- if paths.get(name) -%}
+<svg width="{{ size }}" height="{{ size }}" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+     stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"
+     focusable="false">{{ paths[name]|safe }}</svg>
+{%- endif -%}
+{%- endmacro %}

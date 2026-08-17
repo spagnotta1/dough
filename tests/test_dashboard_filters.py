@@ -30,11 +30,16 @@ import pytest
 from models import Transaction, db
 
 #: One applied-filter chip: its key, its value, and where its ✕ leads.
+#:
+#: The class names read `ds-filter-*` because the bar is a design-system
+#: component now rather than a dashboard part — the ledger and the recurring
+#: view render the same markup from the same stylesheet. Nothing this file
+#: asserts changed with the rename.
 CHIP = re.compile(
-    r'<span class="dash-chip">\s*'
-    r'<span class="dash-chip__key">([^<]+)</span>\s*'
-    r'<span class="dash-chip__val"[^>]*>([^<]+)</span>\s*'
-    r'<a class="dash-chip__x"[^>]*\shref="([^"]+)"', re.S)
+    r'<span class="ds-filter-chip">\s*'
+    r'<span class="ds-filter-chip__key">([^<]+)</span>\s*'
+    r'<span class="ds-filter-chip__val"[^>]*>([^<]+)</span>\s*'
+    r'<a class="ds-filter-chip__x"[^>]*\shref="([^"]+)"', re.S)
 
 
 def _chips(page):

@@ -1,5 +1,6 @@
 """Recurring bills / subscriptions detection (recurring.py + /recurring page)."""
 
+import re
 from datetime import date, timedelta
 
 from recurring import detect_recurring
@@ -223,6 +224,42 @@ def test_recurring_page_renders(client):
 def test_recurring_page_empty_db(client):
     resp = client.get('/recurring')
     assert resp.status_code == 200
+
+
+def test_the_account_filter_is_the_shared_filter_bar(client):
+    """One control, and the same one the dashboard and the ledger carry.
+
+    This page's filter used to be a card holding a labelled `<select>` and a
+    Filter button — three pieces of chrome for one choice, and a different
+    shape from the same choice on the two pages either side of it.
+    """
+    from models import db, Transaction
+
+    db.session.add(Transaction(account_name='Visa', date=TODAY,
+                               description='SPOTIFY', amount=-11.99,
+                               category='Subscriptions'))
+    db.session.commit()
+
+    html = client.get('/recurring').get_data(as_text=True)
+    assert 'data-filter-bar' in html, 'the recurring view lost its filter bar'
+    assert 'ds-filter-trigger' in html
+    # Unfiltered is the state the page opens in, so it gets no chip.
+    assert 'ds-filter-chip' not in html
+
+
+def test_filtering_to_an_account_says_so_and_offers_a_way_back(client):
+    from models import db, Transaction
+
+    db.session.add(Transaction(account_name='Visa', date=TODAY,
+                               description='SPOTIFY', amount=-11.99,
+                               category='Subscriptions'))
+    db.session.commit()
+
+    html = client.get('/recurring?account=Visa').get_data(as_text=True)
+    assert '<span class="ds-filter-chip__val">Visa</span>' in html
+    assert 'name="account" value="Visa"' in html
+    # And the chip's ✕ leads back to the unfiltered page rather than nowhere.
+    assert re.search(r'ds-filter-chip__x"[^>]*href="/recurring"', html)
 
 
 def test_dismiss_and_restore_flow(client):

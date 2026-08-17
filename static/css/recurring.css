@@ -18,7 +18,6 @@
   margin-bottom: var(--sp-4);
 }
 
-.recur-filter-form { align-items: flex-end; }
 .recur-inline { display: inline; }
 .recur-dismissed__desc { min-width: 0; }
 

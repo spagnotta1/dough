@@ -24,7 +24,7 @@ import pandas as pd
 from werkzeug.exceptions import HTTPException
 from werkzeug.utils import secure_filename
 
-from dough.services import ledger
+from dough.services import analytics, ledger
 from dough.services.categorization import get_category_rules
 from dough.services.transactions import build_transaction_query, sticky_filter
 
@@ -95,6 +95,31 @@ def upload():
                            last_batch_id=session.get('last_batch_id'),
                            last_batch_count=session.get('last_batch_count'))
 
+def _date_label(start, end):
+    """The window on the date pill, as a person would say it.
+
+    `analytics.label_for` is the phrasing the rest of the product uses for a
+    window — "August 2026", "Aug 1 – Aug 17, 2026" — so this borrows it rather
+    than growing a fourth spelling. The open-ended cases are this page's own:
+    the ledger is the one view where a filter can have a start and no end.
+
+    Falls back to whatever was in the query string if it will not parse. A
+    filter bar is not the place to raise on a hand-typed URL, and the query
+    itself already refuses the same input further down.
+    """
+    if not (start or end):
+        return 'Any dates'
+    try:
+        if start and end:
+            return analytics.label_for(analytics.as_date(start), analytics.as_date(end))
+        # The day is interpolated rather than formatted: %-d is glibc's and
+        # this runs on Windows too, where it is a ValueError.
+        one = analytics.as_date(start or end)
+        return f'{"From" if start else "Until"} {one:%b} {one.day}, {one.year}'
+    except (ValueError, TypeError):
+        return ' – '.join(p for p in (start, end) if p)
+
+
 @bp.route('/transactions')
 def index():
     page = request.args.get('page', 1, type=int)
@@ -144,6 +169,7 @@ def index():
     )
 
     return render_template('transactions.html',
+                           date_label=_date_label(start_date_str, end_date_str),
                            transactions=txn_page,
                            categories=[c[0] for c in categories],
                            accounts=[a[0] for a in accounts],

@@ -10,33 +10,22 @@
    a client-side navigation to this page.
    ══════════════════════════════════════════════════════════════════════════ */
 
-/* ── Filter bar ─────────────────────────────────────────────────────────── */
+/* ── Filter bar ─────────────────────────────────────────────────────────
+   Nothing here. It is `.ds-filters` in design-system.css, the same component
+   the dashboard and the recurring view carry. What used to live here — a
+   six-field grid, a scrollable row of preset chips and a phone-only collapse
+   for both — went with the panel it dressed.
+   ─────────────────────────────────────────────────────────────────────── */
 
-.txn-filters__grid {
+/* Two fields side by side — the edit dialog's date/amount and
+   account/category pairs. It used to borrow the filter panel's grid, which
+   left it pointing at a class the filter bar no longer has. */
+.txn-fields {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
   gap: var(--sp-4);
   align-items: end;
 }
-/* The submit/clear/export cluster sits on the baseline of the last row. */
-.txn-filters__actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--sp-2);
-}
-
-/* Quick date presets — one thumb-scrollable row on a phone. */
-.txn-presets {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--sp-2);
-  margin-bottom: var(--sp-4);
-}
-
-/* The mobile-only filter collapse toggle. Hidden by default; the phone block
-   at the bottom of this file reveals it. */
-.txn-filters__toggle { display: none; width: 100%; }
 
 /* ── Bulk action bar ────────────────────────────────────────────────────── */
 
@@ -123,14 +112,7 @@
    ══════════════════════════════════════════════════════════════════════════ */
 
 @media (max-width: 640px) {
-  .txn-filters__toggle { display: flex; }
-  .txn-presets.mob-hidden, .txn-filter-form.mob-hidden { display: none; }
-
-  .txn-presets { flex-wrap: nowrap; overflow-x: auto; -webkit-overflow-scrolling: touch; padding-bottom: var(--sp-1); }
-  .txn-presets .ds-chip { flex-shrink: 0; }
-
-  .txn-filters__grid { grid-template-columns: 1fr; }
-  .txn-filters__actions .ds-btn { flex: 1; }
+  .txn-fields { grid-template-columns: 1fr; }
 
   .txn-pager--compact { display: flex; justify-content: space-between; align-items: center; }
   .txn-pager__full { display: none; }

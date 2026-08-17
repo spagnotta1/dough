@@ -7,23 +7,59 @@
    replaces <main> only, so a <link> in <head> would never arrive on a
    client-side navigation to this page. #}
 <link rel="stylesheet" href="{{ url_for('static', filename='css/recurring.css') }}">
+{% from '_filters.html' import caret, ficon %}
 
 <div class="ds-stack ds-stack-6">
-    <section class="ds-card" aria-labelledby="recurFilterHeading">
+    {# One filter, and it now costs one click rather than a card, a labelled
+       select and a Filter button. Same component as the dashboard and the
+       ledger — `.ds-filters`, static/js/filter-bar.js — so a page with one
+       control still looks like the rest of the product.
+
+       No `data-filter-sticky`: this view reads `request.args` only, so an
+       absent key and an empty one mean the same thing here. #}
+    {% set account_active = account_filter and account_filter != 'both' %}
+    <div class="ds-filters" id="recurFilters" data-filter-bar>
         <h2 id="recurFilterHeading" class="ds-sr">Filter by account</h2>
-        <form method="GET" class="ds-row ds-row--wrap recur-filter-form">
-            <div class="ds-field">
-                <label class="ds-label" for="recurAccount">Account</label>
-                <select name="account" id="recurAccount" class="ds-select">
-                    <option value="both" {% if account_filter == 'both' %}selected{% endif %}>Both</option>
-                    {% for acct in accounts %}
-                    <option value="{{ acct }}" {% if account_filter == acct %}selected{% endif %}>{{ acct }}</option>
-                    {% endfor %}
-                </select>
-            </div>
-            <button type="submit" class="ds-btn ds-btn--primary">Filter</button>
+        <form method="GET" action="{{ url_for('insights.recurring') }}"
+              class="ds-filters__bar" aria-labelledby="recurFilterHeading">
+            <details class="ds-filter-menu ds-filter-menu--lead" id="recurAccountMenu">
+                <summary class="ds-filter-trigger {{ 'is-on' if account_active }}" id="recurAccountTrigger">
+                    {{ ficon('wallet') }}
+                    <span class="ds-sr">Account:</span>
+                    <span class="ds-filter-trigger__value">{{ account_filter if account_active else 'All accounts' }}</span>
+                    {{ caret() }}
+                </summary>
+                <div class="ds-filter-menu__pop">
+                    <fieldset class="ds-filter-menu__opts">
+                        <legend class="ds-sr">Account</legend>
+                        <label class="ds-filter-opt ds-filter-opt--choice">
+                            <input type="radio" name="account" value="both" data-apply-now data-filter-default
+                                   {% if not account_active %}checked{% endif %}>
+                            <span class="ds-filter-opt__label">All accounts</span>
+                        </label>
+                        {% for acct in accounts %}
+                        <label class="ds-filter-opt ds-filter-opt--choice">
+                            <input type="radio" name="account" value="{{ acct }}" data-apply-now
+                                   {% if account_filter == acct %}checked{% endif %}>
+                            <span class="ds-filter-opt__label">{{ acct }}</span>
+                        </label>
+                        {% endfor %}
+                    </fieldset>
+                </div>
+            </details>
         </form>
-    </section>
+
+        {% if account_active %}
+        <div class="ds-filter-chips" role="group" aria-label="Applied filters">
+            <span class="ds-filter-chip">
+                <span class="ds-filter-chip__key">Account</span>
+                <span class="ds-filter-chip__val">{{ account_filter }}</span>
+                <a class="ds-filter-chip__x" aria-label="Remove the {{ account_filter }} account filter"
+                   href="{{ url_for('insights.recurring') }}">✕</a>
+            </span>
+        </div>
+        {% endif %}
+    </div>
 
     <!-- Monthly Bills & Payments -->
     <section class="ds-card" aria-labelledby="billsHeading">

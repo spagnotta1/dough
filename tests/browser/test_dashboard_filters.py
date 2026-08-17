@@ -32,7 +32,7 @@ def _open(page, trigger):
 
 def _label(page):
     """What the date pill currently reads."""
-    return page.locator('#dateTrigger .dash-trigger__value').inner_text().strip()
+    return page.locator('#dateTrigger .ds-filter-trigger__value').inner_text().strip()
 
 
 def _params(page):
@@ -66,7 +66,7 @@ def test_the_bar_says_what_is_on_screen_without_being_opened(signed_in):
     _dash(page)
 
     assert _label(page) == 'This Month'
-    assert page.locator('#accountTrigger .dash-trigger__value').inner_text().strip() \
+    assert page.locator('#accountTrigger .ds-filter-trigger__value').inner_text().strip() \
         == 'All accounts'
     # The exact window, for the case a preset name cannot describe it.
     assert page.locator('#dashPeriodLabel').inner_text().strip()
@@ -98,7 +98,7 @@ def test_a_preset_applies_on_one_click_and_renames_the_control(signed_in):
 
     page.wait_for_timeout(200)
     assert _label(page) == 'Last Month'
-    assert page.locator('.dash-chip', has_text='Last Month').count() == 1
+    assert page.locator('.ds-filter-chip', has_text='Last Month').count() == 1
 
 
 def test_choosing_an_account_applies_without_an_apply_button(signed_in):
@@ -111,9 +111,9 @@ def test_choosing_an_account_applies_without_an_apply_button(signed_in):
                            timeout=5_000)
     page.wait_for_timeout(200)
 
-    assert page.locator('#accountTrigger .dash-trigger__value').inner_text().strip() \
+    assert page.locator('#accountTrigger .ds-filter-trigger__value').inner_text().strip() \
         == 'Visa'
-    assert page.locator('.dash-chip', has_text='Visa').count() == 1
+    assert page.locator('.ds-filter-chip', has_text='Visa').count() == 1
 
 
 def test_the_advanced_panel_costs_one_request_however_many_boxes_are_ticked(signed_in):
@@ -139,8 +139,8 @@ def test_the_advanced_panel_costs_one_request_however_many_boxes_are_ticked(sign
     page.wait_for_timeout(300)
 
     assert len(loads) == 1, f'Apply issued {len(loads)} requests: {loads}'
-    assert page.locator('.dash-chip', has_text='Groceries').count() == 1
-    assert page.locator('.dash-chip', has_text='Travel').count() == 1
+    assert page.locator('.ds-filter-chip', has_text='Groceries').count() == 1
+    assert page.locator('.ds-filter-chip', has_text='Travel').count() == 1
 
 
 # ── Removing ────────────────────────────────────────────────────────────────
@@ -150,14 +150,14 @@ def test_a_chip_removes_only_its_own_filter(signed_in):
     visit(page, '/?account=Visa&category=Travel')
     wait_for_layout(page)
 
-    assert page.locator('.dash-chip', has_text='Visa').count() == 1
-    page.locator('.dash-chip', has_text='Travel').locator('.dash-chip__x').click()
+    assert page.locator('.ds-filter-chip', has_text='Visa').count() == 1
+    page.locator('.ds-filter-chip', has_text='Travel').locator('.ds-filter-chip__x').click()
     page.wait_for_function("() => !location.search.includes('category=Travel')",
                            timeout=5_000)
     page.wait_for_timeout(200)
 
-    assert page.locator('.dash-chip', has_text='Travel').count() == 0
-    assert page.locator('.dash-chip', has_text='Visa').count() == 1, \
+    assert page.locator('.ds-filter-chip', has_text='Travel').count() == 0
+    assert page.locator('.ds-filter-chip', has_text='Visa').count() == 1, \
         'removing the category took the account with it'
 
 
@@ -173,8 +173,8 @@ def test_clear_all_appears_with_a_filter_and_restores_the_default(signed_in):
     page.wait_for_url(lambda url: '/clear_filters' not in url, timeout=10_000)
     wait_for_layout(page)
 
-    assert page.locator('.dash-chip').count() == 0
-    assert page.locator('#accountTrigger .dash-trigger__value').inner_text().strip() \
+    assert page.locator('.ds-filter-chip').count() == 0
+    assert page.locator('#accountTrigger .ds-filter-trigger__value').inner_text().strip() \
         == 'All accounts'
 
 
@@ -227,7 +227,7 @@ def test_only_one_menu_is_open_at_a_time(signed_in):
     _open(page, '#dateTrigger')
     _open(page, '#accountTrigger')
 
-    assert page.locator('#dashFilters .dash-menu[open]').count() == 1
+    assert page.locator('#dashFilters .ds-filter-menu[open]').count() == 1
 
 
 def test_the_calendar_stays_behind_the_custom_option(signed_in):
@@ -261,7 +261,7 @@ def test_a_custom_range_applies_from_its_own_apply(signed_in):
                            timeout=5_000)
     page.wait_for_timeout(200)
 
-    assert page.locator('.dash-chip__key', has_text='Dates').count() == 1
+    assert page.locator('.ds-filter-chip__key', has_text='Dates').count() == 1
     # A window with no preset name keeps the server's own rendering of it.
     assert _label(page) not in ('This Month', 'Last Month', 'YTD')
 
