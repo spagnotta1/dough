@@ -270,18 +270,27 @@
   }
 
   /* ── Smooth transitions on theme switch ──
-     `padding-left` rides along for one element only in practice: <body>, whose
-     left offset is the rail's width, so collapsing the rail slides the content
-     across with it instead of teleporting. It belongs in *this* rule rather
-     than in one of its own because this one carries `!important` — a separate
-     rule would either lose to it outright or need an `!important` of its own,
-     and that second one would out-specify the `transition: none` that
-     tests/browser/test_theme_sweep.py injects to measure end states. The
-     sweep's override is the same selector list, so it still wins on source
-     order. Nothing else here animates a padding; none of them changes one. */
+     Colour only, and deliberately. Collapsing the rail changes <body>'s left
+     padding, and animating that would be the obvious flourish — it was tried
+     here, in this rule, because the rule carries `!important` and a separate
+     one would have to out-shout it (which then out-shouts the
+     `transition: none` test_theme_sweep.py injects to measure end states).
+
+     What it actually did was animate every *other* padding change these
+     selectors see, and one of them is not a change a user makes. A page loads
+     with `.app-main`'s 1rem, and chat.css — linked from the content block,
+     like every page stylesheet here — lands afterwards with
+     `padding: 0 !important`. Instant, that is invisible. Over .18s it is a
+     page that slides sideways on every load, and CI caught it as
+     test_the_sidebar_is_a_drawer_on_a_phone measuring #thread mid-flight at
+     2.36px. The rail's own width transition went with it: the rail sliding
+     while the content it offsets jumps is worse than both moving at once.
+
+     So the collapse is instant. If it is ever worth animating, animate
+     something that is not layout. */
   body, nav, main, header, footer,
   input, textarea, select, button,
-  table, th, td { transition: background-color .28s ease, color .22s ease, border-color .2s ease, padding-left .18s ease !important; }
+  table, th, td { transition: background-color .28s ease, color .22s ease, border-color .2s ease !important; }
   /* Don't animate canvas, images, or JS animations */
   canvas, img, video, svg,
   [style*="animation"] { transition: none !important; }
@@ -390,7 +399,6 @@
       border-right: 1px solid var(--hairline, var(--border));
       overflow-y: auto;
       overscroll-behavior: contain;
-      transition: width .18s ease, padding .18s ease;
     }
 
     /* The shift, made once on <body> and inherited by everything in normal
@@ -413,9 +421,6 @@
 
        #spa-bar is `position: fixed`, so it is laid out against the viewport and
        does not inherit this; it is offset by hand. */
-    /* The animation that carries this across when the rail collapses is in the
-       app-wide transition rule near the top of the <style> block — see the
-       comment there for why it cannot live here. */
     body:has(#app-rail) { padding-left: var(--rail-w); }
     body:has(#app-rail) #spa-bar { left: var(--rail-w); }
 

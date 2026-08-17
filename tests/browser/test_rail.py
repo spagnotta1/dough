@@ -34,7 +34,6 @@ def test_collapsing_gives_the_width_back_to_the_page(signed_in):
     wide_main = page.locator('main').bounding_box()['width']
 
     page.click('#rail-toggle')
-    page.wait_for_timeout(400)          # the width transition
     wait_for_layout(page)
 
     assert _rail_width(page) < wide_rail / 2, 'the rail did not narrow'
@@ -42,7 +41,6 @@ def test_collapsing_gives_the_width_back_to_the_page(signed_in):
         'the rail collapsed but the page kept its old left offset'
 
     page.click('#rail-toggle')
-    page.wait_for_timeout(400)
     wait_for_layout(page)
     assert abs(_rail_width(page) - wide_rail) < 1, 'expanding did not restore the width'
 
@@ -53,7 +51,6 @@ def test_the_choice_survives_a_reload(signed_in):
     page.set_viewport_size(DESKTOP)
     page.goto('/', wait_until='load')
     page.click('#rail-toggle')
-    page.wait_for_timeout(300)
 
     page.goto('/transactions', wait_until='load')
     wait_for_layout(page)
@@ -64,7 +61,6 @@ def test_the_choice_survives_a_reload(signed_in):
     # And back, so the fixture's page does not carry the state into whatever
     # test runs next — the browser context is shared for the whole session.
     page.click('#rail-toggle')
-    page.wait_for_timeout(300)
 
 
 def test_a_collapsed_row_still_says_what_it_is(signed_in):
@@ -77,7 +73,6 @@ def test_a_collapsed_row_still_says_what_it_is(signed_in):
     page.set_viewport_size(DESKTOP)
     page.goto('/', wait_until='load')
     page.click('#rail-toggle')
-    page.wait_for_timeout(300)
 
     titles = page.locator('#primary-nav a').evaluate_all(
         'els => els.map(e => e.getAttribute("title"))')
@@ -85,7 +80,6 @@ def test_a_collapsed_row_still_says_what_it_is(signed_in):
     assert 'Dashboard' in titles
 
     page.click('#rail-toggle')
-    page.wait_for_timeout(300)
     titles = page.locator('#primary-nav a').evaluate_all(
         'els => els.map(e => e.getAttribute("title"))')
     assert not any(titles), \
