@@ -56,7 +56,7 @@ def test_brand_controls_are_readable_on_their_own_colour(signed_in):
 
 
 def test_the_page_works_when_reached_by_soft_navigation(signed_in):
-    """The profile-menu route into Connections, end to end.
+    """The rail's "See more" route into Connections, end to end.
 
     Three failures hide here, and only the third is visible to a screenshot:
     the inline script never ran, Alpine could not evaluate
@@ -67,8 +67,8 @@ def test_the_page_works_when_reached_by_soft_navigation(signed_in):
     page.goto('/', wait_until='load')
     wait_for_layout(page)
 
-    page.click('#profile-btn')
-    page.click('.pm-item[href="/connections"]')
+    page.click('#rail-more > summary')
+    page.click('#rail-more a[href="/connections"]')
     page.wait_for_selector('.conn-offer__connect', timeout=10_000)
     wait_for_layout(page)
 
