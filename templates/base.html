@@ -202,6 +202,20 @@
     // the page paints one theme and contrast-corrects for another.
     window.CheckScheme.apply(c || { bg:'#f0ebe3', fg:'#5a5248', panel:'#faf6f0', border:'#d4cdc2', red:'#c47d5a' });
   })();
+
+  /* The rail's width is a preference like the theme, and it has to be applied
+     from the same place and for the same reason: a rail that paints at 15rem
+     and snaps to 4.5rem once a deferred script runs is exactly the flash the
+     block above exists to prevent — and this one drags the whole page with it.
+     The identity purge at the top of <head> has already run, so a rail
+     collapsed by the previous account is not inherited by this one. */
+  (function(){
+    try {
+      if (localStorage.getItem('check-rail') === 'collapsed') {
+        document.documentElement.classList.add('rail-collapsed');
+      }
+    } catch(e){}
+  })();
   </script>
 
   <script defer src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js"></script>
@@ -255,10 +269,19 @@
     --red:    #c47d5a;   /* "accent" — copper (red in Odysseus) */
   }
 
-  /* ── Smooth transitions on theme switch ── */
+  /* ── Smooth transitions on theme switch ──
+     `padding-left` rides along for one element only in practice: <body>, whose
+     left offset is the rail's width, so collapsing the rail slides the content
+     across with it instead of teleporting. It belongs in *this* rule rather
+     than in one of its own because this one carries `!important` — a separate
+     rule would either lose to it outright or need an `!important` of its own,
+     and that second one would out-specify the `transition: none` that
+     tests/browser/test_theme_sweep.py injects to measure end states. The
+     sweep's override is the same selector list, so it still wins on source
+     order. Nothing else here animates a padding; none of them changes one. */
   body, nav, main, header, footer,
   input, textarea, select, button,
-  table, th, td { transition: background-color .28s ease, color .22s ease, border-color .2s ease !important; }
+  table, th, td { transition: background-color .28s ease, color .22s ease, border-color .2s ease, padding-left .18s ease !important; }
   /* Don't animate canvas, images, or JS animations */
   canvas, img, video, svg,
   [style*="animation"] { transition: none !important; }
@@ -335,6 +358,12 @@
      and above the nav's z-index so the sticky bar's translucent panel and its
      hairline stop at the rail's edge instead of running underneath it. */
   :root { --rail-w: 15rem; }
+  /* Collapsed: a strip wide enough for a 19px glyph and its plate, and
+     nothing else. Set on <html> rather than on the rail because the width is
+     read in three places — the rail, the body's offset and the SPA bar — and
+     only the root is an ancestor of all of them. `html.rail-collapsed` also
+     out-specifies the `:root` above, which is the same element. */
+  html.rail-collapsed { --rail-w: 4.5rem; }
 
   /* All three are revealed by the min-width block below, so they are hidden
      here and nowhere else: a second `display: none` written after that block
@@ -361,6 +390,7 @@
       border-right: 1px solid var(--hairline, var(--border));
       overflow-y: auto;
       overscroll-behavior: contain;
+      transition: width .18s ease, padding .18s ease;
     }
 
     /* The shift, made once on <body> and inherited by everything in normal
@@ -383,6 +413,9 @@
 
        #spa-bar is `position: fixed`, so it is laid out against the viewport and
        does not inherit this; it is offset by hand. */
+    /* The animation that carries this across when the rail collapses is in the
+       app-wide transition rule near the top of the <style> block — see the
+       comment there for why it cannot live here. */
     body:has(#app-rail) { padding-left: var(--rail-w); }
     body:has(#app-rail) #spa-bar { left: var(--rail-w); }
 
@@ -454,6 +487,64 @@
   .nav-link .dough-avatar { --dough-size: 22px; opacity: .75; transition: opacity .14s ease; }
   .nav-link:hover .dough-avatar,
   .nav-link.active .dough-avatar { opacity: 1; }
+
+  /* ── "See more" ───────────────────────────────────────────────────────
+     The rail's second tier. Its rows are .nav-link like the seven above, so
+     an expanded rail reads as one column rather than as a panel that opened
+     inside it — the grouping is carried by the summary and the chevron, not
+     by giving the members a different shape.
+
+     The marker is removed twice on purpose: `display: flex` from .nav-link
+     already drops the disclosure triangle in Chrome and Safari, and Firefox
+     needs ::marker cleared as well. Both, or the triangle survives in one
+     browser and doubles up with the chevron. */
+  #rail-more { margin-top: 2px; }
+  #rail-more > summary { cursor: pointer; list-style: none; }
+  #rail-more > summary::-webkit-details-marker { display: none; }
+  #rail-more > summary::marker { content: ''; }
+  #rail-more > summary:focus-visible { outline: 2px solid var(--red); outline-offset: -2px; }
+  .rail-more__chevron { margin-left: auto; opacity: .6; transition: transform .18s ease; }
+  #rail-more[open] > summary .rail-more__chevron { transform: rotate(180deg); }
+  .rail-more__items { display: flex; flex-direction: column; gap: 2px; margin-top: 2px; }
+  /* Padded in from the summary rather than merely listed under it — an
+     indent is what says "these belong to that" without a rule or a box. */
+  .rail-more__items .nav-link { padding-left: 1.4rem; }
+
+  /* ── The collapse control ──
+     A .nav-link like everything above it, so it aligns with the column
+     without a second set of paddings to keep in step. margin-top:auto against
+     the rail's flex column pushes it to the foot; the margin above it keeps
+     it off the last destination when the list is short enough that they would
+     otherwise meet. */
+  #rail-toggle {
+    margin-top: auto;
+    padding-top: .55rem;
+    width: 100%;
+    background: none;
+    border: 0;
+    font: inherit;
+    cursor: pointer;
+  }
+  #rail-toggle svg { transition: transform .18s ease; }
+
+  /* ── Collapsed ─────────────────────────────────────────────────────────
+     Same rows, same order, same one click each — the label moves into the
+     tooltip that _syncRail() writes, because a glyph alone is a rebus.
+     Everything here is a reversal of a horizontal decision: the gap, the
+     indent and the trailing chevron all exist to place a label that is no
+     longer rendered. */
+  html.rail-collapsed #app-rail { padding-inline: .5rem; align-items: stretch; }
+  html.rail-collapsed .rail-label { display: none; }
+  html.rail-collapsed .rail-brand,
+  html.rail-collapsed .nav-link {
+    justify-content: center;
+    gap: 0;
+    padding-inline: 0;
+  }
+  html.rail-collapsed .rail-more__items .nav-link { padding-left: 0; }
+  html.rail-collapsed .rail-more__chevron { display: none; }
+  /* Mirrored: the panel it draws is now the one that would open. */
+  html.rail-collapsed #rail-toggle svg { transform: scaleX(-1); }
 
   /* The content column. py-6 px-4, then sm:px-6 and lg:px-8, as it was. */
   .app-main { max-width: 80rem; margin-inline: auto; padding: 1.5rem 1rem; }
@@ -539,9 +630,34 @@
     to   { opacity:1; transform:translateY(0) scale(1); }
   }
 
-  .pm-header { padding: 12px 16px 10px; }
+  /* The header names the account the way the rest of the world does: the mark
+     you clicked, repeated at rest beside who it belongs to, so the menu
+     confirms *whose* settings these are before offering to change any. */
+  .pm-header { display: flex; align-items: center; gap: 10px; padding: 12px 16px 10px; }
+  .pm-avatar {
+    width: 34px;
+    height: 34px;
+    border-radius: 50%;
+    background: var(--red);
+    color: var(--accent-on, #fff);
+    font-weight: 700;
+    font-size: .8rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+  }
+  /* min-width:0 so a long address ellipsizes instead of widening the menu. */
+  .pm-ident  { min-width: 0; }
   .pm-name   { font-weight: 600; font-size: .92rem; color: var(--fg); }
-  .pm-sub    { font-size: .72rem; color: color-mix(in srgb, var(--fg) 45%, transparent); margin-top: 1px; }
+  .pm-sub    {
+    font-size: .72rem;
+    color: color-mix(in srgb, var(--fg) 45%, transparent);
+    margin-top: 1px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
   .pm-divider { border-top: 1px solid var(--border); margin: 6px 0; }
   .pm-section-title {
     padding: 6px 16px 6px;
@@ -569,6 +685,22 @@
   .pm-item:hover { background: color-mix(in srgb, var(--fg) 7%, transparent); }
   .pm-item.danger { color: var(--danger-ink, #dc2626); }
   .pm-item svg { flex-shrink: 0; opacity: .7; }
+
+  /* ── The Settings group ──
+     One entry that opens onto the three things behind it. Same marker
+     removal as the rail's disclosure, and for the same two browsers. */
+  #pm-settings > summary { cursor: pointer; list-style: none; }
+  #pm-settings > summary::-webkit-details-marker { display: none; }
+  #pm-settings > summary::marker { content: ''; }
+  #pm-settings > summary:focus-visible { outline: 2px solid var(--red); outline-offset: -2px; }
+  .pm-chevron { margin-left: auto; opacity: .55; transition: transform .18s ease; }
+  #pm-settings[open] > summary .pm-chevron { transform: rotate(180deg); }
+  /* Indented under the entry that owns them, and the theme grid with them —
+     it is a setting like the other two, not a section of the menu at large. */
+  .pm-group { padding-bottom: 6px; }
+  .pm-group .pm-item { padding-left: 30px; }
+  .pm-group .pm-section-title { padding-left: 30px; }
+  .pm-group #theme-grid { padding-left: 24px; }
 
   /* Theme swatch grid */
   #theme-grid {
@@ -858,7 +990,7 @@
       <span class="dough-avatar dough-avatar-sm" aria-hidden="true">
         <span data-dough="greeting" data-dough-size="36" data-dough-tight></span>
       </span>
-      Dough
+      <span class="rail-label">Dough</span>
     </a>
     {# Flat, and with no attribute after the id: tests/test_insights_hub.py and
        tests/test_goals.py read this block with a non-greedy
@@ -868,27 +1000,27 @@
     <div id="primary-nav">
       <a href="/" class="nav-link">
         <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 10.5 12 3l9 7.5"/><path d="M5 9.5V20a1 1 0 0 0 1 1h4v-6h4v6h4a1 1 0 0 0 1-1V9.5"/></svg>
-        Dashboard
+        <span class="rail-label">Dashboard</span>
       </a>
       <a href="/transactions" class="nav-link">
         <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><circle cx="4" cy="6" r="1"/><circle cx="4" cy="12" r="1"/><circle cx="4" cy="18" r="1"/></svg>
-        Transactions
+        <span class="rail-label">Transactions</span>
       </a>
       <a href="/insights" class="nav-link">
         <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 18h6"/><path d="M10 21h4"/><path d="M12 2a7 7 0 0 0-4 12.8V18h8v-3.2A7 7 0 0 0 12 2z"/></svg>
-        Insights
+        <span class="rail-label">Insights</span>
       </a>
       <a href="/budgets" class="nav-link">
         <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21.21 15.89A10 10 0 1 1 8 2.83"/><path d="M22 12A10 10 0 0 0 12 2v10z"/></svg>
-        Budgets
+        <span class="rail-label">Budgets</span>
       </a>
       <a href="/goals" class="nav-link">
         <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1.4"/></svg>
-        Goals
+        <span class="rail-label">Goals</span>
       </a>
       <a href="/investments" class="nav-link">
         <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 17 9 11 13 15 21 7"/><polyline points="15 7 21 7 21 13"/></svg>
-        Investments
+        <span class="rail-label">Investments</span>
       </a>
       <!-- His face rather than a speech-bubble glyph, exactly as on the tab
            bar: this is the product's primary "get help" affordance, and the
@@ -897,9 +1029,69 @@
         <span class="dough-avatar" aria-hidden="true">
           <span data-dough="happy" data-dough-size="22" data-dough-tight></span>
         </span>
-        Ask Dough
+        <span class="rail-label">Ask Dough</span>
       </a>
     </div>
+
+    <!-- ── See more ────────────────────────────────────────────────────────
+         The four destinations that are about the plumbing rather than the
+         money: where the data comes in (Upload, Connections), what happens to
+         it on the way (Rules), and what happened last time (Sync History).
+
+         They were in the profile menu, behind an avatar, which is where a
+         product puts the things that belong to *you* rather than the things
+         you *do*. Nobody looks under their own initial for "import a CSV". A
+         disclosure at the foot of the rail puts them one click from every
+         page, in the column where destinations live, without spending a
+         permanent row on any of them.
+
+         <details> rather than a JS-driven panel: it is a disclosure, the
+         browser already has one, and it comes with the keyboard and the
+         screen-reader announcement for free. It sits outside <main>, so its
+         open state survives an SPA swap the way the rail itself does —
+         somebody working through a sync stays expanded while they move. -->
+    <details id="rail-more">
+      <summary class="nav-link" aria-label="See more pages">
+        <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="5" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="12" cy="19" r="1.6"/></svg>
+        <span class="rail-label">See more</span>
+        <svg class="rail-more__chevron" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg>
+      </summary>
+      <div class="rail-more__items">
+        <a href="/upload" class="nav-link">
+          <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+          <span class="rail-label">Upload</span>
+        </a>
+        <a href="/rules" class="nav-link">
+          <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 21v-7"/><path d="M4 10V3"/><path d="M12 21v-9"/><path d="M12 8V3"/><path d="M20 21v-5"/><path d="M20 12V3"/><path d="M2 14h4"/><path d="M10 8h4"/><path d="M18 12h4"/></svg>
+          <span class="rail-label">Rules</span>
+        </a>
+        <a href="/connections" class="nav-link">
+          <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="7" width="14" height="10" rx="2"/><path d="M6 7V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2h-2"/></svg>
+          <span class="rail-label">Connections</span>
+        </a>
+        <a href="/sync-history" class="nav-link">
+          <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 4v5h5"/><path d="M12 7v5l3 3"/></svg>
+          <span class="rail-label">Sync History</span>
+        </a>
+      </div>
+    </details>
+
+    <!-- ── Collapse ────────────────────────────────────────────────────────
+         The rail is 15rem of every desktop viewport, permanently. That is the
+         right trade on a dashboard and the wrong one on the ledger, where the
+         table wants every pixel it can get — so the width becomes the user's
+         to give back. Collapsed it is a 4.5rem strip of icons: the same
+         destinations in the same order, still one click each, with the label
+         moved into a tooltip.
+
+         Last in the rail and pushed to its foot by margin-top:auto. It is a
+         control for the furniture rather than a place to go, so it sits below
+         everything that is, out of the way of the column people read. -->
+    <button type="button" id="rail-toggle" class="nav-link"
+            onclick="toggleRail()" aria-controls="app-rail" aria-expanded="true">
+      <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><line x1="9" y1="4" x2="9" y2="20"/></svg>
+      <span class="rail-label">Collapse</span>
+    </button>
   </div>
 
   <!-- ── Navigation ── -->
@@ -938,44 +1130,49 @@
             <button id="profile-btn" onclick="toggleProfileMenu()" title="Account &amp; settings" aria-haspopup="true" aria-expanded="false" aria-label="Account and settings">
               {{ (current_username[0] if current_username else 'U')|upper }}
             </button>
+            {# What is left once the rail's "See more" has taken Upload, Rules,
+               Connections and Sync History: the account itself, the people in
+               it, and how the product looks. Those three are settings in the
+               ordinary sense of the word, so they live behind one entry that
+               says so rather than as a flat list a reader has to sort.
+
+               The menu is shorter for it, which is the second thing this fixes
+               — see the height cap on #profile-menu above, added because the
+               flat list had already outgrown a short viewport and buried Sign
+               out below the fold. #}
             <div id="profile-menu" role="menu" aria-label="Account and settings">
               <div class="pm-header">
-                <p class="pm-name">{{ current_username or 'Account' }}</p>
-                <p class="pm-sub">Dough</p>
+                <div class="pm-avatar" aria-hidden="true">{{ (current_username[0] if current_username else 'U')|upper }}</div>
+                <div class="pm-ident">
+                  <p class="pm-name">{{ current_username or 'Account' }}</p>
+                  <p class="pm-sub">Dough</p>
+                </div>
               </div>
               <div class="pm-divider"></div>
-              <a href="/upload" class="pm-item" role="menuitem">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
-                Upload
-              </a>
-              <a href="/connections" class="pm-item" role="menuitem">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="7" width="14" height="10" rx="2"/><path d="M6 7V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2h-2"/></svg>
-                Connections
-              </a>
-              <a href="/rules" class="pm-item" role="menuitem">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 21v-7"/><path d="M4 10V3"/><path d="M12 21v-9"/><path d="M12 8V3"/><path d="M20 21v-5"/><path d="M20 12V3"/><path d="M2 14h4"/><path d="M10 8h4"/><path d="M18 12h4"/></svg>
-                Rules
-              </a>
-              {# Literal hrefs rather than url_for('settings.index') /
-                 url_for('household.index'): both blueprints are registered only
-                 when AUTH_ENABLED, so url_for would raise a BuildError in every
-                 configuration that runs with auth off -- which is most of the
-                 test suite. #}
-              <a href="/settings" class="pm-item" role="menuitem">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M4 21v-1a6 6 0 0 1 6-6h4a6 6 0 0 1 6 6v1"/></svg>
-                Account &amp; security
-              </a>
-              <a href="/household" class="pm-item" role="menuitem">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10.5 12 3l9 7.5"/><path d="M5 9.5V21h14V9.5"/><path d="M9 21v-6h6v6"/></svg>
-                Household
-              </a>
-              <a href="/sync-history" class="pm-item" role="menuitem">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 4v5h5"/><path d="M12 7v5l3 3"/></svg>
-                Sync History
-              </a>
-              <div class="pm-divider"></div>
-              <p class="pm-section-title">Theme</p>
-              <div id="theme-grid"></div>
+              <details id="pm-settings">
+                <summary class="pm-item" aria-label="Settings">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3.2"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.87l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.7 1.7 0 0 0-1.87-.34 1.7 1.7 0 0 0-1 1.56V21a2 2 0 1 1-4 0v-.09a1.7 1.7 0 0 0-1.11-1.56 1.7 1.7 0 0 0-1.87.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.7 1.7 0 0 0 .34-1.87 1.7 1.7 0 0 0-1.56-1H3a2 2 0 1 1 0-4h.09A1.7 1.7 0 0 0 4.65 8.6a1.7 1.7 0 0 0-.34-1.87l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.7 1.7 0 0 0 1.87.34H9a1.7 1.7 0 0 0 1-1.56V3a2 2 0 1 1 4 0v.09a1.7 1.7 0 0 0 1 1.56 1.7 1.7 0 0 0 1.87-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.7 1.7 0 0 0-.34 1.87V9a1.7 1.7 0 0 0 1.56 1H21a2 2 0 1 1 0 4h-.09a1.7 1.7 0 0 0-1.51 1z"/></svg>
+                  Settings
+                  <svg class="pm-chevron" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg>
+                </summary>
+                <div class="pm-group">
+                  {# Literal hrefs rather than url_for('settings.index') /
+                     url_for('household.index'): both blueprints are registered
+                     only when AUTH_ENABLED, so url_for would raise a BuildError
+                     in every configuration that runs with auth off -- which is
+                     most of the test suite. #}
+                  <a href="/settings" class="pm-item" role="menuitem">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M4 21v-1a6 6 0 0 1 6-6h4a6 6 0 0 1 6 6v1"/></svg>
+                    Account &amp; security
+                  </a>
+                  <a href="/household" class="pm-item" role="menuitem">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10.5 12 3l9 7.5"/><path d="M5 9.5V21h14V9.5"/><path d="M9 21v-6h6v6"/></svg>
+                    Household
+                  </a>
+                  <p class="pm-section-title">Theme</p>
+                  <div id="theme-grid"></div>
+                </div>
+              </details>
               <div class="pm-divider"></div>
               <form method="post" action="/logout">
                 {{ csrf_field() }}
@@ -1002,6 +1199,17 @@
       <a href="/insights" class="mm-link">Insights</a>
       <a href="/anomalies" class="mm-link">Anomaly review</a>
       <a href="/recurring" class="mm-link">Recurring</a>
+      {# The rail's "See more", written out flat. A phone has no rail, and
+         these four used to be reached through the profile menu — which now
+         holds settings only, so without this row they would have nowhere to
+         be reached from at all. Flat and no nested <div>: the touch-menu test
+         in tests/test_insights_hub.py reads this block with a regex that ends
+         at the first `</div></div>`. #}
+      <p class="mm-title mm-title--rule">Manage</p>
+      <a href="/upload" class="mm-link">Upload</a>
+      <a href="/rules" class="mm-link">Rules</a>
+      <a href="/connections" class="mm-link">Connections</a>
+      <a href="/sync-history" class="mm-link">Sync History</a>
       <p class="mm-title mm-title--rule">Account &amp; settings</p>
       <button type="button" onclick="closeMobileMenu(); toggleProfileMenu();" class="mm-link">Settings</button>
     </div>
@@ -1162,6 +1370,75 @@
     var btn  = document.getElementById('profile-btn');
     if (menu) menu.classList.remove('open');
     if (btn) btn.setAttribute('aria-expanded', 'false');
+    // Collapse the Settings group with it, so the menu always reopens at its
+    // top level. A disclosure left open from last time is a menu that shows a
+    // different thing each time it is opened.
+    var group = document.getElementById('pm-settings');
+    if (group) group.open = false;
+  }
+
+  /* ═══════════════════════════════════════════════════════════════════════
+     THE RAIL'S WIDTH
+     Collapsed or expanded, remembered per browser, and mirrored into the
+     things a screen reader and a mouse-over need — see the CSS block for what
+     the two states look like.
+     ═══════════════════════════════════════════════════════════════════════ */
+  var RAIL_LS = 'check-rail';
+
+  function toggleRail() {
+    var root = document.documentElement;
+    var collapsed = !root.classList.contains('rail-collapsed');
+    root.classList.toggle('rail-collapsed', collapsed);
+    try { localStorage.setItem(RAIL_LS, collapsed ? 'collapsed' : 'expanded'); } catch(e){}
+    _syncRail();
+    /* Chart.js sizes to its container and re-reads it on a resize observer,
+       which the width change trips on its own — but only after the transition
+       settles. The event is what pages listen to for a relayout they cannot
+       get any other way; the dashboard's masonry columns are one. */
+    document.dispatchEvent(new CustomEvent('check:rail-toggled',
+      { detail: { collapsed: collapsed } }));
+  }
+
+  /* "See more" is remembered too, and for a reason the rail's own width does
+     not have: SPA navigation leaves the disclosure alone (it lives outside
+     <main>), so it already persists as you move around the app — but a hard
+     load rebuilt it closed, and the same click produced a different rail
+     depending on how you arrived. One or the other, and open-is-remembered is
+     the one that matches the width beside it. */
+  var RAIL_MORE_LS = 'check-rail-more';
+
+  (function () {
+    var more = document.getElementById('rail-more');
+    if (!more) return;
+    try {
+      if (localStorage.getItem(RAIL_MORE_LS) === 'open') more.open = true;
+    } catch (e) {}
+    more.addEventListener('toggle', function () {
+      try { localStorage.setItem(RAIL_MORE_LS, more.open ? 'open' : 'closed'); } catch (e) {}
+    });
+  })();
+
+  function _syncRail() {
+    var collapsed = document.documentElement.classList.contains('rail-collapsed');
+    var btn = document.getElementById('rail-toggle');
+    if (btn) {
+      /* The button reports the state of the thing it controls, not its own —
+         `aria-expanded="false"` on a collapsed rail. */
+      btn.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+      btn.setAttribute('aria-label', collapsed ? 'Expand the sidebar' : 'Collapse the sidebar');
+      btn.title = collapsed ? 'Expand' : 'Collapse';
+    }
+    /* In the collapsed rail the label is the only thing naming a destination
+       and it is not rendered, so it moves to the tooltip. Removed again on
+       expand: a tooltip repeating a label the eye can already read is noise
+       that follows the pointer around. */
+    document.querySelectorAll('#app-rail .nav-link').forEach(function(el) {
+      if (el.id === 'rail-toggle') return;
+      var label = el.querySelector('.rail-label');
+      if (!label) return;
+      if (collapsed) el.title = label.textContent.trim();
+      else el.removeAttribute('title');
+    });
   }
 
   /* ── Mobile menu toggle ──
@@ -1368,6 +1645,19 @@
       var h = a.getAttribute('href');
       a.classList.toggle('active', h === path || (h !== '/' && path.startsWith(h)));
     });
+    // The second tier gets the same plate — and the group opens itself when
+    // the page inside it is the one being shown. A collapsed disclosure
+    // holding the current page is a rail that claims you are nowhere.
+    var more = document.getElementById('rail-more'), onePastFold = false;
+    if (more) {
+      more.querySelectorAll('a').forEach(function(a) {
+        var h = a.getAttribute('href');
+        var on = h === path || (h !== '/' && path.startsWith(h));
+        a.classList.toggle('active', on);
+        if (on) onePastFold = true;
+      });
+      if (onePastFold) more.open = true;
+    }
     document.querySelectorAll('#tab-bar a').forEach(function(a) {
       var h = a.getAttribute('href');
       a.classList.toggle('active', h === path || (h !== '/' && path.startsWith(h)));
@@ -1515,6 +1805,9 @@
     var full = location.pathname + location.search;
     history.replaceState({url: full}, '', full);
     _updateNav(location.pathname);
+    // The class is on <html> from the <head> script; this is what the button
+    // and the tooltips need told about it.
+    _syncRail();
   })();
 
   /* ═══════════════════════════════════════════════════════════════════════
