@@ -535,34 +535,45 @@ def _project_budgets(budgets):
     """Where each budget lands at month end, at the current pace.
 
     Arithmetic, not a model output — see `budget_coaching`. A budget 60% spent
-    on the 15th of a 31-day month is pacing to about 124%, and that projection
-    is the single most useful number on the page. Returns `available: False`
-    rather than an empty list when there are no budgets, matching the section.
+    on the 15th of a 31-day month is pacing to about 124%.
+
+    The projection itself is `dough.services.budgets.project`. It used to be
+    computed here, which put the most useful number on the Budgets page inside
+    the one package that talks to a model and behind a method — `budget_
+    coaching()` — that no route and no template ever called. The page shows the
+    projection now, and it must be the same projection: a card reading "on pace
+    for $612" beside a briefing that says $580 is the same class of bug as two
+    answers to "am I over budget".
+
+    Returns `available: False` rather than an empty list when there are no
+    budgets, matching the section.
     """
+    from dough.services.budgets import project
+
     if not budgets or not budgets.get('available'):
         return {'available': False, 'reason': 'no budgets set'}
 
-    elapsed = max(budgets.get('month_progress_pct') or 0, 1) / 100.0
+    elapsed_pct = max(budgets.get('month_progress_pct') or 0, 1)
     rows = []
     for budget in budgets.get('budgets', []):
         limit = float(budget.get('limit') or 0.0)
         spent = float(budget.get('spent') or 0.0)
-        projected = spent / elapsed
+        projected = project(spent, elapsed_pct)
         rows.append({
             'category': budget['category'],
             'limit': limit,
             'spent': spent,
-            'projected_month_end': round(projected, 2),
+            'projected_month_end': projected,
             'projected_pct_of_limit': (round(projected / limit * 100, 1)
                                        if limit > 0 else None),
             'on_track': projected <= limit if limit > 0 else None,
             # How much a projection made this early is worth. Naming it stops
             # the model presenting day-three arithmetic as a forecast.
-            'confidence': ('low' if elapsed < 0.25
-                           else 'moderate' if elapsed < 0.6 else 'high'),
+            'confidence': ('low' if elapsed_pct < 25
+                           else 'moderate' if elapsed_pct < 60 else 'high'),
         })
     rows.sort(key=lambda r: -(r['projected_pct_of_limit'] or 0))
-    return {'available': True, 'month_elapsed_pct': round(elapsed * 100),
+    return {'available': True, 'month_elapsed_pct': round(elapsed_pct),
             'budgets': rows}
 
 
