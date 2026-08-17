@@ -544,10 +544,15 @@ def test_server_and_client_format_amounts_identically(ledger):
 
 
 def test_the_hooks_the_page_script_needs_are_present(ledger):
+    # `txnPresets`, `filtersToggle` and `filtersChevron` are gone from this
+    # list because they are gone from the page: the preset chips moved into the
+    # date popover of the shared filter bar, and the phone-only collapse went
+    # with the six-field panel it used to fold away. Nothing on this page
+    # scripts them any more, which is what this list is about.
     for hook in ('id="txnTable"', 'id="selectAll"', 'id="bulkBar"',
-                 'id="selectedCount"', 'id="bulkCategory"', 'id="txnPresets"',
-                 'id="txnFilterForm"', 'id="filtersToggle"', 'id="filtersChevron"',
-                 'id="exportBtn"', 'id="editModal"', 'class="row-check"'):
+                 'id="selectedCount"', 'id="bulkCategory"',
+                 'id="txnFilterForm"', 'id="exportBtn"',
+                 'id="editModal"', 'class="row-check"'):
         assert hook in ledger, f'transactions page lost {hook}'
     for field in ('edit_date', 'edit_amount', 'edit_description',
                   'edit_account', 'edit_category', 'edit_notes'):

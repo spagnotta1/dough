@@ -221,6 +221,12 @@
        product is being intelligent, which is nearly everywhere. -->
   <link rel="stylesheet" href="{{ url_for('static', filename='css/dough.css') }}">
   <script defer src="{{ url_for('static', filename='js/dough.js') }}"></script>
+  <!-- The filter bar's behaviour, for every page that carries one — the
+       dashboard, the ledger and the recurring view. In <head> rather than in a
+       page's content block because its listeners are delegated to the
+       document: bound once, they survive the <main> swap that a page-local
+       script would have to re-run after. -->
+  <script defer src="{{ url_for('static', filename='js/filter-bar.js') }}"></script>
 
   <style>
   /* ═══════════════════════════════════════════════════════════════════════
@@ -1283,7 +1289,14 @@
     else if (e.key === '/') {
       e.preventDefault();
       var s = document.getElementById('search');
-      if (s) { s.focus(); s.select(); }
+      if (!s) return;
+      // The ledger's search moved inside a filter popover, and a field in a
+      // closed <details> cannot take focus — so open whatever it is behind
+      // first. Harmless on a page whose search is out in the open.
+      for (var d = s.closest('details'); d; d = d.parentElement && d.parentElement.closest('details')) {
+        d.open = true;
+      }
+      s.focus(); s.select();
     }
   });
 
@@ -1424,6 +1437,11 @@
         (function _rx(scripts, i) {
           if (i >= scripts.length) {
             if (typeof Alpine !== 'undefined') { try { Alpine.initTree(curMain); } catch(e){} }
+            // The page is now fully assembled — markup swapped and its own
+            // scripts run. Anything living outside <main> that has to read the
+            // new page listens for this: a full load has DOMContentLoaded and
+            // a soft one had nothing. See static/js/filter-bar.js.
+            document.dispatchEvent(new CustomEvent('check:navigated', { detail: { url: url } }));
             _barDone(); return;
           }
           var old = scripts[i], isBabel = old.type === 'text/babel', hasSrc = !!old.src;
