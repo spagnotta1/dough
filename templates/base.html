@@ -287,7 +287,9 @@
 
   .nav-inner { max-width: 80rem; margin-inline: auto; padding-inline: 1rem; }
   .nav-row   { display: flex; justify-content: space-between; height: 4rem; }
-  .nav-left  { display: flex; }
+  /* min-width:0 so the page title can ellipsize rather than push the avatar
+     off the right edge — a flex item's default min-width is its content. */
+  .nav-left  { display: flex; align-items: center; min-width: 0; }
   .nav-brand-box { flex-shrink: 0; display: flex; align-items: center; }
   .nav-brand {
     display: flex;
@@ -307,44 +309,145 @@
     white-space: nowrap;
   }
 
-  /* Revealed at 1024px — the exact complement of the touch block below.
-     Seven links plus the brand need about 880px; revealing them any earlier
-     re-opens the band of widths where the row is shown but does not fit. */
+  /* ── The rail ──────────────────────────────────────────────────────────
+     The seven primary destinations, standing in a column down the left edge
+     rather than lying in a row across the top.
+
+     Why the change: a row is a queue for horizontal space, and this one had
+     already lost that argument twice — it could not be revealed until 1024px,
+     and the pages it could not fit (Anomalies, Recurring) were folded into
+     Insights to buy the width back. A column is paid for in vertical space,
+     which a page this tall has to spare, so a destination added next costs a
+     row of pixels instead of a seat at the table.
+
+     What it buys beyond room: the label sits beside an icon rather than alone,
+     the active destination is a filled plate rather than a 2px underline, and
+     the whole thing stays put while <main> is swapped underneath it — which is
+     what the SPA layer has always done and what this layout finally shows.
+
+     Fixed rather than in flow, so it does not scroll away on a long dashboard,
+     and above the nav's z-index so the sticky bar's translucent panel and its
+     hairline stop at the rail's edge instead of running underneath it. */
+  :root { --rail-w: 15rem; }
+
+  /* All three are revealed by the min-width block below, so they are hidden
+     here and nowhere else: a second `display: none` written after that block
+     would win on source order and hide them for good. */
+  #app-rail { display: none; }
   #primary-nav { display: none; }
+  .nav-title { display: none; }
+
+  /* 1024px, unchanged and for the same reason: it is the exact complement of
+     the touch block below, which offers the tab bar instead. The rail would
+     fit sooner than the row did, but the two navigations must stay
+     complements — a width with both, or with neither, is the bug the
+     breakpoint move fixed. tests/browser/test_pages.py holds this. */
   @media (min-width: 1024px) {
-    #primary-nav { display: flex; margin-left: 1rem; gap: 1rem; }
+    #app-rail {
+      position: fixed;
+      top: 0; left: 0; bottom: 0;
+      width: var(--rail-w);
+      z-index: 110;
+      display: flex;
+      flex-direction: column;
+      padding: 0 .75rem 1rem;
+      background: var(--panel);
+      border-right: 1px solid var(--hairline, var(--border));
+      overflow-y: auto;
+      overscroll-behavior: contain;
+    }
+
+    /* The shift, made once on <body> and inherited by everything in normal
+       flow — the sticky nav, the content column, and any page that takes the
+       column apart around itself.
+
+       That last clause is the whole reason it lives here rather than on the
+       nav and <main> individually, which is where it was first written. Two
+       pages deliberately undo <main>'s padding to go full-bleed
+       (`main.is-chat` in chat.css, `main:has(> .lp)` in landing.css), and both
+       do it with `padding: 0 !important` — so a left offset expressed as
+       padding on <main> is discarded by exactly the pages that most need it.
+       Chat slid under the rail, and five browser tests failed clicking a
+       composer the rail was sitting on top of.
+
+       Keyed to the rail's presence rather than set unconditionally: three
+       templates replace `chrome_top` with a header of their own — landing,
+       privacy, terms — and none of them has a rail. `:has()` is already load-
+       bearing in this codebase for the same kind of question (see landing.css).
+
+       #spa-bar is `position: fixed`, so it is laid out against the viewport and
+       does not inherit this; it is offset by hand. */
+    body:has(#app-rail) { padding-left: var(--rail-w); }
+    body:has(#app-rail) #spa-bar { left: var(--rail-w); }
+
+    /* The brand moved into the rail; the bar carries the page's name instead. */
+    .nav-brand-box { display: none; }
+    .nav-title { display: block; }
+
+    #primary-nav { display: flex; flex-direction: column; gap: 2px; }
   }
-  @media (min-width: 1280px) {
-    #primary-nav { gap: 1.75rem; }
+
+  .rail-brand {
+    display: flex;
+    align-items: center;
+    gap: .5rem;
+    flex-shrink: 0;
+    /* 4rem — the nav row's height, so the wordmark and the page title beside
+       it sit on one line rather than half a step apart. */
+    height: 4rem;
+    padding-inline: .5rem;
+    font-size: 1.25rem;
+    font-weight: 650;
+    letter-spacing: -.022em;
+    color: var(--fg);
+  }
+
+  .nav-title {
+    align-self: center;
+    font-size: 1.05rem;
+    font-weight: 600;
+    letter-spacing: -.015em;
+    color: var(--fg);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
   .nav-link {
-    display: inline-flex;
+    display: flex;
     align-items: center;
+    gap: .7rem;
     white-space: nowrap;
-    padding: .25rem 10px 0;
-    border-bottom: 2px solid transparent;
-    /* A soft plate on hover so the target reads before the pointer lands. */
-    border-radius: 8px 8px 0 0;
-    font-size: .875rem;
+    padding: .55rem .65rem;
+    border-radius: 10px;
+    font-size: .9rem;
     font-weight: 500;
-    color: color-mix(in srgb, var(--fg) 55%, transparent);
-    transition: background-color .14s ease, color .14s ease, border-color .14s ease;
+    color: color-mix(in srgb, var(--fg) 62%, transparent);
+    transition: background-color .14s ease, color .14s ease;
   }
+  .nav-link svg { flex-shrink: 0; }
   .nav-link:hover {
-    background: color-mix(in srgb, var(--fg) 6%, transparent);
+    background: color-mix(in srgb, var(--fg) 7%, transparent);
     color: var(--fg);
-    border-color: color-mix(in srgb, var(--border) 120%, var(--fg) 5%);
   }
   /* Ask Dough carries the accent at rest — it is the one destination that is
-     an invitation rather than a place. */
-  .nav-link--accent { color: var(--red); }
-  .nav-link--accent:hover {
-    color: color-mix(in srgb, var(--red) 80%, black);
-    border-color: color-mix(in srgb, var(--red) 70%, white);
+     an invitation rather than a place. --accent-ink is the accent corrected
+     for contrast against the panel, which is what the rail is painted in. */
+  .nav-link--accent { color: var(--accent-ink, var(--red)); }
+  .nav-link--accent:hover { background: color-mix(in srgb, var(--red) 12%, transparent); }
+  /* Set by _updateNav() on the link matching the current path. A tinted plate
+     rather than a rule: in a column there is no baseline for an underline to
+     sit on, and the plate reads at a glance from the corner of the eye. */
+  .nav-link.active {
+    background: color-mix(in srgb, var(--red) 15%, transparent);
+    color: var(--accent-ink, var(--red));
+    font-weight: 650;
   }
-  /* Set by _updateNav() on the link matching the current path. */
-  .nav-link.active { color: var(--red); border-color: var(--red); }
+  /* Dough is full colour and cannot dim by inheriting currentColor the way the
+     outline glyphs beside him do — the same trick the tab bar plays. */
+  .nav-link .dough-avatar { --dough-size: 22px; opacity: .75; transition: opacity .14s ease; }
+  .nav-link:hover .dough-avatar,
+  .nav-link.active .dough-avatar { opacity: 1; }
 
   /* The content column. py-6 px-4, then sm:px-6 and lg:px-8, as it was. */
   .app-main { max-width: 80rem; margin-inline: auto; padding: 1.5rem 1rem; }
@@ -725,6 +828,74 @@
      stranger with a bottom tab bar linking to pages they cannot open.
   #}
   {% block chrome_top %}
+  <!-- ── The rail: the primary destinations, down the left edge ──────────
+       Fixed and full-height, so it stays put while SPA navigation swaps
+       <main> underneath it. Hidden below 1024px, where the bottom tab bar and
+       the "More" sheet cover the same ground within thumb reach.
+
+       The seven are the seven the row carried: [Phase 11A] folded "Anomalies"
+       and "Recurring" into the Insights hub, and [Phase 11B] spent one of the
+       freed slots on Goals. Both absorbed pages stay absent here, and still on
+       purpose — the hub is where somebody goes looking for them. The rail has
+       the room now; that is not the same as their belonging here.
+
+       A div carrying role="navigation" rather than a second <nav> element: the
+       bare `nav` selector in the <style> block above styles the sticky top bar
+       — translucent panel, backdrop filter, bottom hairline — and a second
+       <nav> would inherit all of it and then have to unpick it by id. The
+       landmark is the same either way, and the brand belongs inside it. -->
+  <div id="app-rail" role="navigation" aria-label="Primary">
+    <a href="/" class="rail-brand">
+      <!-- Dough's face is the logo. He greets on first paint and then settles
+           into the idle blink, so the brand mark is the same character the
+           user talks to a click away. -->
+      <span class="dough-avatar dough-avatar-sm" aria-hidden="true">
+        <span data-dough="greeting" data-dough-size="36" data-dough-tight></span>
+      </span>
+      Dough
+    </a>
+    {# Flat, and with no attribute after the id: tests/test_insights_hub.py and
+       tests/test_goals.py read this block with a non-greedy
+       `<div id="primary-nav">(.*?)</div>`, so a wrapper div in here would
+       truncate what they see to nothing and an extra attribute would stop them
+       finding it at all. The icons are <svg> and Dough is a <span>. #}
+    <div id="primary-nav">
+      <a href="/" class="nav-link">
+        <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 10.5 12 3l9 7.5"/><path d="M5 9.5V20a1 1 0 0 0 1 1h4v-6h4v6h4a1 1 0 0 0 1-1V9.5"/></svg>
+        Dashboard
+      </a>
+      <a href="/transactions" class="nav-link">
+        <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><circle cx="4" cy="6" r="1"/><circle cx="4" cy="12" r="1"/><circle cx="4" cy="18" r="1"/></svg>
+        Transactions
+      </a>
+      <a href="/insights" class="nav-link">
+        <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 18h6"/><path d="M10 21h4"/><path d="M12 2a7 7 0 0 0-4 12.8V18h8v-3.2A7 7 0 0 0 12 2z"/></svg>
+        Insights
+      </a>
+      <a href="/budgets" class="nav-link">
+        <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21.21 15.89A10 10 0 1 1 8 2.83"/><path d="M22 12A10 10 0 0 0 12 2v10z"/></svg>
+        Budgets
+      </a>
+      <a href="/goals" class="nav-link">
+        <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1.4"/></svg>
+        Goals
+      </a>
+      <a href="/investments" class="nav-link">
+        <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 17 9 11 13 15 21 7"/><polyline points="15 7 21 7 21 13"/></svg>
+        Investments
+      </a>
+      <!-- His face rather than a speech-bubble glyph, exactly as on the tab
+           bar: this is the product's primary "get help" affordance, and the
+           only full-colour mark in a column of outlines. -->
+      <a href="/chat" class="nav-link nav-link--accent">
+        <span class="dough-avatar" aria-hidden="true">
+          <span data-dough="happy" data-dough-size="22" data-dough-tight></span>
+        </span>
+        Ask Dough
+      </a>
+    </div>
+  </div>
+
   <!-- ── Navigation ── -->
   <nav>
     <div class="nav-inner">
@@ -743,32 +914,16 @@
               Dough
             </a>
           </div>
-          {# Revealed at 1024px, not 640px. Seven links plus the brand and
-             the avatar need about 880px; revealing them at 640px produced a
-             band of widths — every tablet in portrait — where this row was
-             shown and did not fit, and the page scrolled sideways. The touch
-             nav covers the same destinations below this width. See the
-             #primary-nav rules in the <style> block above.
+          {# The page's name, shown only where the rail has taken the brand's
+             place in this row. Filled by _updateNav() from document.title
+             rather than from a per-page block, so a page added later gets it
+             without being told to — and so it changes on an SPA navigation,
+             which is the moment it is actually read.
 
-             [Phase 11A] "Anomalies" and "Recurring" were narrow one-table
-             pages that each held a permanent slot in a bar that already did not
-             fit, and both are reached from the Insights hub, which is where
-             somebody actually goes looking for them. Neither page was removed —
-             see dough/blueprints/insights.py.
-
-             [Phase 11B] Goals takes one of the two freed slots. Back to seven,
-             which is the count this bar was sized for at the 1024px reveal, and
-             a better use of it: two destinations people visit rather than two
-             single-table pages they rarely did. #}
-          <div id="primary-nav">
-            <a href="/" class="nav-link">Dashboard</a>
-            <a href="/transactions" class="nav-link">Transactions</a>
-            <a href="/insights" class="nav-link">Insights</a>
-            <a href="/budgets" class="nav-link">Budgets</a>
-            <a href="/goals" class="nav-link">Goals</a>
-            <a href="/investments" class="nav-link">Investments</a>
-            <a href="/chat" class="nav-link nav-link--accent">Ask Dough</a>
-          </div>
+             aria-hidden, and a div rather than a heading: every page carries
+             its own <h1>, and this is the second copy of a name a screen
+             reader has already been given by the document title. #}
+          <div class="nav-title" id="nav-title" aria-hidden="true"></div>
         </div>
 
         <!-- Right: account / settings -->
@@ -1178,8 +1333,21 @@
   //: a real history traversal from a fragment-only one.
   var _spaUrl = location.pathname + location.search;
 
+  //: The page's name in the top bar, taken from the document title with the
+  //: " · Dough" suffix trimmed off. Reading the title rather than a per-page
+  //: block means every page has one already, and spaNavigate() has set the new
+  //: one by the time _updateNav runs. The bare "Dough" of a page that forgot
+  //: its title block leaves the slot empty rather than saying the brand twice.
+  function _updateNavTitle() {
+    var el = document.getElementById('nav-title');
+    if (!el) return;
+    var name = (document.title || '').split(/[·—|]/)[0].trim();
+    el.textContent = name === 'Dough' ? '' : name;
+  }
+
   function _updateNav(url) {
     var path = url.split('?')[0];
+    _updateNavTitle();
     // #primary-nav rather than every nav <a>: the brand link is a nav <a>
     // too, and the old class-swapping used to restyle it as if it were a
     // destination.
