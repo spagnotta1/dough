@@ -157,16 +157,36 @@ def _sidebar_hidden(page):
         "() => document.getElementById('chat-root').classList.contains('side-hidden')")
 
 
-def _on_screen(page, selector):
-    """Whether an element occupies space inside the viewport.
+def _content_left(page):
+    """Where the page's own left edge is, in viewport coordinates.
 
-    Not `is_visible()`. The sidebar closes by sliding out of the viewport rather
+    Zero, until the left rail arrived: on a desktop the primary navigation is a
+    fixed column down the left of the window, and every page now begins at its
+    right edge instead of at x=0. The two checks below are about the *chat
+    page's* left edge — "the sidebar has left the screen" means it has collapsed
+    to nothing against the side of the page — so they have to measure from here
+    rather than from the window. Below 1024px the rail is display:none, the
+    right edge of an unrendered box is 0, and both checks read exactly as they
+    did before.
+    """
+    return page.evaluate("""() => {
+      const rail = document.getElementById('app-rail');
+      if (!rail) return 0;
+      const r = rail.getBoundingClientRect();
+      return r.width ? r.right : 0;
+    }""")
+
+
+def _on_screen(page, selector):
+    """Whether an element occupies space inside the visible page.
+
+    Not `is_visible()`. The sidebar closes by sliding out of the page rather
     than by being removed, so it keeps a box and Playwright rightly still calls
     it visible — it is visible, it is just somewhere you cannot see. What the
-    closed state actually promises is that it is off the side of the screen.
+    closed state actually promises is that it is off the side of the page.
     """
     box = page.locator(selector).bounding_box()
-    return bool(box) and box['x'] + box['width'] > 1
+    return bool(box) and box['x'] + box['width'] > _content_left(page) + 1
 
 
 def _wait_for_sidebar(page, open_):
@@ -180,17 +200,21 @@ def _wait_for_sidebar(page, open_):
 
     The two ends are not symmetrical, and the threshold is why. Desktop hides
     the sidebar by animating its width to zero; a phone slides it out on a
-    transform with its width intact. "Gone" is therefore `right <= 1` either
-    way, but "arrived" has to mean *most of the way in* — `right > 1` is true
-    two pixels into a 260px slide, at which point the search field inside is
-    still a zero-width box that Playwright rightly calls invisible.
+    transform with its width intact. "Gone" is therefore `right <= edge` either
+    way, but "arrived" has to mean *most of the way in* — one pixel past the
+    edge is true two pixels into a 260px slide, at which point the search field
+    inside is still a zero-width box that Playwright rightly calls invisible.
+
+    `edge` is the page's left edge rather than the window's — see
+    `_content_left`. It is 0 on a phone, and the rail's width on a desktop.
     """
+    edge = _content_left(page)
     page.wait_for_function(
-        '''(want) => {
+        '''([want, edge]) => {
              const r = document.getElementById('side').getBoundingClientRect();
-             return want ? (r.width > 100 && r.right > 100) : r.right <= 1;
+             return want ? (r.width > 100 && r.right > edge + 100) : r.right <= edge + 1;
            }''',
-        arg=open_, timeout=5_000)
+        arg=[open_, edge], timeout=5_000)
 
 
 def test_the_sidebar_closes_and_reopens_on_a_desktop(signed_in):
