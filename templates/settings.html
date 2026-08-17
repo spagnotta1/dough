@@ -8,7 +8,7 @@
   Laid out in the order somebody actually needs it, which is not the order the
   routes are written in: who you are, then how you sign in, then what else is
   signed in right now. The last of those is the one people come here for after
-  losing a phone, so it is above the token list rather than below it.
+  losing a phone.
 
   The destructive controls say what they do rather than what they are — "Sign
   out everywhere" rather than "Revoke" — for the reason household.html gives:
@@ -35,31 +35,6 @@
       </p>
     </div>
   </header>
-
-  {# ── The new token, shown once ───────────────────────────────────────────
-     Same one-shot session handover as household.html's invitation link, and
-     for the same reason: only a hash is stored, so "shown once" is a fact about
-     the system rather than a policy about this page. #}
-  {% if new_token %}
-  <section class="ds-card ds-card--warn ds-rise" style="--ds-delay:40ms">
-    <p class="ds-eyebrow">Copy this now</p>
-    <p class="ds-meta">
-      This token is shown once and cannot be recovered — Dough stores only a
-      fingerprint of it. Anyone who has it can read {{ household.name }}'s
-      finances through the API, so treat it like a password. Lost it? Revoke it
-      below and make another.
-    </p>
-    <div class="ds-row ds-row--wrap" style="gap: var(--sp-2); margin-top: var(--sp-3)">
-      <input id="new-token" class="dash-input ds-input" readonly value="{{ new_token }}"
-             style="flex:1 1 280px; font-family: ui-monospace, monospace; font-size: .8rem"
-             onfocus="this.select()">
-      <button type="button" class="ds-btn ds-btn--secondary"
-              onclick="navigator.clipboard.writeText(document.getElementById('new-token').value).then(function(){
-                         var b=event.target; var t=b.textContent; b.textContent='Copied';
-                         setTimeout(function(){ b.textContent=t; }, 1600); })">Copy token</button>
-    </div>
-  </section>
-  {% endif %}
 
   {# ── Who you are ─────────────────────────────────────────────────────── #}
   <section class="ds-card ds-rise" style="--ds-delay:80ms">
@@ -169,9 +144,9 @@
   <section class="ds-card ds-card--danger ds-rise" style="--ds-delay:160ms">
     <h2 class="ds-section__title" style="font-size:1.05rem">Sign out everywhere</h2>
     <p class="ds-meta" style="margin-top:.35rem">
-      Ends every signed-in browser and stops every API token below — including
-      this one, so you will need to sign in again. Use it if you have lost a
-      device, or if anything about this account looks wrong.
+      Ends every signed-in browser and stops every API token this account has
+      issued — including this browser, so you will need to sign in again. Use it
+      if you have lost a device, or if anything about this account looks wrong.
     </p>
     <form method="post" action="{{ url_for('settings.revoke_sessions') }}"
           style="margin-top: var(--sp-3)">
@@ -180,105 +155,9 @@
     </form>
   </section>
 
-  {# ── API tokens ──────────────────────────────────────────────────────── #}
-  <section class="ds-card ds-rise" style="--ds-delay:200ms">
-    <h2 class="ds-section__title" style="font-size:1.05rem">API tokens</h2>
-    <p class="ds-meta" style="margin-top:.35rem">
-      For scripts, shortcuts and anything that is not a browser. Each one is
-      per-device and revocable on its own, so stopping the token on a lost phone
-      does not sign out the desktop.
-    </p>
-
-    {% if tokens %}
-    <div class="ds-table-wrap" style="margin-top: var(--sp-3)">
-      <table class="ds-table ds-table--hover">
-        <thead>
-          <tr>
-            <th scope="col">Name</th>
-            <th scope="col">Prefix</th>
-            <th scope="col">Scopes</th>
-            <th scope="col">State</th>
-            <th scope="col">Created</th>
-            <th scope="col">Last used</th>
-            <th scope="col"><span class="ds-sr-only">Actions</span></th>
-          </tr>
-        </thead>
-        <tbody>
-          {% for token in tokens %}
-          {% set state = token.state() %}
-          <tr>
-            <td>{{ token.name }}</td>
-            <td style="font-family: ui-monospace, monospace; font-size:.8rem">{{ token.prefix }}…</td>
-            <td>{{ token.scope_list()|join(', ') }}</td>
-            <td>
-              {# `stale` is the state a password change or a "sign out
-                 everywhere" leaves a token in. It is spelled out rather than
-                 shown as "revoked" because the cause is different and so is the
-                 fix: nobody revoked this token, the account's credentials moved
-                 past it, and the answer is to issue a new one. #}
-              <span class="ds-badge
-                {%- if state == 'active' %} ds-badge--ok
-                {%- elif state == 'stale' %} ds-badge--warn
-                {%- else %} ds-badge--danger{% endif %}">{{ state }}</span>
-            </td>
-            <td>{{ token.created_at.strftime('%d %b %Y') }}</td>
-            <td>{{ token.last_used_at.strftime('%d %b %Y') if token.last_used_at else 'never' }}</td>
-            <td style="text-align:right">
-              {% if not token.revoked_at %}
-              <form method="post"
-                    action="{{ url_for('settings.token_revoke', token_id=token.id) }}"
-                    style="display:inline">
-                {{ csrf_field() }}
-                <button type="submit" class="ds-btn ds-btn--danger ds-btn--sm">Revoke</button>
-              </form>
-              {% endif %}
-            </td>
-          </tr>
-          {% endfor %}
-        </tbody>
-      </table>
-    </div>
-    {% else %}
-    <p class="ds-empty ds-empty--tight" style="margin-top: var(--sp-3)">
-      No tokens yet. Create one below if you want to reach Dough from a script
-      or a shortcut.
-    </p>
-    {% endif %}
-
-    <div class="ds-divider" style="margin: var(--sp-4) 0"></div>
-
-    <form method="post" action="{{ url_for('settings.token_create') }}">
-      {{ csrf_field() }}
-      <div class="ds-row ds-row--wrap" style="gap: var(--sp-2); align-items:flex-end">
-        <div class="ds-field" style="flex:1 1 200px; margin:0">
-          <label class="ds-label" for="tokenName">Name</label>
-          <input class="dash-input ds-input" type="text" name="name" id="tokenName"
-                 placeholder="iPhone Shortcuts" maxlength="80">
-        </div>
-        <div class="ds-field" style="margin:0">
-          <label class="ds-label" for="tokenScopes">Scopes</label>
-          {# `read` is preselected and `write` is not. A token that can only read
-             is the one most integrations need, and defaulting to the weaker
-             credential means the stronger one is a deliberate click. #}
-          <select class="ds-select" name="scopes" id="tokenScopes" multiple size="2">
-            {% for scope in scopes %}
-            <option value="{{ scope }}" {% if scope == 'read' %}selected{% endif %}>{{ scope }}</option>
-            {% endfor %}
-          </select>
-        </div>
-        <div class="ds-field" style="margin:0">
-          <label class="ds-label" for="tokenTtl">Expires in (days)</label>
-          <input class="dash-input ds-input ds-input--num" type="number" name="ttl_days"
-                 id="tokenTtl" min="1" max="3650" placeholder="never" style="width:8rem">
-        </div>
-        <button type="submit" class="ds-btn ds-btn--primary">Create token</button>
-      </div>
-    </form>
-  </section>
-
   {# ── Household roster, owners only ───────────────────────────────────── #}
   {% if me.is_owner %}
-  <section class="ds-card ds-rise" style="--ds-delay:240ms">
+  <section class="ds-card ds-rise" style="--ds-delay:200ms">
     <h2 class="ds-section__title" style="font-size:1.05rem">Household members</h2>
     <p class="ds-meta" style="margin-top:.35rem">
       Read-only here. Inviting, removing and changing roles all live on the

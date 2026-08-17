@@ -360,30 +360,6 @@ def test_the_settings_page_shows_the_account_and_its_controls(signed_in):
         'button', name=re.compile('sign out everywhere', re.I)).first.is_visible()
 
 
-def test_creating_a_token_shows_it_exactly_once(signed_in):
-    """"Shown once" has to be visible on screen, then gone on reload.
-
-    Only a hash is stored, so this is a fact about the system rather than a
-    policy about the page — and a page that could redisplay it would be reading
-    it from somewhere it must not exist.
-    """
-    page = signed_in
-    visit(page, '/settings')
-
-    page.fill('input[name="name"]', 'Browser test token')
-    page.click('button:has-text("Create token")')
-    page.wait_for_load_state('load')
-
-    shown = page.locator('#new-token')
-    assert shown.count() == 1, 'the plaintext token was not shown'
-    assert shown.first.is_visible()
-    assert shown.first.input_value().startswith('dgh_')
-
-    visit(page, '/settings')
-    assert page.locator('#new-token').count() == 0, (
-        'the token was shown again on reload')
-
-
 def test_changing_the_password_keeps_this_browser_signed_in(open_registration_page):
     """The re-stamp, seen from the browser that made the change.
 

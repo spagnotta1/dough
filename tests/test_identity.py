@@ -777,6 +777,18 @@ def test_sign_out_everywhere_stops_api_tokens_too(client, app):
                                  headers=headers).status_code == 401
 
 
+def _stashed_token(client):
+    """The plaintext a `/settings/tokens` POST just handed off.
+
+    Read out of the session rather than off the page. The settings page no
+    longer has an API-tokens section to render it into, but the route that mints
+    it is still the one `/api/v1/auth/tokens` shares, so it is still worth
+    holding to the contract that what it issues actually authenticates.
+    """
+    with client.session_transaction() as sess:
+        return sess.get('_new_api_token')
+
+
 def test_a_token_created_from_the_settings_page_works(client):
     _register(client)
     response = _post(client, '/settings/tokens',
@@ -784,29 +796,29 @@ def test_a_token_created_from_the_settings_page_works(client):
                      page_path='/settings')
     assert response.status_code == 302
 
-    page = client.get('/settings')
-    match = re.search(r'id="new-token"[^>]*value="(dgh_[^"]+)"',
-                      page.get_data(as_text=True))
-    assert match, 'the plaintext token was not shown'
+    plaintext = _stashed_token(client)
+    assert plaintext and plaintext.startswith('dgh_'), 'no token was issued'
     assert client.application.test_client().get(
         '/api/v1/auth/me',
-        headers={'Authorization': f'Bearer {match.group(1)}'}
+        headers={'Authorization': f'Bearer {plaintext}'}
     ).status_code == 200
 
 
-def test_a_token_is_shown_once_and_not_again(client):
-    """The session handover is pop-on-read, so a refresh does not bring it back.
+def test_the_settings_page_does_not_show_api_tokens(client):
+    """The section is gone, and so is any plaintext on the page.
 
-    Not a UI nicety: only the hash is stored, so "shown once" is a fact about
-    the system. A page that could redisplay it would be reading it from
-    somewhere it must not exist.
+    Only a hash is stored, so a page that rendered the plaintext would be
+    reading it from somewhere it must not persist. With the section removed
+    there is nowhere on this page it can surface at all.
     """
     _register(client)
     _post(client, '/settings/tokens', {'name': 'Shortcuts', 'scopes': ['read']},
           page_path='/settings')
 
-    assert b'id="new-token"' in client.get('/settings').data
-    assert b'id="new-token"' not in client.get('/settings').data
+    page = client.get('/settings').get_data(as_text=True)
+    assert 'id="new-token"' not in page
+    assert 'dgh_' not in page
+    assert 'API tokens' not in page
 
 
 def test_revoking_a_token_stops_it_immediately(client):
@@ -815,9 +827,7 @@ def test_revoking_a_token_stops_it_immediately(client):
     _register(client)
     _post(client, '/settings/tokens', {'name': 'Shortcuts', 'scopes': ['read']},
           page_path='/settings')
-    page = client.get('/settings')
-    plaintext = re.search(r'id="new-token"[^>]*value="(dgh_[^"]+)"',
-                          page.get_data(as_text=True)).group(1)
+    plaintext = _stashed_token(client)
     token_id = ApiToken.query.one().id
 
     _post(client, f'/settings/tokens/{token_id}/revoke', {},

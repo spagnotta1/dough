@@ -120,18 +120,23 @@ def test_a_verification_link_never_reaches_the_log(client, auth_app, caplog):
 
 
 def test_an_api_token_never_reaches_the_log(client, caplog):
-    """Issued through the settings page, which is the surface added this phase."""
+    """Issued through the settings route, which is the surface added this phase.
+
+    The plaintext is read out of the session handover rather than off the page:
+    the settings view no longer renders an API-tokens section, but the route
+    still mints a real credential and that is what must stay out of the log.
+    """
     _register(client)
 
     with caplog.at_level(logging.DEBUG):
         client.post('/settings/tokens', data={'name': 'Shortcuts',
                                               'scopes': ['read']})
-        page = client.get('/settings')
+        with client.session_transaction() as sess:
+            plaintext = sess.get('_new_api_token')
+        client.get('/settings')
 
-    match = re.search(r'id="new-token"[^>]*value="(dgh_[^"]+)"',
-                      page.get_data(as_text=True))
-    assert match, 'no token was issued; the test proved nothing'
-    assert match.group(1) not in caplog.text
+    assert plaintext, 'no token was issued; the test proved nothing'
+    assert plaintext not in caplog.text
 
 
 def test_a_password_never_reaches_the_log(client, caplog):
@@ -219,8 +224,9 @@ def test_no_credential_reaches_the_audit_trail(client, auth_app):
     reset = re.search(r'(https?://\S+)', mailbox.sent[-1].body).group(1)
 
     client.post('/settings/tokens', data={'name': 'Shortcuts', 'scopes': ['read']})
-    api_token = re.search(r'id="new-token"[^>]*value="(dgh_[^"]+)"',
-                          client.get('/settings').get_data(as_text=True)).group(1)
+    with client.session_transaction() as sess:
+        api_token = sess.get('_new_api_token')
+    assert api_token, 'no token was issued; the test proved nothing'
 
     rows = AuditEvent.query.all()
     assert rows, 'nothing was audited; the test proved nothing'
