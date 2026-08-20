@@ -800,7 +800,7 @@
       </section>
 
       {# ── Cash accounts (the original editor, preserved) ── #}
-      <section class="ds-card ds-card--flush inv-panel" data-panel="cash">
+      <section class="ds-card ds-card--flush inv-panel" data-panel="cash" id="cash">
         {{ panel_head('cash', 'Cash accounts', nw.cash|money ~ ' liquid') }}
         <div class="inv-panel__body" id="inv-panel-cash" hidden>
           {% if cash_synced %}

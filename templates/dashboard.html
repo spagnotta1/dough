@@ -424,19 +424,20 @@
     <div class="dash-tiles">
       {% set tiles = [
         ('Cash available', nw.cash|money, nw.cash,
-         'Checking + savings + sweep', None, 'cash', None),
+         'Checking + savings + sweep', None, 'cash',
+         url_for('investments.index', _anchor='cash'), 'See the accounts behind this balance'),
         ('Income', total_income|money, total_income,
-         None, income_delta, 'income', url_for('transactions.index', start_date=start_date, end_date=end_date, account=account_filter, type='inbound')),
+         None, income_delta, 'income', url_for('transactions.index', start_date=start_date, end_date=end_date, account=account_filter, type='inbound'), 'View income transactions'),
         ('Spending', total_outgo|money, total_outgo,
-         None, outgo_delta, 'outgo', url_for('transactions.index', start_date=start_date, end_date=end_date, account=account_filter, type='outgo')),
+         None, outgo_delta, 'outgo', url_for('transactions.index', start_date=start_date, end_date=end_date, account=account_filter, type='outgo'), 'View spending transactions'),
         ('Net cash flow', net_cashflow|money, net_cashflow,
-         None, net_delta, 'net', None)
+         None, net_delta, 'net', None, None)
       ] %}
 
-      {% for label, display, raw, sub, d, kind, href in tiles %}
+      {% for label, display, raw, sub, d, kind, href, cta in tiles %}
       <article class="ds-card ds-card--compact dash-tile {{ 'dash-tile--link' if href }} ds-rise"
                style="--ds-delay:{{ 80 + loop.index0 * 45 }}ms">
-        {% if href %}<a href="{{ href }}" class="dash-tile__hit"><span class="ds-sr">View {{ label|lower }} transactions</span></a>{% endif %}
+        {% if href %}<a href="{{ href }}" class="dash-tile__hit"><span class="ds-sr">{{ cta }}</span></a>{% endif %}
         <p class="ds-eyebrow">{{ label }}</p>
         <p class="dash-tile__value ds-num dash-tile__value--{{ kind }}"
            data-countup="{{ raw }}" data-format="usd">{{ display }}</p>

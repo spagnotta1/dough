@@ -781,14 +781,30 @@
     // Opening a panel from elsewhere on the page (the hero rings).
     document.querySelectorAll('[data-open-panel]').forEach(function (btn) {
       btn.addEventListener('click', function () {
-        var key = btn.getAttribute('data-open-panel');
-        setHidden(key, false);
-        setOpen(key, true);
-        saveLayout();
-        var el = panelEl(key);
-        if (el) el.scrollIntoView({ behavior: CheckCharts.reducedMotion() ? 'auto' : 'smooth', block: 'center' });
+        revealPanel(btn.getAttribute('data-open-panel'));
       });
     });
+
+    // Arriving from another page — /investments#cash comes off the
+    // dashboard's Cash available tile. A collapsed or hidden panel would
+    // otherwise leave the visitor staring at the spot where their answer
+    // should be, so the hash opens it rather than merely scrolling to it.
+    revealPanel(location.hash.slice(1));
+    window.addEventListener('hashchange', function () {
+      revealPanel(location.hash.slice(1));
+    });
+  }
+
+  /* Unhide, open and scroll to one panel. Silently ignores keys that are
+     not panels, so any other hash on the page still behaves natively. */
+  function revealPanel(key) {
+    if (!key) return;
+    var el = panelEl(key);
+    if (!el) return;
+    setHidden(key, false);
+    setOpen(key, true);
+    saveLayout();
+    el.scrollIntoView({ behavior: CheckCharts.reducedMotion() ? 'auto' : 'smooth', block: 'center' });
   }
 
   /* ══════════════════════════════════════════════════════════════════════
