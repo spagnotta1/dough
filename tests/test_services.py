@@ -35,6 +35,12 @@ SERVICE_FUNCTIONS = {
     'finance_context': ('build_finance_context', 'copilot_context',
                         'wealth_context', 'months_ago'),
     'categorization': ('get_category_rules', 'reset_category_rules'),
+    # The demo-account generator. `assert_is_demo_household` is listed with the
+    # other two on purpose: it is the guard that keeps a destructive seeder
+    # pointed at the demo household, so it must stay a module-level def that a
+    # test can call directly. See tests/test_demo_seed.py.
+    'demo_seed': ('seed_demo_household', 'wipe_demo_household',
+                  'assert_is_demo_household'),
     # Phase 5. The only service that exports a class rather than functions --
     # `household_scope` is the module-level def, TenantScopedTTLCache is the
     # thing callers use.
