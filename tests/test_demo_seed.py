@@ -269,3 +269,97 @@ def test_the_same_seed_on_the_same_day_gives_the_same_household(seeded):
     second = sorted((t.date, t.description, float(t.amount))
                     for t in Transaction.query.all())
     assert first == second
+
+
+# -- Bootstrapping the account itself ---------------------------------------
+#
+# `tools/seed_demo.py` can register the demo account when a database has never
+# had it, which is the only write in this repository that creates a user
+# outside the sign-up form. What matters is that it cannot create any *other*
+# user, and that the two gates protecting the seeding also protect this.
+
+def test_create_demo_account_refuses_a_name_that_is_not_a_demo_account(app):
+    """The guard that keeps this from being "add a user to production"."""
+    import tools.seed_demo as seed_demo_cli
+
+    with pytest.raises(SystemExit) as refusal:
+        seed_demo_cli.create_demo_account('spagnotta11')
+
+    assert 'not a demo account' in str(refusal.value)
+    with unscoped():
+        assert AppUser.query.filter_by(username='spagnotta11').first() is None
+
+
+def test_create_demo_account_needs_a_password_in_the_environment(app, monkeypatch):
+    """It is read from the environment, so an unset variable must not proceed."""
+    import tools.seed_demo as seed_demo_cli
+
+    monkeypatch.delenv(seed_demo_cli.PASSWORD_ENV, raising=False)
+    with pytest.raises(SystemExit) as refusal:
+        seed_demo_cli.create_demo_account('RankParsley')
+
+    assert seed_demo_cli.PASSWORD_ENV in str(refusal.value)
+    with unscoped():
+        assert AppUser.query.filter_by(username='RankParsley').first() is None
+
+
+def test_create_demo_account_registers_a_usable_owner(app, monkeypatch):
+    """A real account: hashed password, its own household, the owner role."""
+    import tools.seed_demo as seed_demo_cli
+    from dough.auth import verify_password
+
+    monkeypatch.setenv(seed_demo_cli.PASSWORD_ENV, 'a-demo-password-nobody-uses')
+    household_id = seed_demo_cli.create_demo_account('RankParsley')
+
+    with unscoped():
+        user = AppUser.query.filter_by(username='RankParsley').one()
+    assert user.household_id == household_id
+    assert user.role == 'owner'
+    assert user.password_hash != 'a-demo-password-nobody-uses'
+    assert verify_password(user.password_hash, 'a-demo-password-nobody-uses')
+
+    # The household it made is one the seeder will accept, which is the whole
+    # point of creating it -- a bootstrap that produced a household the guard
+    # then refused would be worse than no bootstrap.
+    assert demo_seed.assert_is_demo_household(household_id) is not None
+
+
+def test_a_dry_run_creates_nothing(app, monkeypatch):
+    """--dry-run promises it writes nothing, and registering is a write."""
+    import tools.seed_demo as seed_demo_cli
+
+    monkeypatch.setenv(seed_demo_cli.PASSWORD_ENV, 'a-demo-password-nobody-uses')
+    monkeypatch.setattr(seed_demo_cli, 'create_app', lambda: app)
+
+    assert seed_demo_cli.main(['--household', 'RankParsley',
+                               '--create-account', '--dry-run']) == 0
+    with unscoped():
+        assert AppUser.query.filter_by(username='RankParsley').first() is None
+
+
+def test_creating_without_yes_creates_nothing(app, monkeypatch):
+    """The same confirmation the destructive path needs, for the same reason."""
+    import tools.seed_demo as seed_demo_cli
+
+    monkeypatch.setenv(seed_demo_cli.PASSWORD_ENV, 'a-demo-password-nobody-uses')
+    monkeypatch.setattr(seed_demo_cli, 'create_app', lambda: app)
+
+    assert seed_demo_cli.main(['--household', 'RankParsley',
+                               '--create-account']) == 1
+    with unscoped():
+        assert AppUser.query.filter_by(username='RankParsley').first() is None
+
+
+def test_create_account_is_a_no_op_when_the_account_is_already_there(
+        app, demo_household, monkeypatch):
+    """Re-running the documented command must not fail on the second run."""
+    import tools.seed_demo as seed_demo_cli
+
+    monkeypatch.setenv(seed_demo_cli.PASSWORD_ENV, 'a-demo-password-nobody-uses')
+    monkeypatch.setattr(seed_demo_cli, 'create_app', lambda: app)
+
+    assert seed_demo_cli.main(['--household', 'RankParsley',
+                               '--create-account', '--yes']) == 0
+    with unscoped():
+        assert AppUser.query.filter_by(username='RankParsley').count() == 1
+    assert Transaction.query.filter_by(household_id=demo_household).count() > 0

@@ -12,6 +12,39 @@ data by hand.**
 
 ---
 
+## First time on a database: create the account
+
+The seeder refuses to run against an account that does not exist, so a
+database that has never had the demo needs it registered first. `--create-account`
+does that in the same run:
+
+```
+DEMO_ACCOUNT_PASSWORD='...' python tools/seed_demo.py --create-account --yes
+```
+
+The password is read from the environment and never taken as a flag, because a
+flag puts it in shell history, in `ps`, and in Railway's process log. On
+Railway, set it as a service variable and let `railway ssh` inherit it rather
+than typing it into the command:
+
+```
+railway variables --set DEMO_ACCOUNT_PASSWORD='...'
+railway ssh -- python tools/seed_demo.py --create-account --yes
+```
+
+The flag only ever creates a name already listed in `demo_seed.DEMO_USERNAMES`
+— it cannot be used to mint an arbitrary user — and it obeys the same two gates
+the seeding does: `--dry-run` creates nothing, and neither does a run without
+`--yes`. On a database that already has the account it does nothing, so the
+command above is safe to re-run and is the one to use everywhere.
+
+The account is registered with `RankParsley@demo.invalid`. `.invalid` is
+reserved by RFC 2606 and can never resolve, so no mail this application sends
+can reach a real person. Nothing here is gated on a verified address, so the
+demo account can sign in immediately.
+
+---
+
 ## Running it
 
 Always look before you write:
@@ -46,6 +79,7 @@ Useful flags:
 | `--months N` | history length (default 24) |
 | `--seed N` | RNG seed; same seed + same day = same household |
 | `--household X` | a username, or a household id |
+| `--create-account` | register the demo account first if this database lacks it; password from `$DEMO_ACCOUNT_PASSWORD` |
 
 ---
 
@@ -58,6 +92,10 @@ Three checks, all before the first delete:
    **Every**, not any — a household containing one real person is a real
    household even if the demo account was invited into it.
 3. `--yes` must be passed.
+
+`--create-account` adds a fourth, in front of the other three: the name it is
+asked to register must already be in `DEMO_USERNAMES`, checked before the row
+is written.
 
 Failing any of them prints `REFUSED:` with the reason and exits 1. There is no
 override flag, and adding one would defeat the point. To make a *new* account
