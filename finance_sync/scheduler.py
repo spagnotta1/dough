@@ -41,6 +41,15 @@ raises**, so a model outage cannot retroactively fail a sync that succeeded;
 and it fires only when transactions actually arrived, so a description the
 model cannot place does not get re-analyzed — and re-billed — on every refresh
 and twice a day forever.
+
+That last property is what pays for the pass being thorough. It reads the whole
+uncategorized backlog on the deep model rather than a capped sample on a cheap
+one, which is minutes of work on a first connection — and affordable precisely
+because "nothing new arrived" means it does not run at all.
+
+Minutes of unattended work needs to be visible, so the pass reports as it goes:
+``on_progress`` frames land in ``categorization_progress`` and ride out on
+``/api/sync/status``, which is what the dialog in ``base.html`` draws.
 """
 
 from __future__ import annotations
@@ -80,6 +89,14 @@ class SyncScheduler:
             # still categorizing" is a real state the page has to render.
             "categorizing": False,
             "last_categorization": None,
+            # How far the pass in flight has got, as a plain dict of the
+            # `auto_categorize.Progress` it came from. Kept alongside
+            # `categorizing` rather than folded into it because the two answer
+            # different questions -- "is it running" gates the poll, "how far"
+            # is what the dialog draws -- and because the last frame has to
+            # survive the flag going false so the finished state has counts to
+            # report.
+            "categorization_progress": None,
         }
 
     # -- lifecycle ------------------------------------------------------------
@@ -274,12 +291,30 @@ class SyncScheduler:
         """
         from dough.services import auto_categorize
 
+        def on_progress(progress) -> None:
+            """One frame of the pass, into the state the UI polls.
+
+            Called from inside the analysis, on this thread, between model
+            calls. It takes the same lock every other writer here takes and
+            does nothing else -- `Progress` is mutated in place by the service,
+            so this stores `as_dict()` rather than the object, and the reader
+            in `status()` can never see a half-updated frame.
+            """
+            with self._state_lock:
+                self._state["categorization_progress"] = progress.as_dict()
+
         with self._state_lock:
             self._state["categorizing"] = True
+            # Cleared, not left showing the previous run's bar. The dialog
+            # opens on `categorizing` and would otherwise draw the last pass's
+            # numbers until the first batch of this one comes back -- which on
+            # the deep model is a minute of a progress bar that is confidently
+            # wrong.
+            self._state["categorization_progress"] = None
         try:
             with self.app.app_context():
                 with tenant_scope(household_id):
-                    result = auto_categorize.run_once()
+                    result = auto_categorize.run_once(on_progress=on_progress)
             if result.skipped:
                 logger.info("Auto-categorization skipped for household %s: %s",
                             household_id, result.reason)
@@ -297,6 +332,7 @@ class SyncScheduler:
                     "remaining_uncategorized": result.remaining_uncategorized,
                     "partial": result.partial,
                     "skipped": result.skipped,
+                    "first_run": result.first_run,
                 }
         except Exception:
             logger.exception("Auto-categorization crashed for household %s",

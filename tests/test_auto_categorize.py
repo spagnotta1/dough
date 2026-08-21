@@ -10,6 +10,14 @@ make that acceptable rather than alarming:
   undo the application silently reverses is worse than no undo.
 - **It never breaks the sync.** A model outage leaves the imported transactions
   uncategorized, which is where they would have been anyway.
+- **It reads all of it, on the deep model.** A pass that stops part-way makes
+  "Dough categorizes what arrives on its own" true of the first few hundred
+  descriptions and quietly false after them, and the user is never told which
+  rows were skipped versus which could not be placed.
+- **It says how far it has got.** Reading a whole history on the deep model is
+  minutes of unattended work; the progress frames are what the dialog in
+  `templates/_categorizing.html` draws so that is visible rather than
+  mysterious.
 """
 
 import json
@@ -353,3 +361,279 @@ def test_a_crash_inside_categorization_never_escapes(auto_app, monkeypatch):
     scheduler._categorize(auto_app.config['DEFAULT_HOUSEHOLD_ID'])
 
     assert scheduler.status()['categorizing'] is False
+
+
+# ── the model, and how much of the ledger it reads ──────────────────────────
+
+def test_the_automatic_pass_reads_on_the_deep_model(auto_app):
+    """Nobody is watching it, and what it writes is not an answer but rules.
+
+    Every later categorization is derived from what this pass decides, so a
+    merchant the cheap model misreads stays misread until a person notices.
+    The role is asserted rather than the id: which model is "deep" is
+    `dough/ai/catalog.py`'s decision to change, but that this pass takes the
+    deep one is this test's.
+    """
+    from dough.ai import catalog
+    from dough.services import auto_categorize
+
+    _ledger('WHOLE FOODS MKT 101')
+    _script(auto_app, _suggestions(('Groceries', 'WHOLE FOODS')))
+    auto_categorize.run_once()
+
+    assert catalog.resolve(role='categorize').tier == 'deep'
+    assert [r.model for r in auto_app.echo.requests] == [
+        catalog.provider_id(role='categorize')]
+
+
+def test_pressing_analyze_is_still_the_suggest_model(auto_app):
+    """The two callers are not the same job and must not drift into one.
+
+    A person on the Rules page is waiting on the answer, and the picker on that
+    page is theirs to set. Re-tiering the unattended pass must not quietly
+    re-tier — and re-price — the button.
+    """
+    from dough.ai import catalog
+
+    _ledger('WHOLE FOODS MKT 101')
+    _script(auto_app, _suggestions(('Groceries', 'WHOLE FOODS')))
+
+    response = auto_app.test_client().post('/rules/ai-suggest', json={})
+    assert response.status_code == 200
+
+    assert [r.model for r in auto_app.echo.requests] == [
+        catalog.provider_id(role='suggest')]
+
+
+def test_the_automatic_pass_reads_the_whole_backlog(auto_app):
+    """No batch cap, on the path that used to carry the tightest one.
+
+    This household already has a rule, so it is the *incremental* pass — the
+    one that used to stop after three batches. Four batches of descriptions go
+    in and four model calls come out; the old behaviour left the fourth batch
+    unread, unreported, and indistinguishable from a batch the model could not
+    place.
+    """
+    from dough.services import auto_categorize, rules_service
+    from models import Transaction
+
+    rules_service.add_rule('Groceries', 'SAFEWAY')
+    batches = 4
+    _ledger(*[f'MERCHANT {i:04d}'
+              for i in range(auto_categorize.BATCH_SIZE * (batches - 1) + 1)])
+    _script(auto_app, *[_suggestions(('Shopping', f'MERCHANT {i:04d}'))
+                        for i in range(batches)])
+
+    result = auto_categorize.run_once()
+
+    assert len(auto_app.echo.requests) == batches
+    assert result.partial is False
+    assert result.first_run is False
+    # The four merchants the scripted model actually named, and nothing lost to
+    # a cap: every other description is still uncategorized because no rule
+    # covers it, which is a different thing from never having been read.
+    assert Transaction.query.filter_by(category='Shopping').count() == batches
+
+
+# ── progress ────────────────────────────────────────────────────────────────
+
+def test_it_reports_progress_as_it_reads(auto_app):
+    """The frames the dialog draws: totals up front, then the read, then done.
+
+    `transactions_total` is fixed on the first frame and never moves. A
+    progress bar whose denominator grows is worse than no progress bar, and
+    the numbers are transactions rather than descriptions because "412 of
+    1,290 transactions" is a sentence about the user's money and "3 of 11
+    batches" is one about our batching.
+    """
+    from dough.services import auto_categorize
+
+    _ledger('WHOLE FOODS MKT 101', 'WHOLE FOODS MKT 102', 'SHELL OIL 4432')
+    _script(auto_app, _suggestions(('Groceries', 'WHOLE FOODS'), ('Gas', 'SHELL')))
+
+    frames = []
+    auto_categorize.run_once(on_progress=lambda p: frames.append(p.as_dict()))
+
+    assert frames[0]['phase'] == 'reading'
+    assert frames[0]['first_run'] is True
+    assert frames[0]['transactions_done'] == 0
+    assert frames[0]['transactions_total'] == 3
+    assert frames[0]['percent'] == 0
+
+    assert [f['transactions_total'] for f in frames] == [3] * len(frames)
+    assert any(f['phase'] == 'applying' for f in frames)
+
+    assert frames[-1]['phase'] == 'done'
+    assert frames[-1]['percent'] == 100
+    assert frames[-1]['transactions_categorized'] == 3
+
+
+def test_a_skipped_pass_still_reports_that_it_finished(auto_app):
+    """Otherwise a dialog opened on "categorizing started" never closes.
+
+    Every early return is a path the UI has to survive, so each one reports a
+    final frame rather than going quiet.
+    """
+    from dough.services import auto_categorize
+
+    frames = []
+    result = auto_categorize.run_once(on_progress=lambda p: frames.append(p.as_dict()))
+
+    assert result.skipped
+    assert frames[-1]['phase'] == 'done'
+
+
+def test_a_progress_callback_that_raises_never_costs_the_pass(auto_app):
+    """Reporting is decoration on work that must not fail.
+
+    A UI callback that throws — a dead state lock, a test double with the
+    wrong signature — must not leave the household uncategorized.
+    """
+    from dough.services import auto_categorize
+
+    def boom(progress):
+        raise RuntimeError('the dialog exploded')
+
+    _ledger('WHOLE FOODS MKT 101')
+    _script(auto_app, _suggestions(('Groceries', 'WHOLE FOODS')))
+
+    result = auto_categorize.run_once(on_progress=boom)
+
+    assert not result.skipped
+    assert result.transactions_categorized == 1
+
+
+def test_the_scheduler_publishes_progress_for_the_dialog(auto_app):
+    """`/api/sync/status` is how the frames reach the browser."""
+    from finance_sync.scheduler import get_scheduler
+
+    scheduler = get_scheduler()
+    assert scheduler.status()['categorization_progress'] is None
+
+    _ledger('WHOLE FOODS MKT 101')
+    _script(auto_app, _suggestions(('Groceries', 'WHOLE FOODS')))
+    scheduler._categorize(auto_app.config['DEFAULT_HOUSEHOLD_ID'])
+
+    status = scheduler.status()
+    assert status['categorizing'] is False
+    assert status['categorization_progress']['phase'] == 'done'
+    assert status['categorization_progress']['percent'] == 100
+    assert status['categorization_progress']['transactions_categorized'] == 1
+    assert status['last_categorization']['first_run'] is True
+
+    body = auto_app.test_client().get('/api/sync/status').get_json()
+    assert body['categorization_progress']['percent'] == 100
+
+
+# ── whose budget it spends ──────────────────────────────────────────────────
+
+@pytest.fixture()
+def budgeted(auto_app):
+    """`auto_app` with the rate limiter actually switched on.
+
+    The test config turns it off (`config.py`), which is right for a suite that
+    makes thousands of requests and has no interest in production ceilings.
+    These tests are *about* the ceiling, so they switch it back on for the
+    length of one test and clear the counters on the way in and out — a limiter
+    left armed would then fail whichever test ran next.
+    """
+    from dough.services.ratelimit import current_limiter
+
+    limiter = current_limiter()
+    was = limiter.enabled
+    limiter.enabled = True
+    limiter.reset()
+    try:
+        yield auto_app
+    finally:
+        limiter.reset()
+        limiter.enabled = was
+
+
+def _spent(policy):
+    """How much of `policy` this household has used, without spending more."""
+    from dough.services.ratelimit import current_limiter
+    from dough.tenancy import current_household
+
+    decision = current_limiter().peek(policy, current_household())
+    from dough.services.ratelimit import POLICIES
+    return POLICIES[policy].limit - decision.remaining
+
+
+def test_the_automatic_pass_does_not_spend_the_interactive_budget(budgeted):
+    """A first connection must not cost the household its chat for an hour.
+
+    `ai` allows sixty model calls an hour and is sized for a person clicking
+    around a dashboard. The unattended pass is one burst per import, sized by
+    how much history a bank handed over. Charging it to the same bucket got
+    that wrong in both directions at once: a first connection could black out
+    the dashboard insight and the chat immediately after signing up, *and*
+    leave the pass cut off part-way through the ledger it had just promised to
+    read.
+    """
+    from dough.services import auto_categorize
+
+    _ledger('WHOLE FOODS MKT 101', 'SHELL OIL 4432')
+    _script(budgeted, _suggestions(('Groceries', 'WHOLE FOODS'), ('Gas', 'SHELL')))
+
+    auto_categorize.run_once()
+
+    assert _spent('ai') == 0
+    assert _spent('ai_daily') == 0
+    assert _spent('ai_categorize') == 1
+
+
+def test_pressing_analyze_still_spends_the_interactive_budget(budgeted):
+    """The exemption is for the pass, not for the analysis it shares.
+
+    A person can press Analyze as often as they like, and that is exactly what
+    `ai` exists to bound. Keying on the *surface* rather than on the function
+    is what keeps these two apart while they run the same code.
+    """
+    _ledger('WHOLE FOODS MKT 101')
+    _script(budgeted, _suggestions(('Groceries', 'WHOLE FOODS')))
+
+    response = budgeted.test_client().post('/rules/ai-suggest', json={})
+    assert response.status_code == 200
+
+    assert _spent('ai') == 1
+    assert _spent('ai_daily') == 1
+    assert _spent('ai_categorize') == 0
+
+
+def test_the_pass_is_still_bounded(budgeted):
+    """Its own budget, not no budget.
+
+    `ai_categorize` is a runaway stop rather than a ration — 200 calls a day is
+    24,000 distinct descriptions — but it is a real ceiling, and the pass
+    degrades into a reported skip at it rather than looping. That is the whole
+    difference between this and switching the limiter off around the pass: the
+    other way to make it finish leaves nothing standing if it never does.
+    """
+    from dough.ai.errors import AIBudgetExceeded
+    from dough.ai.service import current_ai
+    from dough.services import auto_categorize
+    from dough.services.ratelimit import POLICIES, current_limiter
+    from dough.tenancy import current_household
+
+    limiter = current_limiter()
+    identity = current_household()
+    for _ in range(POLICIES['ai_categorize'].limit):
+        assert limiter.check('ai_categorize', identity).allowed
+
+    _ledger('WHOLE FOODS MKT 101')
+    _script(budgeted, _suggestions(('Groceries', 'WHOLE FOODS')))
+    result = auto_categorize.run_once()
+
+    assert result.skipped, 'the pass ran on past its own ceiling'
+
+    # Refused on *that* policy, rather than quietly falling back to the
+    # interactive one — which would hide a runaway inside the budget this whole
+    # change exists to keep clear for the user.
+    request = current_ai().build_request(
+        [{'role': 'user', 'content': 'hi'}],
+        metadata={'surface': 'auto_categorize'})
+    with pytest.raises(AIBudgetExceeded) as exhausted:
+        current_ai().generate(request)
+    assert exhausted.value.policy == 'ai_categorize'
+    assert _spent('ai') == 0

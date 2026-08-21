@@ -124,7 +124,8 @@ def test_an_unknown_policy_raises_rather_than_defaulting():
 #: on a public signup form, and a limit that a restart clears still refuses the
 #: hundredth request in an hour, which no limit does not.
 ENFORCED = {'register', 'password_reset', 'password_reset_account',
-            'email_verification', 'ai', 'ai_daily', 'api', 'api_write'}
+            'email_verification', 'ai', 'ai_daily', 'ai_categorize',
+            'api', 'api_write'}
 
 
 def test_the_declared_policies_match_their_call_sites():

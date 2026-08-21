@@ -1,0 +1,70 @@
+{# ══════════════════════════════════════════════════════════════════════════
+   The categorization dialog. What Dough is doing to a freshly linked bank.
+   ──────────────────────────────────────────────────────────────────────────
+   A first connection hands the automatic pass a household's entire history,
+   which it reads on the deep model — see `AUTO_MAX_BATCHES` and the
+   `categorize` role. That is minutes, unattended, and until this dialog
+   existed the only thing on screen saying so was the word "Categorizing…"
+   beside a spinner on one page. A tester who navigated away from Connections
+   lost even that, landed on a ledger where some rows had categories and some
+   did not, and had no way to tell "not read yet" from "could not be read".
+
+   So it lives in base.html rather than on Connections: the work follows the
+   user around the app, and the report has to as well. It sits outside <main>
+   for the same reason `filter-bar.js` binds to the document — the SPA layer
+   swaps <main> wholesale, and a dialog inside it would be destroyed by the
+   first navigation, mid-pass.
+
+   Every element the controller writes into is marked with a `data-cat-*`
+   hook rather than an id, so this markup can be restyled or rearranged
+   without `categorizing.js` needing to know.
+   ══════════════════════════════════════════════════════════════════════════ #}
+{% from '_dough.html' import dough %}
+
+<dialog id="categorizing-dialog" class="ds-dialog cat-dialog"
+        aria-labelledby="categorizingTitle">
+  <div class="ds-dialog__panel">
+
+    <div class="cat-head">
+      {{ dough('thinking', size=64, class='cat-head__mascot') }}
+      <div class="cat-head__text">
+        <h2 id="categorizingTitle" class="ds-dialog__title" data-cat-title>
+          Sorting out your transactions
+        </h2>
+        <p class="ds-section__sub" data-cat-sub>
+          Reading everything your bank just sent over.
+        </p>
+      </div>
+    </div>
+
+    {# role="progressbar" on the track, not the fill: the fill's width is the
+       drawing of the value, and a screen reader needs the value itself. It
+       carries aria-valuetext as well as aria-valuenow, because "412 of 1,290
+       transactions" is the useful announcement and "32" is not. #}
+    <div class="cat-progress">
+      <div class="ds-progress ds-progress--tall"
+           role="progressbar"
+           aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"
+           aria-labelledby="categorizingTitle"
+           data-cat-bar>
+        <span class="ds-progress__fill ds-progress__fill--accent" data-cat-fill></span>
+      </div>
+      <p class="cat-progress__count" data-cat-count></p>
+    </div>
+
+    <p class="cat-note" data-cat-note>
+      This is a one-time read of your history, so it can take a few minutes.
+      You can close this and keep using Dough — it carries on in the background.
+    </p>
+
+    <div class="ds-dialog__actions">
+      <button type="button" class="ds-btn ds-btn--secondary" data-cat-hide>
+        Keep going in the background
+      </button>
+      <button type="button" class="ds-btn ds-btn--primary" data-cat-done hidden>
+        Done
+      </button>
+    </div>
+
+  </div>
+</dialog>

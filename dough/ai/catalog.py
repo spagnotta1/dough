@@ -108,6 +108,14 @@ ROLES = {
     # Rule suggestion over up to 200 descriptions; the user picks, this is the
     # fallback when they have not.
     'suggest': 'balanced',
+    # The unprompted pass that runs itself after a sync. Deep, deliberately,
+    # and it is the one role where that is not an extravagance: nobody is
+    # watching it, so latency does not matter; it runs once per import rather
+    # than once per page view, so the cost is bounded by how often a bank has
+    # something new; and its output is not an answer somebody reads and
+    # forgets but the *rules* every later categorization is derived from. A
+    # merchant the cheap model misreads stays misread until a person notices.
+    'categorize': 'deep',
 }
 
 _BY_KEY = {m.key: m for m in MODELS}

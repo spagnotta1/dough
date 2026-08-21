@@ -223,7 +223,8 @@ function connectionsApp() {
         syncing: false,
         categorizing: false,
         connecting: null,
-        _pollTimer: null,
+        _onState: null,
+        _onIdle: null,
 
         // Alpine calls init() automatically. If the URL carries an
         // oauth_state_id we are returning from a bank's OAuth login page
@@ -377,31 +378,49 @@ function connectionsApp() {
             this.pollUntilIdle();
         },
 
-        // Two phases, one spinner. [UAT round 1] A sync now hands off to
-        // automatic categorization, which runs after the sync releases its
-        // lock and can take longer than the sync did. Stopping at
-        // `!status.running` would reload the page mid-analysis and tell the
-        // user everything was finished while Dough was still working, so this
-        // waits for both and says which one it is on.
+        // Two phases, one spinner. [UAT round 1] A sync hands off to automatic
+        // categorization, which runs after the sync releases its lock and
+        // takes longer than the sync did — on a first connection, minutes.
+        // Stopping at `!status.running` would reload the page mid-analysis and
+        // tell the user everything was finished while Dough was still working.
+        //
+        // The polling itself is no longer here. `static/js/categorizing.js`
+        // owns the one /api/sync/status loop in the app and the dialog that
+        // reports the categorization pass, because that pass outlives this
+        // page: it keeps running when the user navigates to the dashboard, and
+        // it starts twice a day with nobody on Connections at all. This
+        // component subscribes instead — the spinner is still ours, the loop
+        // is not.
         pollUntilIdle() {
             this.syncing = true;
             this.categorizing = false;
-            clearInterval(this._pollTimer);
-            this._pollTimer = setInterval(async () => {
-                try {
-                    const resp = await fetch('/api/sync/status');
-                    const status = await resp.json();
-                    this.categorizing = !status.running && !!status.categorizing;
-                    if (status.running || status.categorizing) return;
+            this._unsubscribe();
 
-                    clearInterval(this._pollTimer);
-                    this.syncing = false;
-                    this.categorizing = false;
-                    showToast(this._finishedMessage(status),
-                              status.last_status === 'success' ? 'success' : 'warning');
-                    location.reload();
-                } catch (e) { /* keep polling */ }
-            }, 1500);
+            this._onState = (e) => {
+                const status = e.detail;
+                this.categorizing = !status.running && !!status.categorizing;
+            };
+            this._onIdle = (e) => {
+                this._unsubscribe();
+                this.syncing = false;
+                this.categorizing = false;
+                const { status, reported } = e.detail;
+                showToast(this._finishedMessage(status, reported),
+                          status.last_status === 'error' ? 'warning' : 'success');
+                // After the dialog, never during it: `check:sync-idle` is held
+                // back while the finished report is still on screen, so this
+                // cannot reload the page out from under somebody reading it.
+                location.reload();
+            };
+            document.addEventListener('check:sync-state', this._onState);
+            document.addEventListener('check:sync-idle', this._onIdle);
+            window.SyncWatch.start();
+        },
+
+        _unsubscribe() {
+            if (this._onState) document.removeEventListener('check:sync-state', this._onState);
+            if (this._onIdle) document.removeEventListener('check:sync-idle', this._onIdle);
+            this._onState = this._onIdle = null;
         },
 
         // What Dough actually did, rather than "Sync finished." The counts come
@@ -409,9 +428,13 @@ function connectionsApp() {
         // longer have to do by hand — and is told plainly when the pass only
         // got through part of the backlog, so a half-categorized ledger reads
         // as a known state rather than a bug.
-        _finishedMessage(status) {
+        //
+        // `reported` is the dialog saying it has already shown those counts,
+        // at length and with the mascot. Repeating them in a toast half a
+        // second later would read as two separate things having happened.
+        _finishedMessage(status, reported) {
             const done = status.last_categorization;
-            if (!done || done.skipped || !done.transactions_categorized) {
+            if (reported || !done || done.skipped || !done.transactions_categorized) {
                 return 'Sync finished.';
             }
             const n = done.transactions_categorized;
