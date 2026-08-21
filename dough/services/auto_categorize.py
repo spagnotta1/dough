@@ -28,6 +28,19 @@ the count is reported to the user when they next look, and
 `rules_service.clear_auto()` removes all of them and only them. The design
 principle is that Dough may act without asking, but never without saying.
 
+## What it costs, and why that is the right trade
+
+The automatic pass reads the **whole** uncategorized backlog on the **deep**
+model — see `AUTO_MAX_BATCHES` and the `categorize` role in
+`dough/ai/catalog.py` for each half of that. On a first connection it is a
+household's entire history, which is minutes of work.
+
+Saying so is the other half of the principle above. `run_once` takes an
+`on_progress` callback, the scheduler publishes those frames on
+`/api/sync/status`, and `static/js/categorizing.js` draws them — so "Dough is
+doing something on your behalf" is a bar with a count on it rather than a
+ledger that is half-categorized for reasons the user cannot see.
+
 Allowed:   models, `rules`, `dough.ai`, `dough.tenancy`, sibling services,
            SQLAlchemy, stdlib
 Must not:  app, render_template/url_for/redirect/flash/jsonify, anthropic,
@@ -67,20 +80,123 @@ logger = logging.getLogger(__name__)
 BATCH_SIZE = 120
 MAX_BATCHES = 12
 
-#: The batch cap for an *automatic* pass, which is deliberately lower.
+#: The batch cap for an *automatic* pass: `None`, meaning read everything.
 #:
-#: A user who pressed Analyze is watching, has chosen to spend the call, and
-#: wants their whole backlog read. An automatic pass runs every time a sync
-#: brings in something new, unasked, and its typical job is a handful of
-#: merchants a household started using since the last sync. Twelve batches is
-#: the right ceiling for the first case and a way to spend somebody's API
-#: budget on nothing in the second.
+#: This used to be 3, on the reasoning that an unasked pass should not spend
+#: somebody's API budget walking a whole ledger when its typical job is the
+#: handful of merchants a household started using since the last sync. The
+#: reasoning was sound about the typical case and wrong about the promise. The
+#: page says Dough "categorizes what arrives on its own", and a cap makes that
+#: true of the first 360 descriptions and quietly false after them — the user
+#: is not told which transactions were never read, only that some rows are
+#: still bare. A tester cannot tell that from a model that could not place
+#: them, and either way the answer they reach for is the Analyze button this
+#: whole feature exists to remove.
 #:
-#: The first automatic run on a fresh connection is the exception — that one is
-#: a real backlog — so `run_once` raises its own cap when the household has no
-#: rules at all.
-AUTO_MAX_BATCHES = 3
-AUTO_FIRST_RUN_MAX_BATCHES = MAX_BATCHES
+#: What keeps the cost bounded is not the cap, it is the gate in
+#: `finance_sync/scheduler.py`: nothing new imported means the pass does not
+#: run at all. So the work is bounded by what a bank actually delivered, and a
+#: description the model cannot place is paid for once rather than on every
+#: refresh forever. The batching that remains is a context-window constraint —
+#: 4,000 descriptions do not fit in one prompt — not a budget.
+#:
+#: There is still a ceiling; it is just no longer here. `dough/services/
+#: ratelimit.py` allows a household 60 model calls an hour, so a pass past
+#: sixty batches — 7,200 distinct uncategorized descriptions — runs out of
+#: budget rather than out of cap. `analyze` treats that as any other batch
+#: failure: it keeps what the earlier batches produced and reports `partial`,
+#: which the dialog turns into "open Rules and press Analyze to finish it".
+#: That is the honest shape for a limit nobody in UAT has come within an order
+#: of magnitude of, and it is worth knowing that a first connection on that
+#: scale will also have spent the household's hourly allowance.
+AUTO_MAX_BATCHES = None
+AUTO_FIRST_RUN_MAX_BATCHES = None
+
+
+#: Phase labels a caller may see on `Progress.phase`. They are the three things
+#: this pass actually does, in order, and the UI renders one sentence per phase
+#: rather than a spinner that means "something is happening".
+READING = 'reading'
+APPLYING = 'applying'
+DONE = 'done'
+
+
+@dataclass
+class Progress:
+    """How far the pass has got, for something outside it to render.
+
+    An automatic pass over a first-time connection reads a household's entire
+    history on the deep model, and that is minutes rather than seconds. The
+    pass was already unattended-safe; what it was not was *legible*. A user who
+    had just linked their bank saw a ledger where some rows had categories and
+    some did not, with nothing on screen to say the difference was "not read
+    yet" rather than "could not be read".
+
+    So the pass reports as it goes. The counts are transactions rather than
+    descriptions on purpose: descriptions are the unit the batching works in,
+    but "412 of 1,290 transactions" is a sentence about the user's money, and
+    "3 of 11 batches" is a sentence about our implementation.
+
+    `total` is fixed when the pass starts and never moves — a progress bar
+    whose denominator grows is worse than no progress bar.
+    """
+
+    phase: str = READING
+    #: True when this is the household's first pass, i.e. their whole history.
+    first_run: bool = False
+    batches_done: int = 0
+    batches_total: int = 0
+    descriptions_done: int = 0
+    descriptions_total: int = 0
+    transactions_done: int = 0
+    transactions_total: int = 0
+    #: Filled in as the applying phase finishes, so the finished dialog can
+    #: report the outcome from the same object it was reporting progress from.
+    rules_added: int = 0
+    transactions_categorized: int = 0
+
+    @property
+    def percent(self) -> int:
+        """0-100, measuring **reading** only.
+
+        Applying is one pass over the ledger and is quick and unsplittable;
+        giving it a share of the bar would mean inventing a number for it. The
+        bar therefore fills as the model reads and sits full while the results
+        are written, with the phase label carrying that distinction. A bar that
+        reaches 100% and a dialog that has not closed yet is honest; a bar that
+        stalls at 90% for a reason we made up is not.
+        """
+        if not self.transactions_total:
+            return 100 if self.phase == DONE else 0
+        read = round(100 * self.transactions_done / self.transactions_total)
+        return max(0, min(100, read))
+
+    def as_dict(self) -> dict:
+        return {'phase': self.phase, 'first_run': self.first_run,
+                'batches_done': self.batches_done,
+                'batches_total': self.batches_total,
+                'descriptions_done': self.descriptions_done,
+                'descriptions_total': self.descriptions_total,
+                'transactions_done': self.transactions_done,
+                'transactions_total': self.transactions_total,
+                'rules_added': self.rules_added,
+                'transactions_categorized': self.transactions_categorized,
+                'percent': self.percent}
+
+
+def _report(on_progress, progress: Progress) -> None:
+    """Hand `progress` to the caller's callback, swallowing anything it raises.
+
+    Progress reporting is decoration on a pass that must never fail. A UI
+    callback that throws — a scheduler whose state lock is gone, a test double
+    with the wrong signature — must not cost the household its categorization.
+    """
+    if on_progress is None:
+        return
+    try:
+        on_progress(progress)
+    except Exception:
+        logger.warning('progress callback failed', exc_info=True)
 
 
 @dataclass
@@ -106,8 +222,11 @@ class Analysis:
         return self.total_descriptions - self.analyzed_descriptions
 
 
-def analyze(*, model=None, max_batches: int = MAX_BATCHES,
-            batch_size: int = BATCH_SIZE) -> Analysis:
+def analyze(*, model=None, role: str = 'suggest',
+            surface: str = 'rules_ai_suggest',
+            max_batches: Optional[int] = MAX_BATCHES,
+            batch_size: int = BATCH_SIZE, on_progress=None,
+            first_run: bool = False) -> Analysis:
     """Read every uncategorized description and propose rules for them.
 
     ## One analysis, not a sample  [Phase 11A.3]
@@ -121,7 +240,8 @@ def analyze(*, model=None, max_batches: int = MAX_BATCHES,
     reported for.
 
     It walks the whole uncategorized ledger in batches of `batch_size`, up to
-    `max_batches`, and merges the results. The batching is a context-window
+    `max_batches` — or without a ceiling at all when that is `None`, which is
+    what the automatic pass asks for. The batching is a context-window
     constraint, not a sampling strategy: each batch knows its position and the
     categories its predecessors proposed, so the merged output reads as one
     analysis rather than twelve unrelated ones.
@@ -130,6 +250,23 @@ def analyze(*, model=None, max_batches: int = MAX_BATCHES,
     than nothing — the suggestions already in hand are good, and discarding
     them would put the user right back in that loop. Only a failure on the
     *first* batch sets `error`.
+
+    `role` names the tier in `dough/ai/catalog.py` this analysis is worth. It
+    is a parameter rather than a constant because the two callers are not the
+    same job: a person pressing Analyze is waiting on the answer and gets
+    `suggest`, while the unattended pass gets `categorize` — the deep model,
+    for the reasons recorded next to that role. An explicit `model` still wins
+    over both, so the picker on the Rules page keeps working.
+
+    `surface` travels with it and is the same distinction spent rather than
+    modelled: it is what `AIService._require_budget` reads to charge the
+    unattended pass to `ai_categorize` instead of the interactive `ai` budget,
+    and what every log line and audit row for these calls is tagged with.
+
+    `on_progress` is called with a `Progress` once before the first batch and
+    once after each one, so a caller can render how far along the read is. It
+    is never called after this function returns; the applying phase belongs to
+    whoever is orchestrating, and `run_once` reports it.
     """
     ai = current_ai()
     if not ai.is_available:
@@ -143,8 +280,10 @@ def analyze(*, model=None, max_batches: int = MAX_BATCHES,
 
     # Ordered by frequency, so batch one holds the merchants the household
     # actually spends at. That ordering used to be the whole defence against a
-    # 200-row cap; it now only decides which rules the user sees first — and,
-    # for an automatic pass with a low cap, which merchants are worth the call.
+    # 200-row cap. Now that the automatic pass reads everything it decides two
+    # smaller things: which rules the user sees first on the Rules page, and —
+    # when a run does get cut short — that what it missed is the long tail
+    # rather than the household's weekly grocery shop.
     rows = (db.session.query(Transaction.description,
                              func.count(Transaction.id).label('n'))
             .filter(Transaction.category == 'Uncategorized')
@@ -159,12 +298,24 @@ def analyze(*, model=None, max_batches: int = MAX_BATCHES,
 
     batches = [descriptions[i:i + batch_size]
                for i in range(0, len(descriptions), batch_size)]
+    # `None` means no ceiling. `batches[:None]` is already the whole list, so
+    # only the "was it cut short?" test needs to know the difference.
     analyzed = batches[:max_batches]
-    capped = len(batches) > max_batches
+    capped = max_batches is not None and len(batches) > max_batches
 
     raw_suggestions: List[dict] = []
     proposed_cats: List[str] = []
     result = Analysis(total_descriptions=len(descriptions))
+
+    # The denominator the progress bar will use, computed once from what this
+    # pass is actually going to read — `analyzed`, not `batches`. A capped run
+    # that reports its total as the whole ledger would show a bar that stops
+    # at a fraction and calls itself finished.
+    progress = Progress(
+        first_run=first_run, batches_total=len(analyzed),
+        descriptions_total=sum(len(b) for b in analyzed),
+        transactions_total=sum(d['count'] for b in analyzed for d in b))
+    _report(on_progress, progress)
 
     for index, batch in enumerate(analyzed, start=1):
         try:
@@ -180,8 +331,8 @@ def analyze(*, model=None, max_batches: int = MAX_BATCHES,
                 # Room for a full batch's worth of rules. The old 2,000 was
                 # sized for the fifteen the prompt asked for, and a longer
                 # reply would have been truncated into an `AIResponseError`.
-                model=model, role='suggest', max_tokens=8000,
-                metadata={'surface': 'rules_ai_suggest'})
+                model=model, role=role, max_tokens=8000,
+                metadata={'surface': surface})
         except AIError as exc:
             logger.warning('rule analysis batch %s/%s failed: %s',
                            index, len(analyzed), exc)
@@ -201,6 +352,10 @@ def analyze(*, model=None, max_batches: int = MAX_BATCHES,
 
         result.analyzed_descriptions += len(batch)
         result.batches += 1
+        progress.batches_done = result.batches
+        progress.descriptions_done = result.analyzed_descriptions
+        progress.transactions_done += sum(d['count'] for d in batch)
+        _report(on_progress, progress)
         batch_suggestions = data.get('suggestions', []) or []
         raw_suggestions.extend(batch_suggestions)
         for suggestion in batch_suggestions:
@@ -407,6 +562,10 @@ class AutoRun:
     partial: bool = False
     skipped: bool = False
     reason: Optional[str] = None
+    #: True when this was the household's first pass — their whole history
+    #: rather than whatever one sync brought in. The finished dialog reads
+    #: differently for it, because it is the only pass the user was watching.
+    first_run: bool = False
 
 
 def _household():
@@ -442,7 +601,7 @@ def set_enabled(enabled: bool) -> None:
     db.session.commit()
 
 
-def run_once(*, model=None) -> AutoRun:
+def run_once(*, model=None, on_progress=None) -> AutoRun:
     """Analyze what is uncategorized and apply the result. Never raises.
 
     The automatic pass, called from the sync scheduler once a sync has imported
@@ -454,31 +613,78 @@ def run_once(*, model=None) -> AutoRun:
     than merely unhelpful — nothing is uncategorized, or the model is not
     configured — and reports why, so the caller can log something truthful
     instead of an empty success.
+
+    ## It reads all of it, on the deep model
+
+    Both of those are one decision seen from two sides. This pass is the only
+    thing standing between a freshly linked bank and a ledger of
+    `Uncategorized` rows; it runs unattended; and what it writes is not an
+    answer somebody reads once but the rule set every later categorization is
+    derived from. Neither a sample of the backlog nor the cheap model produces
+    something a household can trust without checking — and a user who has to
+    check has not been saved the work. See `AUTO_MAX_BATCHES` and the
+    `categorize` role in `dough/ai/catalog.py`.
+
+    A caller that wants to show its progress passes `on_progress`. It is called
+    with a `Progress` through the reading phase, again when applying starts,
+    and once more when the pass is over — including on every skipped path, so
+    a UI that opened a dialog when categorizing started always receives the
+    event that closes it.
     """
+    def finish(run: AutoRun, progress: Progress) -> AutoRun:
+        progress.phase = DONE
+        progress.rules_added = run.rules_added
+        progress.transactions_categorized = run.transactions_categorized
+        _report(on_progress, progress)
+        return run
+
     if not is_enabled():
-        return AutoRun(skipped=True, reason='turned off for this household')
+        return finish(AutoRun(skipped=True,
+                              reason='turned off for this household'),
+                      Progress())
 
     uncategorized = Transaction.query.filter_by(category='Uncategorized').count()
     if not uncategorized:
-        return AutoRun(skipped=True, reason='nothing uncategorized')
+        return finish(AutoRun(skipped=True, reason='nothing uncategorized'),
+                      Progress())
 
     ai = current_ai()
     if not ai.is_available:
-        return AutoRun(skipped=True, reason='no model configured')
+        return finish(AutoRun(skipped=True, reason='no model configured'),
+                      Progress())
 
     # A household with no rules is looking at its whole history for the first
     # time; one that already has rules is looking at whatever arrived since the
-    # last sync. Those are different sizes of job and get different budgets.
+    # last sync. Both read all of what they are given now, but the difference
+    # is still worth knowing: it is what the dialog says to somebody who has
+    # just linked a bank and is watching minutes of work go by, as against the
+    # routine pass they will never see.
     first_run = not rules_service.categories()
     max_batches = (AUTO_FIRST_RUN_MAX_BATCHES if first_run
                    else AUTO_MAX_BATCHES)
 
-    analysis = analyze(model=model, max_batches=max_batches)
+    # Held so the phases after the read keep reporting against the same totals
+    # the bar has spent the last few minutes filling towards.
+    latest = Progress(first_run=first_run)
+
+    def track(progress: Progress) -> None:
+        nonlocal latest
+        latest = progress
+        _report(on_progress, progress)
+
+    analysis = analyze(model=model, role='categorize',
+                       surface='auto_categorize', max_batches=max_batches,
+                       on_progress=track, first_run=first_run)
     if analysis.error:
-        return AutoRun(skipped=True, reason=analysis.error)
+        return finish(AutoRun(skipped=True, reason=analysis.error,
+                              first_run=first_run), latest)
     if not analysis.suggestions:
-        return AutoRun(skipped=True, reason='no rules could be derived',
-                       partial=analysis.partial)
+        return finish(AutoRun(skipped=True, reason='no rules could be derived',
+                              partial=analysis.partial,
+                              first_run=first_run), latest)
+
+    latest.phase = APPLYING
+    _report(on_progress, latest)
 
     incoming = [(s['category'], s['keywords']) for s in analysis.suggestions]
     try:
@@ -488,14 +694,18 @@ def run_once(*, model=None) -> AutoRun:
         # must not take the sync down with it. `apply` rolled back; there is
         # nothing to repair, only something to report.
         logger.exception('automatic categorization failed to apply')
-        return AutoRun(skipped=True, reason=str(exc))
+        return finish(AutoRun(skipped=True, reason=str(exc),
+                              first_run=first_run), latest)
 
     remaining = Transaction.query.filter_by(category='Uncategorized').count()
-    return AutoRun(rules_added=added, transactions_categorized=changed,
-                   remaining_uncategorized=remaining,
-                   partial=analysis.partial)
+    return finish(AutoRun(rules_added=added, transactions_categorized=changed,
+                          remaining_uncategorized=remaining,
+                          partial=analysis.partial,
+                          first_run=first_run), latest)
 
 
-__all__ = ['Analysis', 'AutoRun', 'analyze', 'apply', 'recategorize',
-           'run_once', 'is_enabled', 'set_enabled',
-           'BATCH_SIZE', 'MAX_BATCHES', 'AUTO_MAX_BATCHES']
+__all__ = ['Analysis', 'AutoRun', 'Progress', 'analyze', 'apply',
+           'recategorize', 'run_once', 'is_enabled', 'set_enabled',
+           'READING', 'APPLYING', 'DONE',
+           'BATCH_SIZE', 'MAX_BATCHES', 'AUTO_MAX_BATCHES',
+           'AUTO_FIRST_RUN_MAX_BATCHES']

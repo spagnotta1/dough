@@ -241,6 +241,16 @@
        document: bound once, they survive the <main> swap that a page-local
        script would have to re-run after. -->
   <script defer src="{{ url_for('static', filename='js/filter-bar.js') }}"></script>
+  {% if current_user_id %}
+  <!-- Automatic categorization: the app-wide status poller and the dialog it
+       draws. In <head> and outside <main> for the same reason as the filter
+       bar — the pass it reports on runs on a scheduler thread and outlives any
+       one page, so a component that the SPA swap could destroy is the wrong
+       shape for it. Signed-out pages skip both: there is no household to have
+       a sync, and the poll would be a 401 per navigation. -->
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/categorizing.css') }}">
+  <script defer src="{{ url_for('static', filename='js/categorizing.js') }}"></script>
+  {% endif %}
 
   <style>
   /* ═══════════════════════════════════════════════════════════════════════
@@ -1257,6 +1267,8 @@
     </button>
   </div>
   {% endblock %}
+
+  {% if current_user_id %}{% include '_categorizing.html' %}{% endif %}
 
   <!-- Toast container -->
   {# The live region itself — showToast() flips aria-live to "assertive" for

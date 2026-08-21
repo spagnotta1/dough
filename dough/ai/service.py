@@ -67,6 +67,19 @@ logger = logging.getLogger(__name__)
 #: Key under which the per-app service is stored in `app.extensions`.
 EXTENSION_KEY = 'dough_ai'
 
+#: Surfaces that spend against `ai_categorize` instead of `ai`/`ai_daily`.
+#:
+#: Work nobody clicked, whose size is set by how much data arrived rather than
+#: by how much a person asked for. See the `ai_categorize` policy in
+#: `dough/services/ratelimit.py` for why that is a different budget rather than
+#: no budget.
+#:
+#: Membership is safe to key on because every `surface` in this application is
+#: a literal at its call site — there is no path by which a request body names
+#: its own surface, and so none by which one talks its way out of the
+#: interactive ceiling.
+UNATTENDED_SURFACES = frozenset({'auto_categorize'})
+
 # A leading ```json / ``` fence and its closing partner. Anchored and applied to
 # the whole string rather than per-line: the old MULTILINE variants would strip
 # a fence out of the *middle* of a reply that legitimately contained one, which
@@ -379,6 +392,14 @@ class AIService:
             return
 
         identity = current_household() or 'unscoped'
+
+        # The unattended pass is charged to its own policy. Not an exemption --
+        # it is still refused when it runs away -- but not the budget that
+        # exists to ration what a person clicked, because nobody clicked this
+        # and its size is the bank's decision rather than theirs.
+        if request.metadata.get('surface') in UNATTENDED_SURFACES:
+            self._spend('ai_categorize', identity, limiter, request)
+            return
 
         # Both names written as literals, one call each, rather than a loop over
         # a tuple. `tests/test_ratelimit.py` finds call sites by reading the AST

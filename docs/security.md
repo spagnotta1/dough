@@ -621,6 +621,27 @@ probably land together since they need the same counter.
 - **A cache hit costs nothing.** `cached()` calls its producer only on a miss,
   so the budget is spent where the provider call is. The ceiling is on spending
   money, and a cached answer did not.
+- **Update — the unattended pass has its own policy, `ai_categorize`.** The
+  automatic categorization pass reads a household's whole uncategorized backlog
+  on the deep model, which on a first connection is dozens of calls in a couple
+  of minutes. Charged to `ai` that was a day's interactive budget spent by
+  something nobody clicked: the dashboard insight and the chat went dark for an
+  hour right after signing up, and the pass was itself cut off part-way through
+  the ledger it had promised to read. `ai`/`ai_daily` ration what a *person* can
+  trigger; this is not that, so it is charged to a separate per-household policy
+  sized as a runaway stop (200 calls a day ≈ 24,000 descriptions) rather than as
+  a ration. It is routed by `surface`, which is a literal at every call site in
+  this application — no request body names its own surface, so nothing can talk
+  its way out of the interactive ceiling.
+
+  Recorded because the obvious alternative is worse and was rejected: switching
+  the limiter **off** around the pass and back on afterwards. The limiter is
+  process-wide state shared by every household and thread, so "off" is off for
+  everybody; the pass runs on a daemon thread that can crash or be killed
+  mid-run, leaving it off with nothing left to switch it back; and two
+  households categorizing at once would have the first to finish re-enable it
+  under the second. A second policy has none of those failure modes and still
+  refuses.
 - **The refusal is its own error type.** `AIBudgetExceeded`, deliberately not
   `AIRateLimited`. The two look alike and mean opposite things: the provider
   throttling us is a capacity problem affecting every household, and this is one
@@ -1137,7 +1158,7 @@ and it is recorded as OPS-0025 below rather than implied by its absence.
 | SEC-0014 | ~~`APP_DEBUG` defaulted on in `app.py`'s `__main__`, so a `0.0.0.0` bind could expose Werkzeug's debugger (RCE) on the LAN~~ | High | **Closed, Phase 8** |
 | BUG-0016 | ~~A `Date` column compared against a `datetime` excluded the first day of every filtered window — transaction lists, CSV exports, and the 1st of every month from every budget's spend~~ | Medium | **Closed, Phase 10** |
 | SEC-0017 | An API token is a bearer credential with no second factor: whoever holds it acts as its user until it expires or is revoked. Bounded by hash-at-rest, individual revocation, scopes, continuous re-resolution of the user, and audit on issue/revoke/reject — but an exfiltrated token is working access until somebody notices | Medium | — |
-| SEC-0018 | `/api/v1` has no rate limit beyond the shared login throttle. **Narrowed, Phase 10.5:** the abstraction exists (`dough/services/ratelimit.py`) and the policies are declared in one reviewable table, with the four authentication routes enforced by it. **Narrowed again, Phase 10.6:** the remaining four — `ai`, `ai_daily`, `api`, `api_write` — are now wired, at two chokepoints rather than twenty-odd call sites (`AIService._require_budget`, `guard.enforce_rate_limit`). The backend argument that held them back is unchanged and still true; what changed is that opening registration made the comparison "imperfect ceiling vs. none" rather than "imperfect ceiling vs. proper one". Residual: the in-memory backend (SEC-0010), and session-authenticated `/api/v1` traffic, which the token-scoped policies cannot key on | Low | **Narrowed, Phase 10.6** |
+| SEC-0018 | `/api/v1` has no rate limit beyond the shared login throttle. **Narrowed, Phase 10.5:** the abstraction exists (`dough/services/ratelimit.py`) and the policies are declared in one reviewable table, with the four authentication routes enforced by it. **Narrowed again, Phase 10.6:** the remaining four — `ai`, `ai_daily`, `api`, `api_write` — are now wired, at two chokepoints rather than twenty-odd call sites (`AIService._require_budget`, `guard.enforce_rate_limit`). **Extended, UAT round 1:** a ninth policy, `ai_categorize`, bounds the unattended categorization pass separately from the interactive AI budget, at the same `_require_budget` chokepoint and routed by a `surface` that is a literal at every call site. The backend argument that held them back is unchanged and still true; what changed is that opening registration made the comparison "imperfect ceiling vs. none" rather than "imperfect ceiling vs. proper one". Residual: the in-memory backend (SEC-0010), and session-authenticated `/api/v1` traffic, which the token-scoped policies cannot key on | Low | **Narrowed, Phase 10.6** |
 | SEC-0019 | ~~No credential — session or API token — could be invalidated by a change to the account behind it~~ — `session_version` now covers both surfaces, raised automatically whenever a password hash changes. **The residual noted here is closed in Phase 10.5:** `/settings/password` and `/settings/sessions/revoke` are the controls that trigger it, and a completed password reset does too | Medium | **Closed, Phase 10.5** |
 | SEC-0020 | ~~`@public` returned before the session-lifetime check, so a public view that also renders signed-in content (`/`) would serve the dashboard to an expired or invalidated session~~ — the marker now suppresses the login redirect and nothing else | High | **Closed, Phase 10.5** |
 | SEC-0021 | ~~`authenticate_bearer` only ever *set* the bearer actor, so `bearer_actor()` named the previous request's actor wherever an app context outlived a request — and `current_user` reads it first, skipping the session check~~ | Medium | **Closed, Phase 10.5** |

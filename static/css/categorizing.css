@@ -1,0 +1,65 @@
+/* ══════════════════════════════════════════════════════════════════════════
+   The categorization dialog  —  templates/_categorizing.html
+   ──────────────────────────────────────────────────────────────────────────
+   Layout only. The panel, the backdrop, the button row and the bar are all
+   design-system components (.ds-dialog, .ds-progress, .ds-btn); what is here
+   is how this particular content sits inside them, and nothing else. If a
+   rule below starts redefining a colour or a radius, it belongs in
+   design-system.css instead.
+   ══════════════════════════════════════════════════════════════════════════ */
+
+/* Narrower than the 560px default. The content is a sentence, a bar and a
+   count — at full width the bar reads as a page element rather than as a
+   measure of the sentence above it. */
+.cat-dialog { width: min(440px, calc(100vw - 2 * var(--sp-4))); }
+
+.cat-head {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+}
+/* The mascot is the only fixed-width thing in the row; the text takes the
+   rest and wraps rather than pushing him off the panel. */
+.cat-head__mascot { flex: 0 0 auto; }
+.cat-head__text { min-width: 0; }
+.cat-head .ds-dialog__title { font-size: var(--f-lg); }
+.cat-head .ds-section__sub { margin-top: var(--sp-1); }
+
+.cat-progress {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+
+/* Tabular figures, because this line is a counter that reruns every few
+   seconds: without them the digits change width as they change value and the
+   whole line jitters under a bar that is meant to read as steady. */
+.cat-progress__count {
+  font-size: var(--f-sm);
+  color: var(--ink-muted);
+  font-variant-numeric: tabular-nums;
+  margin: 0;
+}
+.cat-progress__count:empty { display: none; }
+
+.cat-note {
+  font-size: var(--f-sm);
+  line-height: var(--lh-body);
+  color: var(--ink-muted);
+  margin: 0;
+}
+
+/* The finished panel is the same dialog with different copy, so the states
+   are a class on the root rather than two panels swapped in and out — one
+   set of nodes means the bar animates from wherever it got to instead of
+   being replaced at 100% by a new one. */
+.cat-dialog--done .cat-note { color: var(--ink-body); }
+.cat-dialog--done .ds-progress__fill { background: var(--ok-mark); }
+
+@media (max-width: 480px) {
+  .cat-dialog .ds-dialog__panel { padding: var(--sp-5); }
+  /* Stacked, and the primary action ends up full width — a two-button row at
+     this size gives each of them about nine characters. */
+  .cat-dialog .ds-dialog__actions { flex-direction: column-reverse; }
+  .cat-dialog .ds-dialog__actions .ds-btn { width: 100%; }
+}

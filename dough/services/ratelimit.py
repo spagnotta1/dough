@@ -128,12 +128,15 @@ class Decision:
 
 #: Every limit this application declares, in one readable table.
 #:
-#: **All eight are enforced as of Phase 10.6.** Four have been since 10.5
-#: (`/register`, `/forgot-password` twice, the verification re-send). The other
-#: four were declared-but-unwired until registration opened to the public:
+#: **All nine are enforced.** Four have been since 10.5 (`/register`,
+#: `/forgot-password` twice, the verification re-send). Four more were
+#: declared-but-unwired until registration opened to the public, and the ninth
+#: arrived with automatic categorization:
 #:
-#: - `ai` and `ai_daily` — in `AIService._require_budget`, so `generate` and
-#:   `stream` are the whole surface and no future AI route can miss it.
+#: - `ai`, `ai_daily` and `ai_categorize` — in `AIService._require_budget`, so
+#:   `generate` and `stream` are the whole surface and no future AI route can
+#:   miss it. Which of the three a call spends is decided by its `surface`; see
+#:   the `ai_categorize` note below.
 #: - `api` and `api_write` — in `dough/api/guard.py`'s `enforce_rate_limit`,
 #:   one `before_request` covering every resource.
 #:
@@ -164,6 +167,36 @@ class Decision:
 #: needs. The API is protecting the *process* — one worker, per OPS-0012 — so it
 #: is generous enough that no legitimate client notices and low enough that one
 #: token cannot saturate it.
+#:
+#: `ai_categorize` is a fourth shape and the reason it is separate rather than
+#: exempt. `ai`/`ai_daily` ration what a *person* can trigger: sixty an hour is
+#: about what somebody clicking around a dashboard plausibly spends, and the
+#: false positive is that person waiting. The automatic categorization pass is
+#: not that. It is one burst per import, on a scheduler thread, sized by how
+#: much history a bank handed over — a first connection is legitimately dozens
+#: of calls in a couple of minutes, which is a whole day's interactive budget
+#: spent by something nobody clicked.
+#:
+#: Charging it to the same bucket had that backwards in both directions: a
+#: first connection could exhaust the household's hourly allowance, so chat and
+#: the dashboard insight went dark for an hour immediately after signing up,
+#: *and* the pass itself was cut off part-way through the ledger it had just
+#: promised to read. Two failures from one number that fits neither job.
+#:
+#: So it gets its own, and the number is a runaway stop rather than a ration:
+#: 200 calls covers 24,000 distinct descriptions a day, which is orders of
+#: magnitude past any household seen in UAT. What actually bounds this in
+#: practice is `finance_sync/scheduler.py` — the pass does not run at all
+#: unless a sync imported something new — and this is what stands behind that
+#: gate if it ever fails.
+#:
+#: What it is emphatically **not** is the limiter being switched off around the
+#: pass. That was considered and is unsafe: the limiter is process-wide state
+#: shared by every household and thread, so "off" is off for everybody; the
+#: pass runs on a daemon thread that can crash or be killed mid-run, leaving it
+#: off with nothing to switch it back; and two households categorizing at once
+#: would have one re-enable it under the other. A second policy has none of
+#: those failure modes and still has a ceiling.
 #:
 #: `login` is deliberately absent. `dough.auth.LoginThrottle` owns that, it is
 #: shared between the web and API sign-in surfaces, and it does something this
@@ -197,6 +230,13 @@ POLICIES = {
                description='The same budget over a day. An hourly limit alone '
                            'permits 24x its own number, which is the bill this '
                            'is actually about.'),
+        Policy('ai_categorize', limit=200, window_seconds=86400,
+               per='household',
+               description='The unattended categorization pass, which is not '
+                           'the interactive budget\'s to bound. Its own '
+                           'ceiling because its own shape: one burst per '
+                           'import, sized by what a bank delivered rather '
+                           'than by what a person clicked.'),
         Policy('api', limit=600, window_seconds=3600, per='token',
                description='General /api/v1 traffic, per token rather than per '
                            'user: revoking a misbehaving client must not '
