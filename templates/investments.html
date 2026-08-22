@@ -334,75 +334,7 @@
   </section>
 
   {# ══════════════════════════════════════════════════════════════════════
-     LAYER 2 — Dough's Portfolio Review
-     The numbers above are already on screen; this is where Dough explains
-     them and says what to do about it. Unlike his dashboard insight this one
-     keeps its turns, because "should I rebalance?" is rarely the last
-     question.
-     ══════════════════════════════════════════════════════════════════════ #}
-  <section class="ds-card ds-card--hero ds-card--wash-ai inv-copilot ds-rise"
-           style="--ds-delay:330ms" aria-labelledby="copilot-h" id="invCopilot">
-    <div class="inv-copilot__head">
-      <span class="inv-copilot__mark dough-avatar" aria-hidden="true">
-        <span data-dough="reviewing" data-dough-size="36" data-dough-tight></span>
-      </span>
-      <h2 class="inv-copilot__title" id="copilot-h">Dough's Portfolio Review</h2>
-      <a href="/chat" class="ds-btn ds-btn--ghost ds-btn--sm">Ask Dough →</a>
-    </div>
-
-    {# The deterministic read is already on screen above; this is only the
-       part that needs judgement, and it arrives a moment later. #}
-    <div class="inv-copilot__ai" id="invNarrative" aria-live="polite">
-      <div class="inv-copilot__loading" id="invNarrativeLoading">
-        {# Dough visibly reads the portfolio while the model works. The label
-           beside him is what conveys the state to a screen reader or under
-           reduced motion — the mascot is never the only signal. #}
-        <div class="dough-working">
-          <span data-dough="reviewing" data-dough-size="42"></span>
-          <span class="dough-working__label">Dough is reading your portfolio…</span>
-        </div>
-        <span class="ds-skeleton ds-skeleton--text" style="width:94%"></span>
-        <span class="ds-skeleton ds-skeleton--text" style="width:71%"></span>
-      </div>
-    </div>
-
-    <div class="inv-opps" id="invOpps" hidden></div>
-
-    <div class="inv-thread" id="invThread" hidden></div>
-    <div class="inv-thread__foot" id="invThreadFoot" hidden>
-      <button type="button" class="ds-btn ds-btn--ghost ds-btn--sm" id="invThreadClear">Clear conversation</button>
-      <a href="/chat" class="ds-btn ds-btn--ghost ds-btn--sm">Keep talking to Dough →</a>
-    </div>
-
-    <form class="inv-ask" id="invAskForm">
-      <label class="ds-sr" for="invAskInput">Ask Dough about your portfolio</label>
-      <input type="text" id="invAskInput" class="inv-ask__input ds-control__input" autocomplete="off"
-             placeholder="Ask Dough anything about your portfolio…">
-      <button type="submit" class="ds-btn ds-btn--primary ds-btn--sm inv-ask__send" aria-label="Send question">
-        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 19V5"/><path d="m5 12 7-7 7 7"/></svg>
-      </button>
-    </form>
-
-    <div class="inv-suggest" id="invSuggest" role="group" aria-label="Suggested questions">
-      {# Seeded from the page's own figures so the first suggestions are
-         always about this portfolio; replaced by the model's once it lands. #}
-      {% set seed = [] %}
-      {% if conc.largest and conc.top1_pct >= 20 %}
-        {% set _ = seed.append('Am I too concentrated in ' ~ conc.largest.ticker ~ '?') %}
-      {% endif %}
-      {% set _ = seed.append('Analyze my portfolio') %}
-      {% set _ = seed.append('Should I rebalance?') %}
-      {% set _ = seed.append('How risky am I?') %}
-      {% set _ = seed.append('Compare me to the S&P 500') %}
-      {% set _ = seed.append('Where are my tax-loss opportunities?') %}
-      {% for q in seed[:5] %}
-      <button type="button" class="ds-chip ds-chip--ai" data-ask="{{ q }}">{{ q }}</button>
-      {% endfor %}
-    </div>
-  </section>
-
-  {# ══════════════════════════════════════════════════════════════════════
-     LAYER 3 — Story
+     LAYER 2 — Story
      ══════════════════════════════════════════════════════════════════════ #}
   {% if wealth.story %}
   <section class="ds-rise" style="--ds-delay:370ms" aria-labelledby="story-h">
@@ -425,7 +357,7 @@
   {% endif %}
 
   {# ══════════════════════════════════════════════════════════════════════
-     LAYER 4 — Attention
+     LAYER 3 — Attention
      One ranked list. Severity is carried by an icon and a word, never by
      color alone, and every item can explain itself.
      ══════════════════════════════════════════════════════════════════════ #}
@@ -489,7 +421,7 @@
   </section>
 
   {# ══════════════════════════════════════════════════════════════════════
-     LAYER 5 — Analytics
+     LAYER 4 — Analytics
      Collapsed by default. Every panel can be collapsed, pinned, hidden and
      reordered; the arrangement is remembered per browser.
      ══════════════════════════════════════════════════════════════════════ #}
@@ -878,7 +810,7 @@
   </section>
 
   {# ══════════════════════════════════════════════════════════════════════
-     LAYER 6a — Accounts
+     LAYER 5a — Accounts
      ══════════════════════════════════════════════════════════════════════ #}
   {% if accounts %}
   <section aria-labelledby="accounts-h">
@@ -922,7 +854,7 @@
   {% endif %}
 
   {# ══════════════════════════════════════════════════════════════════════
-     LAYER 6b — Holdings
+     LAYER 5b — Holdings
      ══════════════════════════════════════════════════════════════════════ #}
   <section aria-labelledby="holdings-h" id="holdings">
     <div class="ds-section__head">
@@ -1095,6 +1027,75 @@
       <button type="button" class="ds-btn ds-btn--ghost ds-btn--sm" @click="showAddForm = false; resetNew()">Cancel</button>
     </div>
     <p x-show="addError" x-text="addError" class="inv-error" x-cloak></p>
+  </section>
+
+  {# ══════════════════════════════════════════════════════════════════════
+     LAYER 6 — Dough's Portfolio Review
+     Everything the page can say for itself has been said by the time you
+     get here; this is where Dough explains it and says what to do about it.
+     Unlike his dashboard insight this one keeps its turns, because "should
+     I rebalance?" is rarely the last question. The floating ask button
+     scrolls here from anywhere on the page.
+     ══════════════════════════════════════════════════════════════════════ #}
+  <section class="ds-card ds-card--hero ds-card--wash-ai inv-copilot ds-rise"
+           style="--ds-delay:450ms" aria-labelledby="copilot-h" id="invCopilot">
+    <div class="inv-copilot__head">
+      <span class="inv-copilot__mark dough-avatar" aria-hidden="true">
+        <span data-dough="reviewing" data-dough-size="36" data-dough-tight></span>
+      </span>
+      <h2 class="inv-copilot__title" id="copilot-h">Dough's Portfolio Review</h2>
+      <a href="/chat" class="ds-btn ds-btn--ghost ds-btn--sm">Ask Dough →</a>
+    </div>
+
+    {# The deterministic read is already on screen above; this is only the
+       part that needs judgement, and it arrives a moment later. #}
+    <div class="inv-copilot__ai" id="invNarrative" aria-live="polite">
+      <div class="inv-copilot__loading" id="invNarrativeLoading">
+        {# Dough visibly reads the portfolio while the model works. The label
+           beside him is what conveys the state to a screen reader or under
+           reduced motion — the mascot is never the only signal. #}
+        <div class="dough-working">
+          <span data-dough="reviewing" data-dough-size="42"></span>
+          <span class="dough-working__label">Dough is reading your portfolio…</span>
+        </div>
+        <span class="ds-skeleton ds-skeleton--text" style="width:94%"></span>
+        <span class="ds-skeleton ds-skeleton--text" style="width:71%"></span>
+      </div>
+    </div>
+
+    <div class="inv-opps" id="invOpps" hidden></div>
+
+    <div class="inv-thread" id="invThread" hidden></div>
+    <div class="inv-thread__foot" id="invThreadFoot" hidden>
+      <button type="button" class="ds-btn ds-btn--ghost ds-btn--sm" id="invThreadClear">Clear conversation</button>
+      <a href="/chat" class="ds-btn ds-btn--ghost ds-btn--sm">Keep talking to Dough →</a>
+    </div>
+
+    <form class="inv-ask" id="invAskForm">
+      <label class="ds-sr" for="invAskInput">Ask Dough about your portfolio</label>
+      <input type="text" id="invAskInput" class="inv-ask__input ds-control__input" autocomplete="off"
+             placeholder="Ask Dough anything about your portfolio…">
+      <button type="submit" class="ds-btn ds-btn--primary ds-btn--sm inv-ask__send" aria-label="Send question">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 19V5"/><path d="m5 12 7-7 7 7"/></svg>
+      </button>
+    </form>
+
+    <div class="inv-suggest" id="invSuggest" role="group" aria-label="Suggested questions">
+      {# Seeded from the page's own figures so the first suggestions are
+         always about this portfolio; replaced by the model's once it lands. #}
+      {% set seed = [] %}
+      {% if conc.largest and conc.top1_pct >= 20 %}
+        {% set _ = seed.append('Am I too concentrated in ' ~ conc.largest.ticker ~ '?') %}
+      {% endif %}
+      {% set _ = seed.append('Analyze my portfolio') %}
+      {% set _ = seed.append('Should I rebalance?') %}
+      {% set _ = seed.append('How risky am I?') %}
+      {% set _ = seed.append('Compare me to the S&P 500') %}
+      {% set _ = seed.append('Where are my tax-loss opportunities?') %}
+      {% for q in seed[:5] %}
+      <button type="button" class="ds-chip ds-chip--ai" data-ask="{{ q }}">{{ q }}</button>
+      {% endfor %}
+    </div>
   </section>
 
   {# ══════════════════════════════════════════════════════════════════════
