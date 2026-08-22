@@ -250,3 +250,55 @@ def test_the_other_bar_does_not_drill_down(signed_in):
 
     assert '/transactions' not in page.url, \
         f'clicking "Other" navigated to a filter that cannot represent it: {page.url}'
+
+
+# ── The panels after a soft navigation ──────────────────────────────────────
+
+def test_a_theme_change_after_a_filter_redraws_the_filtered_window(signed_in):
+    """Reported from the running app: filter the dashboard, and Top categories
+    goes back to showing the window you had before.
+
+    A soft navigation re-executes `dashboard.js`, so each run builds its charts
+    from the `#dashData` that came with the page it belongs to. The document
+    listeners are attached once on purpose — they have to survive the swap —
+    but they used to keep the *first* run's handlers, and `onThemeChange`
+    rebuilds every live chart. So a theme change after a filter replaced the
+    filtered numbers with whichever ones were on screen when the dashboard was
+    first opened, silently and until a reload.
+
+    The theme event is the trigger because it is the one document-level
+    listener that redraws chart data. It is asserted through the same panel the
+    report came from, not through the listener, so the test still means
+    something if the wiring is rewritten again.
+    """
+    page = signed_in
+    _open_ranked(page)
+
+    before = _ranked_labels(page)
+
+    # Any window that changes the answer. "Last Month" is the neighbouring
+    # preset, so the seeded ledger — which is dated relative to today — lands
+    # outside it and the panel empties.
+    page.click('#dateTrigger')
+    page.wait_for_timeout(120)
+    page.click('[data-preset="last_month"]')
+    page.wait_for_url('**/?**start_date=**')
+    page.wait_for_timeout(400)
+    filtered = _ranked_labels(page)
+    assert filtered != before, \
+        f'the filter changed nothing, so this test proves nothing: {filtered}'
+
+    page.evaluate("document.dispatchEvent(new CustomEvent('check:theme-changed'))")
+    page.wait_for_timeout(400)
+
+    assert _ranked_labels(page) == filtered, \
+        'the panels reverted to the pre-filter window after a theme change'
+
+
+def _ranked_labels(page):
+    """What the two Top-categories charts are plotting, income then spending."""
+    return page.evaluate(
+        """() => ['incomeChart', 'outgoChart'].map(id => {
+             const chart = Chart.getChart(document.getElementById(id));
+             return chart ? chart.data.labels.join('|') : 'NO CHART';
+           })""")

@@ -1233,12 +1233,27 @@
     }
   }
 
-  // Listeners live on document and survive SPA swaps, so they are attached
-  // once and guarded rather than re-added on every navigation.
+  /* Listeners live on document and survive SPA swaps, so they are attached
+     once rather than re-added on every navigation. What they must NOT do is
+     keep the handlers from the run that attached them.
+
+     A soft navigation re-executes this whole file, and every run gets a fresh
+     `state` — including `state.builders`, which close over that run's
+     `#dashData`. Binding the first run's `onThemeChange` for good meant the
+     theme listener rebuilt charts from whichever payload was on screen when
+     the dashboard was *first* opened. Reported as: filter the dashboard, pick
+     a theme, and the panels quietly redraw the previous window's numbers with
+     nothing to say they had gone stale — only a reload put them right.
+
+     So the binding is permanent and the handlers are looked up fresh: the
+     latest run always wins, and the ones it replaces are collectable. */
+  window._dashHandlers = { keydown: onKeydown, theme: onThemeChange };
   if (!window._dashListenersBound) {
-    document.addEventListener('keydown', onKeydown);
+    document.addEventListener('keydown', function (e) {
+      window._dashHandlers.keydown(e);
+    });
     document.addEventListener('check:theme-changed', function () {
-      if (document.getElementById('dashData')) onThemeChange();
+      if (document.getElementById('dashData')) window._dashHandlers.theme();
     });
     window._dashListenersBound = true;
   }
