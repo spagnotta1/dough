@@ -285,6 +285,11 @@
 /* ── Health detail ────────────────────────────────────────────────────── */
 .dash-health-detail[hidden] { display: none; }
 .dash-health-detail { animation: ds-rise var(--dur-3) var(--ease-out) both; }
+/* The period scored, under the heading rather than beside it: it qualifies the
+   whole panel, and a card head that has to hold a title and a sentence on one
+   line wraps badly at the width this panel actually gets. */
+.dash-health-detail__window { margin-top: var(--sp-1); }
+.dash-health-detail__caveat { margin-top: var(--sp-5); }
 .dash-factors {
   list-style: none;
   margin: 0; padding: 0;

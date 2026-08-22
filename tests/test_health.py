@@ -14,7 +14,7 @@ from decimal import Decimal
 import pytest
 
 import dashboard_intel
-from dough.services import health
+from dough.services import analytics, health
 
 TODAY = date(2026, 8, 15)
 
@@ -193,6 +193,96 @@ def test_a_connected_card_is_measured_against_income(app, steady):
     # 30,000 of income over ~6 months is ~5,000 a month; 10,000 owed is ~2.
     assert 1.8 <= debt['months_of_income'] <= 2.2
     assert 'debt' in {f['key'] for f in result['factors']}
+
+
+# ── One score, whoever asks for it  [UAT round 2] ───────────────────────────
+
+def test_the_window_is_the_only_thing_a_caller_chooses(app, steady):
+    """Two callers, one window, one number — by construction, not by luck.
+
+    The bug this replaces: the dashboard assembled its own inputs and called
+    the scorer directly, so the same household read 67 there and 82 on
+    Insights. Anything a surface can vary has to go through this argument.
+    """
+    window = analytics.custom_window(date(2026, 3, 1), TODAY)
+
+    first = health.score(window=window)
+    second = health.score(months=1, anchor=date(2026, 1, 1), window=window)
+
+    assert first['score'] == second['score']
+    assert first['factors'] == second['factors']
+    assert second['window']['start'] == '2026-03-01'
+
+
+def test_the_score_reports_the_window_it_actually_read(app, steady):
+    """The caption on both pages is rendered from this, so it cannot drift."""
+    window = analytics.custom_window(date(2026, 6, 1), TODAY)
+    result = health.score(window=window)
+
+    assert result['window']['start'] == '2026-06-01'
+    assert result['window']['end'] == TODAY.isoformat()
+    assert result['previous_window']['end'] == '2026-05-31'
+    assert result['inputs']['income'] == 15000.00     # 3 x 5000, not 6
+
+
+def test_cash_runway_does_not_move_when_the_window_does(app, steady):
+    """How long the cash lasts is a fact about today, not about the filter.
+
+    Scored from the window, a reader clicking "This Month" would watch their
+    buffer change, and two pages on two windows would print two runways for one
+    household — which is what the dashboard and Insights used to do.
+    """
+    short = health.score(window=analytics.custom_window(date(2026, 8, 1), TODAY))
+    long_ = health.score(window=analytics.custom_window(date(2026, 3, 1), TODAY))
+
+    assert short['inputs']['runway_months'] == long_['inputs']['runway_months']
+    assert (short['inputs']['typical_monthly_outgo']
+            == long_['inputs']['typical_monthly_outgo'])
+
+
+def test_a_part_month_window_is_not_extrapolated_into_a_budget_overrun(app, post):
+    """Four days of groceries is four days of groceries.
+
+    `spent / window_months` on a four-day window multiplies by about eight, so
+    a household $80 into a $500 budget would be reported as $650 over pace and
+    the adherence factor would collapse. The divisor is floored at one month.
+    """
+    from models import Budget, db
+
+    db.session.add(Budget(category='Groceries', monthly_limit=Decimal('500'),
+                          account_name='both'))
+    db.session.commit()
+    post(date(2026, 8, 12), 'Corner Store', -80.00, 'Groceries')
+
+    result = health.score(window=analytics.custom_window(date(2026, 8, 12), TODAY))
+    budgets = next(f for f in result['factors'] if f['key'] == 'budgets')
+
+    assert budgets['score'] == 100
+    assert budgets['detail'] == '1 of 1 budgets on track'
+
+
+def test_an_account_filter_narrows_the_period_but_not_the_cash(app, post):
+    """Filtering to one account must not restate the household's runway."""
+    from models import Budget, db
+
+    post(date(2026, 5, 1), 'Payroll', 6000.00, 'Income', account='checking')
+    post(date(2026, 5, 3), 'Corner Store', -400.00, 'Groceries', account='savings')
+
+    window = analytics.custom_window(date(2026, 5, 1), TODAY)
+    everything = health.score(window=window)
+    checking = health.score(window=window, account='checking')
+
+    assert checking['inputs']['spending'] == 0.0
+    assert everything['inputs']['spending'] == 400.00
+    assert checking['account'] == 'checking'
+    assert checking['inputs']['runway_months'] == everything['inputs']['runway_months']
+
+    # A household-wide budget still applies to a filtered view: the plan is the
+    # plan, and scoring against nothing would read as perfect adherence.
+    db.session.add(Budget(category='Groceries', monthly_limit=Decimal('500'),
+                          account_name='both'))
+    db.session.commit()
+    assert health.score(window=window, account='checking')['factors'][2]['weight'] == 25
 
 
 # ── Investment consistency is deliberately absent ───────────────────────────

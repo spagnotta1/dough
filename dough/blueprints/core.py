@@ -38,7 +38,9 @@ from flask import (Blueprint, current_app, redirect, render_template, request,
 from sqlalchemy import func
 
 from dough.auth import public
+from dough.services import analytics as analytics_service
 from dough.services import budgets as budget_service
+from dough.services import health as health_service
 from dough.services.accounts import ledger_account_names
 from dough.services.networth import compute_net_worth, portfolio_snapshot
 from dough.services.recurring_service import detect_recurring_full
@@ -465,11 +467,28 @@ def dashboard():
                      .filter(Transaction.anomaly_score == -1.0,
                              Transaction.anomaly_reviewed.is_(False)).count())
 
-    health = dashboard_intel.health_score(
-        income=total_income, outgo=total_outgo,
-        runway_months=forecast['runway_months'],
-        budget_map=budget_map, category_stats=category_stats,
-        period_months=period_months, prev_outgo=prev_outgo)
+    # The score comes from `dough/services/health.py`, which is also what the
+    # Insights hub renders. It used to be assembled here instead, from this
+    # route's own sums, and the two pages disagreed by twenty points under one
+    # name — see that module's "One score, one code path". This route's job is
+    # now to say *which period* is being scored; everything else is decided
+    # there, so the same window gives the same number on both pages.
+    #
+    # Two things the route stops deciding, and both were wrong here:
+    #
+    # * **The runway** was `forecast['runway_months']`, cash over 90 days of
+    #   gross outflow — which counts a transfer from checking to savings as
+    #   money burnt. Every other spending figure on this page excludes
+    #   transfers, so the health card was reading a burn rate no other tile
+    #   agreed with. The service's runway is the one the Cash runway stat
+    #   below now shows too.
+    # * **The category filter** used to reach the score, because it reaches
+    #   `category_stats`. Clicking "Groceries" would restate your household's
+    #   financial health as the health of your groceries. The window and the
+    #   account narrow the score; a category chip does not.
+    health = health_service.score(
+        window=analytics_service.custom_window(start_date, end_date),
+        account=None if account_filter == 'both' else account_filter)
 
     attention = dashboard_intel.attention_items(
         budget_alerts=budget_alerts,
@@ -477,7 +496,10 @@ def dashboard():
         income=total_income, outgo=total_outgo,
         prev_income=prev_income, prev_outgo=prev_outgo,
         cash=nw['cash'], period_months=period_months,
-        runway_months=forecast['runway_months'],
+        # The scored runway, not the forecast's — an attention item warning
+        # "1.8 months of cash" directly above a card reading 8.6 is the same
+        # contradiction, moved down the page.
+        runway_months=health['inputs']['runway_months'],
         bills=upcoming, hikes=hikes, anomaly_count=anomaly_count,
         portfolio=portfolio)
 
