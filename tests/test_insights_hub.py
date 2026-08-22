@@ -10,6 +10,7 @@ product decision; losing the anomaly review workflow, or leaving a bookmark
 404ing, is not.
 """
 
+import re
 from datetime import date
 from decimal import Decimal
 
@@ -286,3 +287,80 @@ def test_the_score_on_the_page_is_the_score_the_service_computed(populated):
     body = _get(populated).get_data(as_text=True)
 
     assert f'<span class="ins-score__value">{expected}</span>' in body
+
+
+# ── The date filter, and the agreement it makes checkable  [UAT round 2] ────
+
+def _score_on(body, pattern):
+    found = re.search(pattern, body)
+    assert found, f'no score matched {pattern!r} in the rendered page'
+    return int(found.group(1))
+
+
+DASH_SCORE = r'data-health="(\d+)"'
+HUB_SCORE = r'<span class="ins-score__value">(\d+)</span>'
+
+
+def test_the_dashboard_and_the_hub_agree_on_the_same_window(populated):
+    """The reported bug, as a test.
+
+    A user filtered the dashboard to YTD, opened Insights, and read a score
+    twenty points higher under the identical heading. Both pages now score
+    through `dough/services/health.py`, so the same range is the same number —
+    and this is the assertion that keeps a future surface from assembling its
+    own inputs again.
+    """
+    window = {'start_date': _months_back(5).isoformat(),
+              'end_date': date.today().isoformat()}
+    query = f"?start_date={window['start_date']}&end_date={window['end_date']}"
+    client = populated.test_client()
+
+    dashboard = client.get('/' + query).get_data(as_text=True)
+    hub = client.get('/insights' + query).get_data(as_text=True)
+
+    assert _score_on(dashboard, DASH_SCORE) == _score_on(hub, HUB_SCORE)
+
+
+def test_the_hub_scores_the_window_the_reader_picked(populated):
+    """A filter that changed the heading and nothing else would be theatre."""
+    client = populated.test_client()
+    default = _score_on(_get(populated).get_data(as_text=True), HUB_SCORE)
+
+    narrow = client.get(f'/insights?start_date={_months_back(1).isoformat()}'
+                        f'&end_date={date.today().isoformat()}')
+    body = narrow.get_data(as_text=True)
+
+    assert narrow.status_code == 200
+    # Groceries climb month over month in this fixture and the last month
+    # carries a $1,200 anomaly, so the recent window scores worse than six.
+    assert _score_on(body, HUB_SCORE) != default
+    assert 'ds-filter-chip' in body        # the applied filter is shown as one
+
+
+def test_the_hub_names_the_period_it_measured(populated):
+    """Including when nobody picked one — the caption used to be hardcoded."""
+    from dough.services import health
+
+    body = _get(populated).get_data(as_text=True)
+
+    assert health.score()['window']['label'] in body
+    assert 'over the last six months' not in body
+
+
+def test_clearing_the_date_filter_returns_the_hub_to_its_default(populated):
+    """The ✕ sends blank dates; a blank one must not inherit the sticky value."""
+    client = populated.test_client()
+    default = _score_on(_get(populated).get_data(as_text=True), HUB_SCORE)
+
+    client.get(f'/insights?start_date={_months_back(1).isoformat()}'
+               f'&end_date={date.today().isoformat()}')
+    cleared = client.get('/insights?start_date=&end_date=').get_data(as_text=True)
+
+    assert _score_on(cleared, HUB_SCORE) == default
+    assert 'ds-filter-chip' not in cleared
+
+
+def test_the_hub_survives_a_hand_edited_date(populated):
+    """A truncated URL is not a 500 on a page the reader did nothing wrong on."""
+    response = populated.test_client().get('/insights?start_date=2026-13&end_date=x')
+    assert response.status_code == 200

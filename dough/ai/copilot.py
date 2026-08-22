@@ -173,10 +173,33 @@ class FinancialCopilot:
                     self._run = hit
                 return hit
 
+        # What the caller actually asked for, before the default fills in. A
+        # window nobody chose must not reach the lookback services below —
+        # `resolve_window('month')` is this method's default *comparison*
+        # period, not a statement that the reader wants one month of history,
+        # and feeding it to the health score would silently retune the Insights
+        # hub from six months to whatever today's month holds.
+        requested = window
         window = window or analytics.resolve_window('month', self.anchor)
 
+        # A caller-supplied window governs the *whole* pass, not just the
+        # comparison.  [UAT round 2]
+        #
+        # It used to govern only `periods.compare`; the health score, the
+        # trends, the anomaly detection and the proactive insights all read
+        # `self.months` from today regardless. That was invisible while nothing
+        # passed a window — and the moment Insights grew a date filter it would
+        # have produced a page whose header said "March – August" above a score
+        # measured over something else entirely.
+        #
+        # The months-based services take a lookback rather than a range, so the
+        # window is converted: its length in whole months, floored at one, ending
+        # at its own last day. That is the nearest lookback to the range asked
+        # for, and it is a rounding rather than a different question.
+        months, anchor = self._lookback_for(requested)
+
         # The two expensive ones, once each.
-        findings = anomalies.detect(self.months, anchor=self.anchor, limit=10)
+        findings = anomalies.detect(months, anchor=anchor, limit=10)
         comparison = periods.compare(window)
 
         run = {
@@ -185,11 +208,10 @@ class FinancialCopilot:
             'comparison': comparison,
             'findings': findings,
             'anomaly_summary': anomalies.summary(findings=findings),
-            'trends': trends.category_trends(self.months, limit=8,
-                                             anchor=self.anchor),
-            'health': health.score(self.months, anchor=self.anchor),
-            'insights': proactive.insights(anchor=self.anchor,
-                                           months=self.months,
+            'trends': trends.category_trends(months, limit=8, anchor=anchor),
+            'health': health.score(months, anchor=anchor, window=requested),
+            'insights': proactive.insights(anchor=anchor,
+                                           months=months,
                                            findings=findings,
                                            comparison=comparison),
         }
@@ -198,6 +220,17 @@ class FinancialCopilot:
         if window is None:
             self._run = run
         return run
+
+    def _lookback_for(self, window):
+        """`(months, anchor)` for the services that take a lookback, not a range.
+
+        The default window is the copilot's own — `self.months` ending at
+        `self.anchor` — and is returned unchanged so nothing moves for a caller
+        that named no period. Anything else is measured from the window itself.
+        """
+        if window is None:
+            return self.months, self.anchor
+        return max(1, int(round(window.months))), window.end
 
     def context(self, surface='ask', *, window=None, sections=None):
         """The snapshot for one surface, built on the coordinated pass.

@@ -26,10 +26,13 @@ Every figure on the hub comes from `dough/services/`, so the page and the
 copilot cannot disagree about what the household's finances look like.
 """
 
+from datetime import datetime
+
 from flask import (Blueprint, flash, jsonify, redirect, render_template,
-                   request, url_for)
+                   request, session, url_for)
 
 from dough.ai.copilot import current_copilot
+from dough.services import analytics
 from dough.tenancy import get_owned
 
 from models import RecurringDismissal, Transaction, db
@@ -41,6 +44,15 @@ bp = Blueprint('insights', __name__)
 #: full table. Twenty is enough to make "review them here" the common path and
 #: few enough that the section stays a section.
 HUB_ANOMALY_LIMIT = 20
+
+#: Where the hub's date filter is remembered. Deliberately *not* the dashboard's
+#: `start_date`/`end_date` keys: the two pages answer different questions at
+#: different resolutions — a dashboard is usually read month-to-date, a health
+#: score needs enough history to have a trend in it — and a filter set on one
+#: silently rewriting the other is a surprise, not a convenience. What the two
+#: pages do share is the scorer, so setting both to the same range makes the
+#: numbers match exactly. See `dough/services/health.py`.
+DATE_SESSION_KEYS = ('insights_start', 'insights_end')
 
 
 @bp.route('/insights')
@@ -62,13 +74,21 @@ def hub():
                       .order_by(Transaction.date.desc())
                       .limit(HUB_ANOMALY_LIMIT).all())
 
+    start_date, end_date = _sticky_dates()
+    window = _window_from(start_date, end_date)
+
     # One coordinated pass for the whole page. The route used to call
     # `detect()`, `summary()`, `insights()`, `health.score()` and
     # `category_trends()` separately -- and three of those run the detector
     # internally, so rendering this page cost three full passes over a year of
     # transactions. `FinancialCopilot.analytics()` computes each expensive
     # service once and threads the result through the rest.
-    run = current_copilot().analytics()
+    #
+    # `window=None` is the unfiltered page and keeps the pass on its own
+    # defaults; a chosen window governs every section of it, so the score, the
+    # observations, the trends and the flagged charges are all describing the
+    # period named at the top of the page rather than four different ones.
+    run = current_copilot().analytics(window=window)
 
     return render_template(
         'insights.html',
@@ -80,7 +100,54 @@ def hub():
         anomaly_summary=run['anomaly_summary'],
         open_anomalies=open_anomalies,
         open_anomaly_count=_open_anomaly_count(),
-        hub_anomaly_limit=HUB_ANOMALY_LIMIT)
+        hub_anomaly_limit=HUB_ANOMALY_LIMIT,
+        # The window every figure above was measured over. Taken from the score
+        # rather than from `window`, because on the unfiltered page `window` is
+        # None and the real answer -- the six-month lookback -- is only known
+        # inside the service. A page that shows a period it did not compute is
+        # the bug this whole change is about.
+        period_label=run['health']['window']['label'],
+        start_date=start_date or '',
+        end_date=end_date or '',
+        date_is_default=window is None)
+
+
+def _window_from(start, end):
+    """The range the reader picked, or `None` for the page's own default.
+
+    `None` rather than a reconstructed default window on purpose: it is what
+    tells `FinancialCopilot.analytics()` that nobody chose a period, and the
+    lookback each service uses when nobody has is that service's business, not
+    this route's. Guessing it here would be a second definition of "the default
+    period" for the exact figures this change exists to stop duplicating.
+    """
+    if not (start and end):
+        return None
+    try:
+        return analytics.custom_window(
+            datetime.strptime(start, '%Y-%m-%d').date(),
+            datetime.strptime(end, '%Y-%m-%d').date())
+    except ValueError:
+        # A hand-edited or truncated URL. The default period is a better answer
+        # than a 500 on a page where the reader did nothing wrong.
+        return None
+
+
+def _sticky_dates():
+    """The filter as `(start, end)` strings, remembered across visits.
+
+    Sticky like the dashboard's, so returning to the page keeps the period you
+    were reading. A *present but empty* parameter is how the ✕ on the chip says
+    the range was cleared, and it clears the session with it; only a wholly
+    absent parameter inherits, or the ✕ would appear to do nothing.
+    """
+    start_key, end_key = DATE_SESSION_KEYS
+    if 'start_date' in request.args or 'end_date' in request.args:
+        start = request.args.get('start_date') or None
+        end = request.args.get('end_date') or None
+        session[start_key], session[end_key] = start, end
+        return start, end
+    return session.get(start_key), session.get(end_key)
 
 
 def _open_anomaly_count():

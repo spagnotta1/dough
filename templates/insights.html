@@ -17,6 +17,7 @@
 #}
 
 {% block content %}
+{% from '_filters.html' import caret, ficon %}
 <link rel="stylesheet" href="{{ url_for('static', filename='css/anomalies.css') }}">
 <link rel="stylesheet" href="{{ url_for('static', filename='css/insights.css') }}">
 
@@ -31,14 +32,93 @@
     </div>
   </header>
 
+  {# ── Period ──────────────────────────────────────────────────────────
+     Everything below is measured over one window, and until this bar existed
+     that window was fixed at six months while the dashboard's was whatever
+     the reader had filtered to — so the same household read 82 here and 67
+     there, and had no way to tell why. The bar is the answer to "why": set it
+     to the range the dashboard is showing and the two scores are identical,
+     because they are now the same computation.
+
+     Date only. The account and category chips belong to a page whose queries
+     understand them; a control that quietly does nothing is worse than a
+     control that is absent. `data-filter-bar` is the whole of the wiring —
+     presets, Escape, click-away and submit come from static/js/filter-bar.js,
+     which base.html already loads for every page.
+     ─────────────────────────────────────────────────────────────────── #}
+  <div class="ds-filters ds-filters--ruled ds-rise" id="insightsFilters" data-filter-bar>
+    <form id="insightsFilterForm" method="GET" action="{{ url_for('insights.hub') }}"
+          class="ds-filters__bar" aria-label="Filter insights by date">
+      <details class="ds-filter-menu ds-filter-menu--lead" id="insDateMenu">
+        <summary class="ds-filter-trigger {{ 'is-on' if not date_is_default }}" id="insDateTrigger">
+          {{ ficon('calendar', 14) }}
+          <span class="ds-sr">Date range:</span>
+          <span class="ds-filter-trigger__value" data-date-label>{{ period_label }}</span>
+          {{ caret() }}
+        </summary>
+        <div class="ds-filter-menu__pop">
+          <div class="ds-filter-menu__opts" role="group" aria-label="Date presets">
+            {% for lbl, ps in [('This Month','this_month'), ('Last 3 Months','last_3mo'),
+                               ('Last 6 Months','last_6mo'), ('YTD','ytd'),
+                               ('Last Year','last_year')] %}
+            <button type="button" class="ds-filter-opt" data-preset="{{ ps }}" aria-pressed="false">
+              <span class="ds-filter-opt__tick" aria-hidden="true">{{ ficon('check', 13) }}</span>
+              <span class="ds-filter-opt__label">{{ lbl }}</span>
+            </button>
+            {% endfor %}
+          </div>
+          <details class="ds-filter-custom" id="insCustomRange" data-filter-custom>
+            <summary class="ds-filter-opt ds-filter-opt--more">
+              <span class="ds-filter-opt__label">Custom range</span>
+              {{ caret() }}
+            </summary>
+            <div class="ds-filter-custom__body">
+              <label class="ds-filter-menu__label" for="ins_start_date">From</label>
+              <input type="date" name="start_date" id="ins_start_date" value="{{ start_date }}"
+                     class="ds-input ds-filter-input" data-filter-start>
+              <label class="ds-filter-menu__label" for="ins_end_date">To</label>
+              <input type="date" name="end_date" id="ins_end_date" value="{{ end_date }}"
+                     class="ds-input ds-filter-input" data-filter-end>
+              <div class="ds-filter-custom__actions">
+                <button type="submit" class="ds-btn ds-btn--primary ds-btn--sm">Apply</button>
+              </div>
+            </div>
+          </details>
+        </div>
+      </details>
+
+      <span class="ds-filters__note">{{ period_label }}</span>
+    </form>
+
+    {% if not date_is_default %}
+    <div class="ds-filter-chips" role="group" aria-label="Applied filters">
+      <span class="ds-filter-chip">
+        <span class="ds-filter-chip__key">Dates</span>
+        <span class="ds-filter-chip__val" data-date-label>{{ period_label }}</span>
+        {# An empty pair, not an absent one: the route reads a present-but-blank
+           parameter as "cleared" and drops the sticky session value, where an
+           absent one would inherit it and the ✕ would appear to do nothing. #}
+        <a class="ds-filter-chip__x" aria-label="Remove the date filter"
+           href="{{ url_for('insights.hub', start_date='', end_date='') }}">✕</a>
+      </span>
+    </div>
+    {% endif %}
+  </div>
+
   {# ── Financial health ────────────────────────────────────────────────── #}
   <section class="ds-card ds-rise" aria-labelledby="healthHeading">
     <div class="ds-card__head">
       <div>
         <h2 id="healthHeading" class="ds-section__title">Financial health</h2>
+        {# `period_label` is the score's own record of the window it read --
+           see the route. Never a sentence written here: this line said "over
+           the last six months" while the dashboard's identically-titled card
+           was scoring whatever its filter bar held, and a hardcoded caption is
+           exactly how two surfaces come to claim different things in the same
+           words. Every period on this page is that one variable. #}
         <p class="ds-section__sub">
           Weighted from {{ health.factors|selectattr('weight')|list|length }}
-          measured factors over the last six months.
+          measured factors over {{ period_label }}.
         </p>
       </div>
       <p class="ds-num ins-score ins-score--{{ health.band }}">
@@ -122,13 +202,13 @@
     <div class="ds-card__head">
       <div>
         <h2 id="trendsHeading" class="ds-section__title">Spending trends</h2>
-        <p class="ds-section__sub">Direction of travel over the last six months.</p>
+        <p class="ds-section__sub">Direction of travel over {{ period_label }}.</p>
       </div>
     </div>
 
     <div class="ds-table__wrap">
       <table class="ds-table"
-             aria-label="Categories with a rising or falling trend over six months">
+             aria-label="Categories with a rising or falling trend over {{ period_label }}">
         <thead>
           <tr>
             <th scope="col">Category</th>

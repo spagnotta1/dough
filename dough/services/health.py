@@ -11,6 +11,38 @@ What Phase 11 added is two *dimensions* — cash-flow stability and debt burden 
 as optional arguments to that same function, defaulting to "not measured" so the
 dashboard's number did not move the day this shipped. See its docstring.
 
+## One score, one code path  [UAT round 2]
+
+Every surface that shows "financial health" calls `score()` here. The dashboard
+used to call `dashboard_intel.health_score` directly with inputs it had summed
+itself, and the result was two numbers under one name on two pages — 62 on the
+dashboard against 82 on Insights for the same household, differing on the
+savings rate, the spending trend, the cash runway *and* how many dimensions were
+counted at all. Nothing was broken; the two callers were simply asking different
+questions and labelling both answers "your financial health".
+
+So the input-gathering lives here and nowhere else. A caller chooses the
+`window` and the `account`; everything downstream of that — which categories
+count as spending, which budgets apply, how the prior period is picked, which
+dimensions are measured — is decided once, in this module. Two surfaces on the
+same window now return the same number by construction, and
+`tests/test_health.py::test_the_dashboard_and_insights_agree_on_one_window`
+holds it there.
+
+## What the window does and does not change
+
+The score is *of a period*, and savings rate, spending trend, budget adherence
+and cash-flow stability all read the window they are given. Two of the six do
+not, deliberately:
+
+**Cash runway** is a present-tense fact — how long the cash on hand would last
+— not a property of the period being read. Scoring it from a filtered window
+would say your buffer changed because you clicked a date chip, and would let one
+page report 3.9 months while another reported 8.6 for the same household on the
+same day. It is always cash ÷ typical monthly outgo over `RUNWAY_MONTHS`.
+
+**Debt burden** is the same: what is owed today, against typical monthly income.
+
 ## The methodology, in full
 
 Six dimensions. Each is a 0–100 sub-score from a measured quantity, and the
@@ -76,41 +108,60 @@ DEFAULT_MONTHS = 6
 #: nothing.
 MIN_MONTHS_FOR_STABILITY = 3
 
+#: The lookback the two window-independent dimensions read — see the module
+#: docstring. Separate from `DEFAULT_MONTHS` because that one is the *default
+#: window*, which a caller overrides freely, and this one is a property of the
+#: measurement: it must not move when somebody picks a date range.
+RUNWAY_MONTHS = 6
 
-def score(months=DEFAULT_MONTHS, *, anchor=None):
+
+def score(months=DEFAULT_MONTHS, *, anchor=None, window=None, account=None):
     """The overall score, its factors, and what would move it.
+
+    `window` is the period scored, and it is the parameter that matters: pass
+    the one the surface is showing and the number will match every other figure
+    on that page. Omitted, it is the last `months` whole months ending at
+    `anchor`, which is what a surface with no date filter wants.
+
+    `account` narrows every windowed dimension to one account name, matching the
+    dashboard's account chip. It does *not* narrow the runway or the debt
+    burden: cash and revolving balances are household-wide facts, and reporting
+    "3 weeks of runway" because a reader filtered to their spending card would
+    be alarming and false.
 
     Every figure the returned dictionary contains is either measured from the
     ledger or explicitly `None`. There is no default that stands in for missing
     data — see the module docstring on why unknown debt is not scored as zero.
     """
-    window = lookback_window(months, anchor)
-    summary = analytics.period_summary(window)
+    window = window or lookback_window(months, anchor)
+    summary = analytics.period_summary(window, account=account)
 
     previous = analytics.preceding_window(window)
-    prior = analytics.period_summary(previous)
+    prior = analytics.period_summary(previous, account=account)
 
     net_worth = compute_net_worth()
-    outgo_per_month = monthly_outgo(months)
+    outgo_per_month = monthly_outgo(RUNWAY_MONTHS)
     runway = (round(net_worth['cash'] / outgo_per_month, 1)
               if outgo_per_month else None)
 
-    stability = cash_flow_stability(months, anchor=anchor)
-    burden = debt_burden(summary['income'], window.months)
+    stability = cash_flow_stability(window=window, account=account)
+    burden = debt_burden(summary['income'], _monthly_divisor(window))
 
     result = dashboard_intel.health_score(
         income=summary['income'],
         outgo=summary['spending'],
         runway_months=runway,
-        budget_map={b.category: float(b.monthly_limit) for b in Budget.query.all()},
+        budget_map=_budget_map(account),
         category_stats=_category_stats(summary),
-        period_months=window.months,
+        period_months=_monthly_divisor(window),
         prev_outgo=prior['spending'],
         cash_flow_stability=stability['coefficient_of_variation'],
         debt=burden,
     )
 
     result['window'] = window.as_dict()
+    result['previous_window'] = previous.as_dict()
+    result['account'] = account
     result['inputs'] = {
         'income': summary['income'],
         'spending': summary['spending'],
@@ -129,7 +180,8 @@ def score(months=DEFAULT_MONTHS, *, anchor=None):
     return result
 
 
-def cash_flow_stability(months=DEFAULT_MONTHS, *, anchor=None):
+def cash_flow_stability(months=DEFAULT_MONTHS, *, anchor=None, window=None,
+                        account=None):
     """How much monthly net flow swings, as a coefficient of variation.
 
     Standard deviation over the *mean of the absolute* monthly flows, not over
@@ -139,10 +191,13 @@ def cash_flow_stability(months=DEFAULT_MONTHS, *, anchor=None):
 
     Returns `coefficient_of_variation: None` below `MIN_MONTHS_FOR_STABILITY`
     months, which `health_score` reads as "not measured" and drops the factor
-    for entirely.
+    for entirely. A window shorter than three months therefore drops it too,
+    which is the honest answer: one month of history has no month-to-month
+    variation to measure, and inventing one to keep a bar on screen would be a
+    fabricated factor inside a number called health.
     """
-    window = lookback_window(months, anchor)
-    series = analytics.monthly_series(window.start, window.end)
+    window = window or lookback_window(months, anchor)
+    series = analytics.monthly_series(window.start, window.end, account=account)
     flows = [month['net'] for month in series.values()]
 
     if len(flows) < MIN_MONTHS_FOR_STABILITY:
@@ -163,6 +218,36 @@ def cash_flow_stability(months=DEFAULT_MONTHS, *, anchor=None):
         'best_month': round(max(flows), 2),
         'worst_month': round(min(flows), 2),
     }
+
+
+def _monthly_divisor(window):
+    """The window's length in months, never below one.
+
+    Turning a window's total into a per-month rate means dividing by its length,
+    and for a window shorter than a month that division is an extrapolation: the
+    first four days of a month become 0.13, and a fortnight's income multiplies
+    to seven times what anybody earns. The floor makes a short window read as
+    "what happened so far", which is what a reader looking at four days means,
+    rather than "the rate this implies", which nobody asked for.
+
+    The dashboard has applied this rule to budgets since Phase 2 —
+    `period_months = max(1.0, period_days / 30.44)` in its route. It is here now
+    because the rule belongs to the measurement, not to one caller, and because
+    a date filter on Insights made short windows reachable from a second page.
+    """
+    return max(1.0, window.months)
+
+
+def _budget_map(account=None):
+    """The monthly limits that apply to `account`, as `{category: limit}`.
+
+    A budget is stored against one account name or against `'both'`. Filtering
+    to an account means the budgets scoped to it plus the household-wide ones —
+    dropping the `'both'` budgets would score a filtered view against a plan the
+    household does not have.
+    """
+    return {b.category: float(b.monthly_limit) for b in Budget.query.all()
+            if account is None or b.account_name in ('both', account)}
 
 
 def debt_burden(income_for_window, window_months):
@@ -271,4 +356,4 @@ def _not_measured(result):
 
 
 __all__ = ['score', 'cash_flow_stability', 'debt_burden', 'improvements',
-           'DEFAULT_MONTHS', 'MIN_MONTHS_FOR_STABILITY']
+           'DEFAULT_MONTHS', 'MIN_MONTHS_FOR_STABILITY', 'RUNWAY_MONTHS']

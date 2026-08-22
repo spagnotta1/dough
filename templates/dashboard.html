@@ -488,7 +488,17 @@
     <!-- Health detail — the factors behind the score, revealed on demand -->
     <div class="dash-health-detail ds-card" id="healthDetail" hidden>
       <div class="ds-card__head">
-        <h3 class="ds-card__title">What goes into your score</h3>
+        <div>
+          <h3 class="ds-card__title">What goes into your score</h3>
+          {# The period the score covers, said out loud. It follows the filter
+             bar, so the same household reads differently at "This Month" and
+             at "YTD" — which is correct, and unreadable unless the card says
+             which one it just scored. Insights carries the same line, and the
+             two agree whenever the two windows do. #}
+          <p class="ds-meta dash-health-detail__window">
+            Scored over {{ period_label }}{% if health.account %} · {{ health.account }}{% endif %}
+          </p>
+        </div>
         <button type="button" class="ds-btn ds-btn--icon" data-close="healthDetail" aria-label="Close">
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
         </button>
@@ -510,6 +520,13 @@
         </li>
         {% endfor %}
       </ul>
+      {% if health.not_measured %}
+      <p class="ds-meta dash-health-detail__caveat">
+        Not included:
+        {% for missing in health.not_measured %}{{ missing.label|lower }}
+          ({{ missing.reason }}){% if not loop.last %}; {% endif %}{% endfor %}.
+      </p>
+      {% endif %}
     </div>
   </section>
 
@@ -623,13 +640,24 @@
       </article>
 
       <div class="dash-outlook__side">
+        {# Runway comes from the health service, not from `forecast`, because
+           the health card scores that same figure and two runways on one page
+           is the confusion this card used to cause. The forecast's own
+           `runway_months` divides cash by 90 days of gross outflow, transfers
+           included — a household moving $2k a month into savings read as
+           burning it. The scored one uses typical monthly *spending*, the
+           definition every other tile on this page already uses. #}
         <article class="ds-card ds-card--compact dash-stat">
           <p class="ds-eyebrow">Cash runway</p>
           <p class="dash-stat__value ds-num">
-            {% if forecast.runway_months %}{{ forecast.runway_months }}<span class="dash-stat__unit">months</span>
+            {% if health.inputs.runway_months %}{{ health.inputs.runway_months }}<span class="dash-stat__unit">months</span>
             {% else %}<span class="dash-stat__unit">Not enough history</span>{% endif %}
           </p>
-          <p class="ds-meta">At {{ forecast.expected_monthly_spend|money }}/mo of spending</p>
+          {% if health.inputs.typical_monthly_outgo %}
+          <p class="ds-meta">At {{ health.inputs.typical_monthly_outgo|money }}/mo of typical spending</p>
+          {% else %}
+          <p class="ds-meta">No spending recorded yet to measure a burn rate</p>
+          {% endif %}
         </article>
 
         <article class="ds-card ds-card--compact dash-stat">
